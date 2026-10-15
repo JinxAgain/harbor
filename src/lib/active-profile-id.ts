@@ -15,12 +15,23 @@ function readState(): MinimalState | null {
 
 export function activeProfileId(): string {
   const s = readState();
-  return s?.activeId || "default";
+  if (!s || !Array.isArray(s.profiles) || s.profiles.length === 0) {
+    return s?.activeId || "default";
+  }
+  const active = s.profiles.find((p) => p.id === s.activeId);
+  if (active?.id) return active.id;
+  const primary = s.profiles.find((p) => p.isPrimary);
+  if (primary?.id) return primary.id;
+  return s.profiles[0]?.id || "default";
 }
 
 export function activeProfileIsPrimary(): boolean {
   const s = readState();
   if (!s || !Array.isArray(s.profiles) || s.profiles.length === 0) return true;
   const active = s.profiles.find((p) => p.id === s.activeId);
-  return active?.isPrimary === true;
+  if (active) return active.isPrimary === true;
+  const primary = s.profiles.find((p) => p.isPrimary);
+  if (primary) return true;
+  return s.profiles[0]?.isPrimary === true;
 }
+

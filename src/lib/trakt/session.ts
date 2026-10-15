@@ -1,5 +1,5 @@
 import { activeProfileId, activeProfileIsPrimary } from "@/lib/active-profile-id";
-import { getSecret, setSecret } from "@/lib/secret-store";
+import { getSecret, setSecret, subscribeSecretsReady } from "@/lib/secret-store";
 import { clearPendingStops } from "./pending-sync";
 import { REFRESH_THRESHOLD_SEC } from "./config";
 import type { TraktSession } from "./types";
@@ -14,15 +14,22 @@ const subscribers = new Set<() => void>();
 let cached: TraktSession | null = null;
 let loaded = false;
 
+subscribeSecretsReady(() => {
+  loaded = false;
+  cached = null;
+  for (const fn of subscribers) fn();
+});
+
 function read(): TraktSession | null {
   try {
     const key = keyFor();
     let raw = getSecret(key);
-    if (!raw) {
-      const legacy = getSecret(BASE_KEY);
-      if (legacy && activeProfileIsPrimary()) {
+    if (!raw && activeProfileIsPrimary()) {
+      const legacy = getSecret(BASE_KEY) ?? getSecret(`${BASE_KEY}.default`);
+      if (legacy) {
         setSecret(key, legacy);
         setSecret(BASE_KEY, null);
+        setSecret(`${BASE_KEY}.default`, null);
         raw = legacy;
       }
     }

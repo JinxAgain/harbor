@@ -520,7 +520,11 @@ export function ProfilesProvider({ children }: { children: ReactNode }) {
     }
     migrateLegacyStremioAuth(loaded.profiles);
     const def = launchDefault(loaded.profiles);
-    return def ? { ...loaded, activeId: def.id } : loaded;
+    if (def) return { ...loaded, activeId: def.id };
+    if (loaded.activeId == null && loaded.profiles.length === 1) {
+      return { ...loaded, activeId: loaded.profiles[0].id };
+    }
+    return loaded;
   });
   const [pickerOpen, setPickerOpen] = useState<boolean>(() => {
     if (state.activeId == null) return true;
@@ -543,7 +547,9 @@ export function ProfilesProvider({ children }: { children: ReactNode }) {
   }, [state]);
 
   const activeProfile = useMemo(
-    () => state.profiles.find((p) => p.id === state.activeId) ?? null,
+    () =>
+      state.profiles.find((p) => p.id === state.activeId) ??
+      (state.profiles.length === 1 ? state.profiles[0] : null),
     [state.profiles, state.activeId],
   );
 

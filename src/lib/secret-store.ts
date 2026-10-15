@@ -105,7 +105,10 @@ export async function loadSecrets(): Promise<void> {
   // already removed the localStorage copies they would have fallen back to, so every
   // connected account read as signed out until something re-read it. Tell them now.
   try {
-    window.dispatchEvent(new Event(SECRETS_READY));
+    for (const fn of readySubscribers) fn();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event(SECRETS_READY));
+    }
   } catch {
     void 0;
   }
@@ -114,10 +117,20 @@ export async function loadSecrets(): Promise<void> {
 /** Fires once the persisted store is in memory, so session readers can re-read. */
 export const SECRETS_READY = "harbor:secrets-ready";
 
+const readySubscribers = new Set<() => void>();
+
 export function subscribeSecretsReady(fn: () => void): () => void {
   if (loaded && rustAvailable) fn();
-  window.addEventListener(SECRETS_READY, fn);
-  return () => window.removeEventListener(SECRETS_READY, fn);
+  readySubscribers.add(fn);
+  if (typeof window !== "undefined") {
+    window.addEventListener(SECRETS_READY, fn);
+  }
+  return () => {
+    readySubscribers.delete(fn);
+    if (typeof window !== "undefined") {
+      window.removeEventListener(SECRETS_READY, fn);
+    }
+  };
 }
 
 export function getSecret(key: string): string | null {

@@ -48,6 +48,7 @@ function fixture() {
     "./pending-sync": { armOnlineFlush: () => () => {}, flushPendingWatches: async () => {} },
     "./record-watched": {},
     "./scrobble": {},
+    "@/lib/secret-store": { subscribeSecretsReady: () => () => {} },
   };
   const code = ts.transpileModule(readFileSync("src/lib/simkl/provider.tsx", "utf8"), {
     compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS },
