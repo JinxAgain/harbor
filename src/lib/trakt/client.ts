@@ -2,7 +2,7 @@ import {
   TRAKT_API_BASE,
   TRAKT_API_VERSION,
   TRAKT_CLIENT_ID,
-  TRAKT_TOKEN_PROXY,
+  TRAKT_CLIENT_SECRET,
 } from "./config";
 import { getSession, setSession } from "./session";
 import type { TraktSession } from "./types";
@@ -14,11 +14,13 @@ export type TraktRequestOptions = {
 };
 
 export class TraktApiError extends Error {
-  constructor(
-    public status: number,
-    public body: string,
-  ) {
+  status: number;
+  body: string;
+
+  constructor(status: number, body: string) {
     super(`Trakt HTTP ${status}: ${body.slice(0, 200)}`);
+    this.status = status;
+    this.body = body;
   }
 }
 
@@ -33,11 +35,14 @@ function baseHeaders(): HeadersInit {
 async function refreshAccessToken(): Promise<TraktSession | null> {
   const current = getSession();
   if (!current) return null;
-  const res = await fetch(TRAKT_TOKEN_PROXY, {
+  const res = await fetch(`${TRAKT_API_BASE}/oauth/token`, {
     method: "POST",
     headers: baseHeaders(),
     body: JSON.stringify({
       refresh_token: current.refreshToken,
+      client_id: TRAKT_CLIENT_ID,
+      client_secret: TRAKT_CLIENT_SECRET,
+      redirect_uri: "urn:ietf:wg:oauth:2.0:oob",
       grant_type: "refresh_token",
     }),
   });
