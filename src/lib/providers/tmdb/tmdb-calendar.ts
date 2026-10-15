@@ -94,6 +94,12 @@ export async function tmdbTvUpcoming(
       seasons.add(s.season_number);
     }
   }
+  const regularSeasons = (tv.seasons ?? [])
+    .map((s) => s.season_number)
+    .filter((n): n is number => typeof n === "number" && n > 0);
+  if (regularSeasons.length > 0) {
+    seasons.add(Math.max(...regularSeasons));
+  }
   const episodes: TmdbUpcomingEpisode[] = [];
   for (const season of seasons) {
     const sd = await get<SeasonDetail>(key, `tv/${tvId}/season/${season}`);

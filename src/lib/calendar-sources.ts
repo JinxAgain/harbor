@@ -8,13 +8,27 @@ import {
 import type { CalendarItem } from "./calendar";
 import { localDateTimeFromIso } from "./calendar-time";
 import { resolveSavedCalendar, type SavedCandidate } from "./calendar-library";
-import { fetchWatchlist as fetchSimklWatchlist, fetchWatchingItems } from "./simkl/watchlist";
-import { fetchSimklCdnCalendar } from "./simkl/calendar";
+import {
+  fetchHoldItems,
+  fetchWatchlist as fetchSimklWatchlist,
+  fetchWatchingItems,
+} from "./simkl/watchlist";
+import {
+  buildSimklUserEntries,
+  fetchSimklCdnArchiveCached,
+  fetchSimklCdnCalendar,
+  fetchSimklCdnRollingCached,
+  matchSimklCdnToUserCalendar,
+  type SimklCdnItem,
+  type SimklUserEntry,
+} from "./simkl/calendar";
+import { getLocalCache, syncWatchlistCache } from "./simkl/activities";
 import { isAuthenticated as simklConnected } from "./simkl/session";
 import { fetchAniListAiringCalendar as fetchAniListAiring } from "./anilist/airing";
 import { fetchDubSchedule } from "./providers/anime-dub-sub";
 
 export { fetchLibraryCalendar } from "./calendar-library";
+export { buildSimklUserEntries, matchSimklCdnToUserCalendar, type SimklUserEntry };
 
 interface CacheEntry {
   items: CalendarItem[];
@@ -132,6 +146,46 @@ async function mapDubFeedToCalendar(year: number, month: number): Promise<Calend
   return out;
 }
 
+async function fetchSimklMonthCdnCatalog(
+  year: number,
+  month: number,
+  catalog: "tv" | "anime" | "movie",
+): Promise<SimklCdnItem[]> {
+  const prevDate = new Date(year, month - 1, 1);
+  const nextDate = new Date(year, month + 1, 1);
+  const today = new Date();
+  const monthDiff = (year - today.getFullYear()) * 12 + (month - today.getMonth());
+  const tasks: Promise<SimklCdnItem[]>[] = [
+    fetchSimklCdnArchiveCached(year, month, catalog).catch(() => []),
+    fetchSimklCdnArchiveCached(prevDate.getFullYear(), prevDate.getMonth(), catalog).catch(
+      () => [],
+    ),
+    fetchSimklCdnArchiveCached(nextDate.getFullYear(), nextDate.getMonth(), catalog).catch(
+      () => [],
+    ),
+  ];
+  if (monthDiff >= -1 && monthDiff <= 1) {
+    tasks.push(fetchSimklCdnRollingCached(catalog).catch(() => []));
+  }
+  const batches = await Promise.all(tasks);
+  const seen = new Set<string>();
+  const out: SimklCdnItem[] = [];
+  for (const batch of batches) {
+    for (const item of batch) {
+      const sId = item.ids?.simkl_id ?? item.title;
+      const epKey =
+        item.episode?.episode !== undefined
+          ? `${item.episode.season ?? 1}:${item.episode.episode}`
+          : "movie";
+      const key = `${catalog}:${sId}:${epKey}:${(item.date ?? "").slice(0, 10)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(item);
+    }
+  }
+  return out;
+}
+
 export async function fetchSimklCalendar(
   year: number,
   month: number,
@@ -140,36 +194,89 @@ export async function fetchSimklCalendar(
   if (!simklConnected()) return [];
   const cacheKey = `simkl-calendar:${year}-${month}`;
   return withCalendarCache(cacheKey, async () => {
-    const [watchlist, watching] = await Promise.all([
+    const [cache, watchlist, watching, hold, cdnTv, cdnAnime, cdnMovie] = await Promise.all([
+      syncWatchlistCache().catch(() => getLocalCache()),
       fetchSimklWatchlist().catch(() => []),
       fetchWatchingItems().catch(() => []),
+      fetchHoldItems().catch(() => []),
+      fetchSimklMonthCdnCatalog(year, month, "tv"),
+      fetchSimklMonthCdnCatalog(year, month, "anime"),
+      fetchSimklMonthCdnCatalog(year, month, "movie"),
     ]);
-    const items = [...watchlist, ...watching];
+
+    const userEntries = buildSimklUserEntries(cache, [...watching, ...watchlist, ...hold]);
+    if (userEntries.length === 0) return [];
+
+    const { items: cdnMatched, matchedKeys } = matchSimklCdnToUserCalendar(
+      year,
+      month,
+      { tv: cdnTv, anime: cdnAnime, movie: cdnMovie },
+      userEntries,
+    );
+
     const candidates: SavedCandidate[] = [];
-    const seenIds = new Set<string>();
-    for (const it of items) {
+    const seenCandidateIds = new Set<string>();
+    for (const entry of userEntries) {
+      if (entry.status !== "watching" && entry.status !== "plantowatch") continue;
+      if (entry.simklId != null && matchedKeys.has(`simkl:${entry.simklId}`)) continue;
       const id =
-        it.ids.imdb ??
-        (it.ids.tmdb
-          ? it.type === "movie"
-            ? `tmdb:movie:${it.ids.tmdb}`
-            : `tmdb:tv:${it.ids.tmdb}`
-          : it.ids.mal
-            ? `mal:${it.ids.mal}`
-            : null);
-      if (!id) continue;
-      if (seenIds.has(id)) continue;
-      seenIds.add(id);
+        entry.category === "anime"
+          ? (entry.ids.mal ? `mal:${entry.ids.mal}` : null) ??
+            (entry.ids.kitsu ? `kitsu:${entry.ids.kitsu}` : null) ??
+            (entry.ids.anilist ? `anilist:${entry.ids.anilist}` : null)
+          : entry.ids.imdb ??
+            (entry.ids.tmdb
+              ? entry.category === "movie"
+                ? `tmdb:movie:${entry.ids.tmdb}`
+                : `tmdb:tv:${entry.ids.tmdb}`
+              : null);
+      if (!id || matchedKeys.has(id) || seenCandidateIds.has(id)) continue;
+      seenCandidateIds.add(id);
+      const ts = entry.watchedAt ? Date.parse(entry.watchedAt) || 0 : 0;
+      const priorityBoost = entry.status === "watching" ? 1e13 : 0;
       candidates.push({
         id,
-        type: it.type === "show" ? "series" : "movie",
-        name: it.title,
-        mtime: 0,
+        type: entry.category === "movie" ? "movie" : "series",
+        name: entry.title,
+        mtime: priorityBoost + ts,
         temp: false,
       });
     }
-    if (candidates.length === 0) return [];
-    return resolveSavedCalendar(candidates, year, month, opts);
+
+    if (candidates.length === 0) {
+      cdnMatched.sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
+      return cdnMatched;
+    }
+
+    const fallbackItems = await resolveSavedCalendar(candidates, year, month, opts).catch(
+      () => [] as CalendarItem[],
+    );
+    const combined = [...cdnMatched];
+    const seenKeys = new Set<string>();
+    for (const item of cdnMatched) {
+      const ep = item.name.match(/\sS(\d+)E(\d+)/i);
+      const show = ep ? item.name.slice(0, item.name.indexOf(ep[0])) : item.name;
+      const norm = show.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const key = ep
+        ? `tv|${norm}|s${Number(ep[1])}e${Number(ep[2])}|${item.releaseDate}`
+        : `movie|${norm}|${item.releaseDate}`;
+      seenKeys.add(key);
+      seenKeys.add(item.id);
+    }
+    for (const item of fallbackItems) {
+      const ep = item.name.match(/\sS(\d+)E(\d+)/i);
+      const show = ep ? item.name.slice(0, item.name.indexOf(ep[0])) : item.name;
+      const norm = show.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const key = ep
+        ? `tv|${norm}|s${Number(ep[1])}e${Number(ep[2])}|${item.releaseDate}`
+        : `movie|${norm}|${item.releaseDate}`;
+      if (seenKeys.has(key) || seenKeys.has(item.id)) continue;
+      seenKeys.add(key);
+      seenKeys.add(item.id);
+      combined.push(item);
+    }
+    combined.sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
+    return combined;
   });
 }
 

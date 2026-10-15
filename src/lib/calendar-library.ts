@@ -196,33 +196,61 @@ async function seriesUpcoming(
   tmdbKey: string,
 ): Promise<ResolvedSeries | null> {
   if (isAnimeId(c.id)) return animeUpcoming(c.id, inWindow, tmdbKey);
+  let cm: ResolvedSeries | null = null;
   if (c.id.startsWith("tt")) {
-    const cm = await cinemetaSeriesUpcoming(c.id, inWindow);
-    if (cm) return cm;
+    cm = await cinemetaSeriesUpcoming(c.id, inWindow);
+    const todayISO = new Date().toISOString().slice(0, 10);
+    if (cm && cm.episodes.some((ep) => ep.airDate >= todayISO)) {
+      return cm;
+    }
   }
   if (tmdbKey) {
     const t = await tmdbSeries(c.id, inWindow, tmdbKey).catch(() => null);
-    if (t) return t;
-  } else if (c.id.startsWith("tt")) {
-    const up = await tvmazeUpcoming(c.id.split(":")[0], inWindow).catch(() => null);
-    if (up) {
+    if (t && t.episodes.length > 0) {
+      if (!cm) return t;
+      const byEp = new Map<string, ResolvedEpisode>();
+      for (const ep of t.episodes) byEp.set(`${ep.season}:${ep.number}`, ep);
+      for (const ep of cm.episodes) byEp.set(`${ep.season}:${ep.number}`, ep);
       return {
-        name: up.show.name,
-        poster: up.show.image,
-        isAnime: up.show.isAnime,
-        episodes: up.episodes.map((e) => ({
-          season: e.season,
-          number: e.number,
-          name: e.name,
-          airDate: e.airdate,
-          image: e.image,
-          overview: e.summary,
-          voteAverage: 0,
-        })),
+        name: cm.name || t.name,
+        poster: cm.poster ?? t.poster,
+        isAnime: cm.isAnime || t.isAnime,
+        episodes: Array.from(byEp.values()),
       };
     }
   }
-  return null;
+  if (c.id.startsWith("tt")) {
+    const up = await tvmazeUpcoming(c.id.split(":")[0], inWindow).catch(() => null);
+    if (up && up.episodes.length > 0) {
+      const mapped: ResolvedEpisode[] = up.episodes.map((e) => ({
+        season: e.season,
+        number: e.number,
+        name: e.name,
+        airDate: e.airdate,
+        image: e.image,
+        overview: e.summary,
+        voteAverage: 0,
+      }));
+      if (!cm) {
+        return {
+          name: up.show.name,
+          poster: up.show.image,
+          isAnime: up.show.isAnime,
+          episodes: mapped,
+        };
+      }
+      const byEp = new Map<string, ResolvedEpisode>();
+      for (const ep of mapped) byEp.set(`${ep.season}:${ep.number}`, ep);
+      for (const ep of cm.episodes) byEp.set(`${ep.season}:${ep.number}`, ep);
+      return {
+        name: cm.name || up.show.name,
+        poster: cm.poster ?? up.show.image,
+        isAnime: cm.isAnime || up.show.isAnime,
+        episodes: Array.from(byEp.values()),
+      };
+    }
+  }
+  return cm;
 }
 
 async function movieRelease(

@@ -4,6 +4,7 @@ import type { WatchlistStatus } from "../list-status";
 export type SimklCacheItem = {
   simklId: number;
   type: "movie" | "show" | "anime";
+  animeType?: string | null;
   title: string;
   year: number | null;
   status: WatchlistStatus;
@@ -11,6 +12,7 @@ export type SimklCacheItem = {
   watchedAt: string | null;
   watchedEpisodes?: string[];
   poster?: string | null;
+  ids?: RawIds;
 };
 
 export type SimklCache = {
@@ -32,10 +34,11 @@ export interface RawIds {
   simkl?: number;
   imdb?: string;
   tmdb?: number | string;
-  tvdb?: number;
-  mal?: number;
-  anidb?: number;
+  tvdb?: number | string;
+  mal?: number | string;
+  anidb?: number | string;
   kitsu?: number | string;
+  anilist?: number | string;
 }
 
 const CACHE_KEY_BASE = "harbor.simkl.cache.v2";
@@ -112,6 +115,7 @@ export function emptyCache(): SimklCache {
 
 export function indexItem(cache: SimklCache, item: SimklCacheItem, ids: RawIds | undefined) {
   if (!ids) return;
+  item.ids = { ...item.ids, ...ids, simkl: item.simklId };
   const simklId = item.simklId;
   if (ids.imdb) {
     cache.imdbToSimkl[ids.imdb] = simklId;

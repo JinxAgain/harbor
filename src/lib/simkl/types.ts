@@ -19,6 +19,7 @@ export type SimklIds = {
   mal?: number;
   anidb?: number;
   kitsu?: number;
+  anilist?: number;
 };
 
 export type SimklTarget =
@@ -30,6 +31,8 @@ export type SimklTarget =
 
 export type SimklItem = {
   type: "movie" | "show";
+  category?: "movie" | "show" | "anime";
+  status?: string;
   title: string;
   year: number | null;
   ids: SimklIds;

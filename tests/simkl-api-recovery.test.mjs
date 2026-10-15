@@ -184,16 +184,48 @@ test("watchlist requests full external identity while keeping the activity-gated
     json({
       movies: [{ movie: { title: "Movie", year: 2026, ids: { simkl: 9, tmdb: "45" } } }],
       shows: [],
-      anime: [],
+      anime: [
+        {
+          anime_type: "tv",
+          anime: {
+            title: "Anime Cour",
+            year: 2026,
+            ids: { simkl: 77, mal: "25777", kitsu: "8756", anilist: "20958" },
+          },
+        },
+      ],
     }),
   ]);
   const api = h.load("watchlist.ts");
   const result = await api.fetchWatchlist();
   assert.equal(result[0].ids.tmdb, 45);
   assert.equal(result[0].title, "Movie");
+  assert.equal(result[1].category, "anime");
+  assert.equal(result[1].ids.mal, 25777);
+  assert.equal(result[1].ids.kitsu, 8756);
+  assert.equal(result[1].ids.anilist, 20958);
   assert.equal(h.calls[0].url.searchParams.get("extended"), "full");
   assert.deepEqual(await api.fetchWatchlist(), result);
   assert.equal(h.calls.length, 1);
+});
+
+test("watchlist falls back to summary request when extended=full exceeds max_items", async () => {
+  const h = harness([
+    json({ error: "max_items", code: 400 }, 400),
+    json({
+      movies: [],
+      shows: [{ show: { title: "Long Show", year: 2020, ids: { simkl: 501, imdb: "tt501" } } }],
+      anime: [],
+    }),
+  ]);
+  const api = h.load("watchlist.ts");
+  const result = await api.fetchWatchingItems();
+  assert.equal(result.length, 1);
+  assert.equal(result[0].ids.simkl, 501);
+  assert.equal(result[0].ids.imdb, "tt501");
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.calls[0].url.searchParams.get("extended"), "full");
+  assert.equal(h.calls[1].url.searchParams.get("extended"), null);
 });
 
 test("server errors use bounded exponential backoff, jitter, and stop after five retries", async () => {

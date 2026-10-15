@@ -33,6 +33,8 @@ interface RawNode {
 interface RawEntry {
   status?: string;
   added_to_watchlist_at?: string;
+  last_watched_at?: string | null;
+  anime_type?: string | null;
   user_rating?: number | null;
   rating?: number | null;
   movie?: RawNode;
@@ -113,16 +115,18 @@ function parseAndMergeEntry(cache: SimklCache, entry: RawEntry, type: "movie" | 
   const item: SimklCacheItem = {
     simklId,
     type,
+    animeType: entry.anime_type ?? existing?.animeType ?? null,
     title: node.title ?? existing?.title ?? "",
     year: node.year ?? existing?.year ?? null,
     status,
     userRating: userRating ?? existing?.userRating ?? null,
-    watchedAt: entry.added_to_watchlist_at ?? existing?.watchedAt ?? null,
+    watchedAt: entry.last_watched_at ?? entry.added_to_watchlist_at ?? existing?.watchedAt ?? null,
     watchedEpisodes: watchedEpisodes ?? existing?.watchedEpisodes,
     poster:
       (entry.anime?.poster || entry.show?.poster || entry.movie?.poster) ??
       existing?.poster ??
       null,
+    ids: { ...existing?.ids, ...node.ids, simkl: simklId },
   };
 
   cache.items[simklIdStr] = item;
@@ -181,26 +185,31 @@ function applyActivities(cache: SimklCache, activities: any) {
   };
 }
 
+async function pullFullType(kind: "shows" | "movies" | "anime"): Promise<RawAllItems> {
+  return simklRequest<RawAllItems>(
+    `/sync/all-items/${kind}/all?extended=full&episode_watched_at=yes`,
+  ).catch((err) => {
+    if (err && typeof err === "object" && "status" in err && (err as { status?: number }).status === 400) {
+      return simklRequest<RawAllItems>(`/sync/all-items/${kind}/all`);
+    }
+    throw err;
+  });
+}
+
 async function bootstrapCache(activities: any): Promise<SimklCache> {
   const cache = emptyCache();
 
-  const showsData = await simklRequest<RawAllItems>(
-    "/sync/all-items/shows/all?extended=full&episode_watched_at=yes",
-  );
+  const showsData = await pullFullType("shows");
   for (const entry of showsData?.shows ?? []) {
     parseAndMergeEntry(cache, entry, "show");
   }
 
-  const moviesData = await simklRequest<RawAllItems>(
-    "/sync/all-items/movies/all?extended=full&episode_watched_at=yes",
-  );
+  const moviesData = await pullFullType("movies");
   for (const entry of moviesData?.movies ?? []) {
     parseAndMergeEntry(cache, entry, "movie");
   }
 
-  const animeData = await simklRequest<RawAllItems>(
-    "/sync/all-items/anime/all?extended=full&episode_watched_at=yes",
-  );
+  const animeData = await pullFullType("anime");
   for (const entry of animeData?.anime ?? []) {
     parseAndMergeEntry(cache, entry, "anime");
   }
