@@ -425,7 +425,7 @@ function nameHue(name: string): number {
   return h;
 }
 
-function SearchPill() {
+export function SearchPill() {
   const { setOpen } = useSearch();
   const { settings } = useSettings();
   const t = useT();

@@ -1,14 +1,12 @@
 import { ArrowLeft, Monitor } from "lucide-react";
 import { useContextMenu } from "@/lib/context-menu";
-import { Search } from "@/components/icons/search-icon";
 import { HarborMark } from "@/components/icons/harbor-mark";
 import { NotificationCenter } from "@/components/notification-center/notification-center";
 import { AccountMenu } from "@/chrome/account-menu/account-menu";
 import { RecordingPill } from "@/chrome/recording-pill";
-import { TogetherButton } from "@/chrome/topbar";
+import { SearchPill, TogetherButton } from "@/chrome/topbar";
 import { useBigPictureEntry } from "@/chrome/use-big-picture-entry";
 import { useT } from "@/lib/i18n";
-import { useSearch } from "@/lib/search-context";
 import { useSettings } from "@/lib/settings";
 import { getThemeById } from "@/lib/theme";
 import { useView } from "@/lib/view";
@@ -19,7 +17,6 @@ const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in windo
 export function FloatingTop() {
   const { view, setView, chromeHidden, canGoBack, goBack, topKind, exitPlayback } = useView();
   const { settings } = useSettings();
-  const { setOpen: setSearchOpen } = useSearch();
   const t = useT();
   const bigPicture = useBigPictureEntry();
   const { open: openContextMenu } = useContextMenu();
@@ -32,6 +29,7 @@ export function FloatingTop() {
     settings.theme.preset !== "custom" ? getThemeById(settings.theme.preset) : null;
   const customMark = themePreset?.logo?.mark ?? null;
   const liveActive = view === "live";
+  const inSettings = view === "settings";
   const showBack = canGoBack && topKind !== "home" && topKind !== "picker";
   const onBack = () => (topKind === "picker" ? exitPlayback() : goBack());
 
@@ -41,31 +39,49 @@ export function FloatingTop() {
       data-tauri-drag-region
       className={`fixed inset-x-0 top-0 z-[55] flex h-14 items-center gap-2 px-5 transition-opacity duration-300 ${chromeHidden ? "pointer-events-none opacity-0" : "opacity-100"}`}
     >
-      <button
-        type="button"
-        onClick={() => setView("home")}
-        className="harbor-minui-mark flex shrink-0 items-center gap-2 rounded-full px-1.5 py-1 text-ink transition-colors"
-        aria-label={t("chrome.harborHome")}
-      >
-        {customMark ? (
-          <img src={customMark} alt="" draggable={false} className="h-8 w-8 object-contain" />
-        ) : (
-          <HarborMark className="h-8 w-8" />
-        )}
-      </button>
-      {showBack && (
+      <div className="relative z-10 flex shrink-0 items-center gap-2">
         <button
           type="button"
-          onClick={onBack}
-          aria-label={t("common.back")}
-          className="pointer-events-auto flex h-10 shrink-0 items-center gap-2 rounded-full border border-edge-soft bg-surface ps-2.5 pe-4 text-[13px] font-semibold text-ink-muted shadow-[0_2px_8px_-4px_rgba(15,15,18,0.16)] transition-all hover:-translate-y-px hover:border-edge hover:text-ink hover:shadow-[0_4px_12px_-4px_rgba(15,15,18,0.22)]"
+          onClick={() => setView("home")}
+          className="harbor-minui-mark flex shrink-0 items-center gap-2 rounded-full px-1.5 py-1 text-ink transition-colors"
+          aria-label={t("chrome.harborHome")}
         >
-          <ArrowLeft size={15} strokeWidth={2.2} className="dir-icon" />
-          {t("common.back")}
+          {customMark ? (
+            <img src={customMark} alt="" draggable={false} className="h-8 w-8 object-contain" />
+          ) : (
+            <HarborMark className="h-8 w-8" />
+          )}
         </button>
-      )}
-      <div className="flex flex-1" data-tauri-drag-region onContextMenu={openEmptyMenu} />
-      <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
+        {showBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label={t("common.back")}
+            className="pointer-events-auto flex h-10 shrink-0 items-center gap-2 rounded-full border border-edge-soft bg-surface ps-2.5 pe-4 text-[13px] font-semibold text-ink-muted shadow-[0_2px_8px_-4px_rgba(15,15,18,0.16)] transition-all hover:-translate-y-px hover:border-edge hover:text-ink hover:shadow-[0_4px_12px_-4px_rgba(15,15,18,0.22)]"
+          >
+            <ArrowLeft size={15} strokeWidth={2.2} className="dir-icon" />
+            {t("common.back")}
+          </button>
+        )}
+      </div>
+
+      {/* Absolutely centered search box - remains strictly in the window center regardless of left/right widths */}
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 flex h-full items-center justify-center px-4"
+        data-tauri-drag-region
+        onContextMenu={openEmptyMenu}
+      >
+        {!inSettings && (
+          <div
+            data-tauri-drag-region="false"
+            className="pointer-events-auto min-w-0 transition-[width] duration-200 ease-out w-[14rem] sm:w-[18rem] md:w-[22rem] lg:w-[26rem] xl:w-[28rem] hover:w-[16rem] sm:hover:w-[22rem] md:hover:w-[26rem] lg:hover:w-[32rem] xl:hover:w-[34rem] focus-within:w-[16rem] sm:focus-within:w-[22rem] md:focus-within:w-[26rem] lg:focus-within:w-[32rem] xl:focus-within:w-[34rem] max-w-[calc(100vw-360px)]"
+          >
+            <SearchPill />
+          </div>
+        )}
+      </div>
+
+      <div className="relative z-10 ms-auto pointer-events-auto flex shrink-0 items-center gap-1.5">
         <RecordingPill />
         <NotificationCenter />
         {!liveActive && <TogetherButton variant="ghost" popoverPlacement="below-right" />}
@@ -74,10 +90,6 @@ export function FloatingTop() {
             <Monitor size={16} strokeWidth={2.2} />
           </PillBtn>
         )}
-        <PillBtn label={t("common.search")} onClick={() => setSearchOpen(true)}>
-          <Search size={16} strokeWidth={2.2} />
-          <span className="hidden sm:inline">{t("common.search")}</span>
-        </PillBtn>
         <AccountMenu
           trigger="pill"
           placement="down"
