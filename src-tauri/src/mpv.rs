@@ -224,6 +224,7 @@ const OBSERVED_PROPS: &[(&str, u64, PropertyKind)] = &[
     ("secondary-sub-text", 19, PropertyKind::String),
     ("path", 20, PropertyKind::String),
     ("audio-device-list", 21, PropertyKind::Node),
+    ("demuxer-cache-state", 22, PropertyKind::Node),
 ];
 
 #[derive(Clone, Copy)]
@@ -1313,6 +1314,7 @@ fn spawn_event_loop(
 ) {
     std::thread::spawn(move || {
         let mut last_timepos: Option<std::time::Instant> = None;
+        let mut last_cache_state: Option<std::time::Instant> = None;
         #[cfg(windows)]
         let reassert_gen = Arc::new(std::sync::atomic::AtomicU64::new(0));
         #[cfg(not(windows))]
@@ -1359,6 +1361,14 @@ fn spawn_event_loop(
                                 }
                             }
                             last_timepos = Some(now);
+                        } else if *name == "demuxer-cache-state" {
+                            let now = std::time::Instant::now();
+                            if let Some(prev) = last_cache_state {
+                                if now.duration_since(prev).as_millis() < 200 {
+                                    continue;
+                                }
+                            }
+                            last_cache_state = Some(now);
                         }
                     }
                     #[cfg(windows)]

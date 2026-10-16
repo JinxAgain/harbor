@@ -334,6 +334,27 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
   const urlByExternalFilename = new Map<string, ExternalSubtitleMetadata>();
   const preparedSubtitleCleanups = new PreparedSubtitleCleanupRegistry();
   const clearPreparedSubtitles = () => preparedSubtitleCleanups.clearAll();
+  let lastCachedEnd: number | null = null;
+  let lastSeekableRanges: Array<{ start: number; end: number }> = [];
+
+  const computeBufferedSec = (currentPos: number): number => {
+    if (lastSeekableRanges.length > 0) {
+      for (const r of lastSeekableRanges) {
+        if (currentPos >= r.start - 1.5 && currentPos <= r.end + 0.5) {
+          return Math.max(0, r.end - currentPos);
+        }
+      }
+      for (const r of lastSeekableRanges) {
+        if (r.start >= currentPos - 0.5) {
+          return Math.max(0, r.end - currentPos);
+        }
+      }
+    }
+    if (typeof lastCachedEnd === "number" && lastCachedEnd >= currentPos) {
+      return Math.max(0, lastCachedEnd - currentPos);
+    }
+    return 0;
+  };
 
   const addSeedSubtitles = async (subtitles: PlayerSource["subtitles"], expectedLoadId: number) => {
     const orderedSeeds = subtitles ?? [];
@@ -652,7 +673,12 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
     } else if (raw.event === "property-change") {
       const name = raw.name;
       const data = raw.data;
-      if (name === "time-pos" && typeof data === "number") snap.positionSec = data;
+      if (name === "time-pos" && typeof data === "number") {
+        snap.positionSec = data;
+        if (lastSeekableRanges.length > 0 || lastCachedEnd != null) {
+          snap.bufferedSec = computeBufferedSec(data);
+        }
+      }
       if (name === "path" && typeof data === "string") observedMediaPath = data;
       if (name === "duration" && typeof data === "number") snap.durationSec = data;
       if (name === "pause" && typeof data === "boolean") {
@@ -772,7 +798,32 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       if (name === "dwidth" && typeof data === "number") snap.videoWidth = data;
       if (name === "dheight" && typeof data === "number") snap.videoHeight = data;
       if (name === "video-params/gamma" && typeof data === "string" && data) snap.hdrGamma = data;
-      if (name === "demuxer-cache-duration" && typeof data === "number") snap.bufferedSec = data;
+      if (name === "demuxer-cache-state" && data && typeof data === "object") {
+        const state = data as Record<string, unknown>;
+        const rawRanges = Array.isArray(state["seekable-ranges"])
+          ? (state["seekable-ranges"] as Array<Record<string, unknown>>)
+          : null;
+        const cacheEnd = typeof state["cache-end"] === "number" ? state["cache-end"] : null;
+        if (rawRanges) {
+          lastSeekableRanges = rawRanges
+            .map((r) => ({
+              start: typeof r.start === "number" ? r.start : 0,
+              end: typeof r.end === "number" ? r.end : 0,
+            }))
+            .filter((r) => r.end >= r.start);
+        }
+        if (typeof cacheEnd === "number" && cacheEnd >= 0) {
+          lastCachedEnd = cacheEnd;
+        }
+        if (lastSeekableRanges.length > 0 || lastCachedEnd != null) {
+          snap.bufferedSec = computeBufferedSec(snap.positionSec);
+        }
+      }
+      if (name === "demuxer-cache-duration" && typeof data === "number") {
+        if (lastSeekableRanges.length === 0 && lastCachedEnd == null) {
+          snap.bufferedSec = data;
+        }
+      }
       if (name === "paused-for-cache" && typeof data === "boolean") snap.buffering = data;
       if (name === "af") {
         const repr = typeof data === "string" ? data : JSON.stringify(data ?? "");
@@ -902,6 +953,8 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       secondarySid = null;
       snap.positionSec = 0;
       snap.durationSec = 0;
+      lastCachedEnd = null;
+      lastSeekableRanges = [];
       snap.bufferedSec = 0;
       snap.buffering = false;
       snap.firstFrameReady = false;
