@@ -44,7 +44,8 @@ export function useChromeVisibility(params: {
     setChromeHidden(pipModeRef.current);
     if (hideTimer.current) window.clearTimeout(hideTimer.current);
     if (resizingUiRef.current || anyMenuOpenRef.current || getSeekHovering()) return;
-    let wait = playingRef.current && !drawModeRef.current ? CHROME_HIDE_MS_PLAYING : CHROME_HIDE_MS_PAUSED;
+    if (drawModeRef.current) return;
+    let wait = playingRef.current ? CHROME_HIDE_MS_PLAYING : CHROME_HIDE_MS_PAUSED;
     if (resumeHideRef.current) {
       resumeHideRef.current = false;
       wait = CHROME_HIDE_MS_RESUME;
@@ -60,6 +61,10 @@ export function useChromeVisibility(params: {
   const hideForResume = useCallback(() => {
     resumeHideRef.current = true;
   }, []);
+
+  useEffect(() => {
+    wakeChrome();
+  }, [drawMode, wakeChrome]);
 
   useEffect(() => {
     const playingChanged = prevPlayingRef.current !== playing;
@@ -82,12 +87,14 @@ export function useChromeVisibility(params: {
       lastInputKeyboardRef.current = true;
     };
     window.addEventListener("mousemove", onMove);
+    window.addEventListener("pointermove", onMove);
     window.addEventListener("touchstart", onMove);
     window.addEventListener("harbor:controller-activity", onMove);
     window.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("keydown", onKeyDown);
     return () => {
       window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("pointermove", onMove);
       window.removeEventListener("touchstart", onMove);
       window.removeEventListener("harbor:controller-activity", onMove);
       window.removeEventListener("pointerdown", onPointerDown);

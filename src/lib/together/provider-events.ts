@@ -109,8 +109,11 @@ export function applyRoomEvent(e: RoomEvent, sinks: RoomEventSinks): void {
       return next;
     });
     setPresenceMap((cur) => {
+      const prev = cur.get(e.from);
+      const now = Date.now();
+      if (prev && now - prev < 5000) return cur;
       const next = new Map(cur);
-      next.set(e.from, Date.now());
+      next.set(e.from, now);
       return next;
     });
   } else if (e.kind === "draw") {

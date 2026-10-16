@@ -337,7 +337,7 @@ export function DetailView({
     openManga,
   } = useView();
   useTvdbCastFallback(meta, detail, detectedKitsu, setDetail);
-  const { snapshot: roomSnapshot, claimHost } = useTogether();
+  const { snapshot: roomSnapshot, claimHost, clientId } = useTogether();
   const { isConnected: traktConnected } = useTrakt();
   const inWatchlist = useInWatchlist(meta.id, [detail?.imdbId]);
   const inLocalLibrary = useInLocalLibrary(meta.id, [detail?.imdbId]);
@@ -1413,7 +1413,8 @@ export function DetailView({
 
   const smartPlay = useCallback(
     async (forcePicker = false) => {
-      if (inSession) claimHost(true);
+      const isForeignHost = !!roomSnapshot.hostClientId && roomSnapshot.hostClientId !== clientId;
+      if (inSession && !isForeignHost) claimHost(true);
       const opts = { autoPlay: !forcePicker && settings.instantPlay, resume: !forcePicker };
       const launch = async (episode: PlayEpisode | undefined) => {
         const stream = () => openPicker(playMeta, episode, opts);

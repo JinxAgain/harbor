@@ -15,12 +15,11 @@ import { diagnoseRelayFailure, type RoomEvent, type RoomSnapshot } from "./clien
 export type { ClientState, RoomEvent, RoomSnapshot } from "./client-types";
 
 const AVATAR_MAX_CHARS = 590_000;
-const PING_INTERVAL_MS = 25_000;
-const LIVENESS_TIMEOUT_MS = 40_000;
+const PING_INTERVAL_MS = 15_000;
+const LIVENESS_TIMEOUT_MS = 45_000;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
 const MAX_RENAME_ATTEMPTS = 8;
-const RENAME_RECONNECT_MS = 60;
 const CONNECT_TIMEOUT_MS = 10_000;
 const MAX_FAIL_STREAK = 4;
 
@@ -44,7 +43,6 @@ export class TogetherClient {
   private intentional = false;
   private suppressUntil = 0;
   private outQueue: ClientMessage[] = [];
-  private lastSentInvite: PlayInvite | null = null;
   private claimedHost = false;
 
   private connectWatchdog: number | null = null;
@@ -132,7 +130,6 @@ export class TogetherClient {
     }
     this.cleanup();
     this.outQueue = [];
-    this.lastSentInvite = null;
     this.reconnectAttempt = 0;
     this.intentional = false;
     this.room = room;
@@ -153,7 +150,6 @@ export class TogetherClient {
     this.reconnectAttempt = 0;
     this.room = null;
     this.outQueue = [];
-    this.lastSentInvite = null;
     this.claimedHost = false;
     this.update({
       state: "disconnected",
@@ -197,12 +193,11 @@ export class TogetherClient {
 
   sendInvite(invite: PlayInvite): void {
     if (!this.room || !invite.mediaId) return;
-    this.lastSentInvite = invite;
     this.send({ t: "invite", room: this.room, clientId: this.clientId, invite });
   }
 
   clearInvite(): void {
-    this.lastSentInvite = null;
+    // No-op: invite replay has been eliminated
   }
 
   markReady(ready: boolean): void {
@@ -218,7 +213,11 @@ export class TogetherClient {
 
   private reconcileHostClaim(hostClientId: string | null): void {
     if (!hostClientId) return;
-    this.claimedHost = hostClientId === this.clientId;
+    if (hostClientId !== this.clientId) {
+      this.claimedHost = false;
+    } else if (this.snapshot.participants.length <= 1) {
+      this.claimedHost = true;
+    }
   }
 
   startRoom(): void {
@@ -294,14 +293,6 @@ export class TogetherClient {
       this.flushOutQueue();
       if (this.claimedHost) {
         this.sendNow({ t: "claim-host", room: this.room, clientId: this.clientId, fresh: false });
-      }
-      if (this.lastSentInvite) {
-        this.sendNow({
-          t: "invite",
-          room: this.room,
-          clientId: this.clientId,
-          invite: this.lastSentInvite,
-        });
       }
       this.startPing();
     };
@@ -414,30 +405,6 @@ export class TogetherClient {
           return;
         }
         this.update({ participants: nextParticipants });
-        if (incoming.id !== this.clientId && this.room && this.ws?.readyState === WebSocket.OPEN) {
-          this.sendNow({
-            t: "profile",
-            room: this.room,
-            clientId: this.clientId,
-            name: this.name,
-            avatar: this.avatar,
-            color: this.color,
-          });
-        }
-        if (
-          incoming.id !== this.clientId &&
-          this.lastSentInvite &&
-          this.snapshot.hostClientId === this.clientId &&
-          this.room &&
-          this.ws?.readyState === WebSocket.OPEN
-        ) {
-          this.sendNow({
-            t: "invite",
-            room: this.room,
-            clientId: this.clientId,
-            invite: this.lastSentInvite,
-          });
-        }
         return;
       }
       case "participant-left": {
@@ -568,13 +535,14 @@ export class TogetherClient {
     this.name = candidate;
     this.renameAttempts += 1;
     if (this.ws && this.ws.readyState === WebSocket.OPEN && this.room) {
-      this.send({ t: "leave", room: this.room, clientId: this.clientId });
-    }
-    this.intentional = true;
-    this.cleanup();
-    this.intentional = false;
-    if (this.room) {
-      window.setTimeout(() => this.openSocket(), RENAME_RECONNECT_MS);
+      this.sendNow({
+        t: "profile",
+        room: this.room,
+        clientId: this.clientId,
+        name: this.name,
+        avatar: this.avatar,
+        color: this.color,
+      });
     }
     return true;
   }
@@ -656,7 +624,9 @@ export class TogetherClient {
       void this.goTerminal();
       return;
     }
-    this.update({ state: "connecting" });
+    if (!this.everJoined || this.failStreak >= 2) {
+      this.update({ state: "connecting" });
+    }
     this.scheduleReconnect();
   }
 

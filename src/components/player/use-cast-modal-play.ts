@@ -7,11 +7,12 @@ import { usePlayerNavigation, type PlayEpisode } from "@/lib/view";
 export function useCastModalPlay() {
   const { exitPlayer, openPicker } = usePlayerNavigation();
   const { settings } = useSettings();
-  const { snapshot, claimHost } = useTogether();
+  const { snapshot, claimHost, clientId } = useTogether();
   return useCallback(
     (m: Meta, ep?: PlayEpisode) => {
       const inSession = snapshot.state === "joined" && snapshot.participants.length >= 2;
-      if (inSession) claimHost(true);
+      const isForeignHost = !!snapshot.hostClientId && snapshot.hostClientId !== clientId;
+      if (inSession && !isForeignHost) claimHost(true);
       exitPlayer();
       openPicker(m, ep, { autoPlay: settings.instantPlay, resume: true });
     },
@@ -21,6 +22,8 @@ export function useCastModalPlay() {
       settings.instantPlay,
       snapshot.state,
       snapshot.participants.length,
+      snapshot.hostClientId,
+      clientId,
       claimHost,
     ],
   );

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { nameColor } from "@/lib/together/colors";
 
 export function Avatar({
   name,
@@ -14,11 +15,6 @@ export function Avatar({
   const initial = (name.trim()[0] || "?").toUpperCase();
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [src]);
-  const hue = useMemo(() => {
-    let h = 0;
-    for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360;
-    return h;
-  }, [name]);
   if (src && !failed) {
     return (
       <span
@@ -42,7 +38,7 @@ export function Avatar({
         width: size,
         height: size,
         fontSize: Math.max(9, Math.round(size * 0.5)),
-        backgroundColor: color ?? `oklch(0.78 0.13 ${hue})`,
+        backgroundColor: color ?? nameColor(name),
       }}
     >
       {initial}

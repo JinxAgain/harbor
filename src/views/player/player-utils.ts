@@ -4,7 +4,8 @@ import type { PlayerBridge } from "@/lib/player/bridge";
 import type { MonitorInfo } from "@/lib/monitors";
 import { isLinuxDesktop, isMacDesktop, isWindowsDesktop } from "@/lib/platform";
 
-export const SYNC_DRIFT_TOLERANCE_S = 0.6;
+export const SYNC_DRIFT_TOLERANCE_S = 1.5;
+export const SYNC_SEEK_COOLDOWN_MS = 3500;
 export const SYNC_SUPPRESS_MS = 1400;
 export const SYNC_PLAY_LOOKAHEAD_S = 0.4;
 export const SYNC_MAX_AGE_S = 30;

@@ -655,11 +655,27 @@ function TogetherLocationPublisher() {
   const { snapshot, sendPresence } = useTogether();
   const inSession = snapshot.state === "joined";
   const participantsCount = snapshot.participants.length;
+  const lastKeyRef = useRef<string>("");
+  const lastCountRef = useRef<number>(0);
+
   useEffect(() => {
-    if (!inSession) return;
+    if (!inSession) {
+      lastKeyRef.current = "";
+      lastCountRef.current = 0;
+      return;
+    }
     const location = computeLocation();
-    sendPresence(location ?? undefined);
-    const id = window.setInterval(() => sendPresence(location ?? undefined), 6000);
+    const key = location
+      ? `${location.kind}|${(location as any).meta?.id ?? (location as any).personId ?? (location as any).service ?? (location as any).addonId ?? ""}|${(location as any).episode?.season ?? ""}|${(location as any).episode?.episode ?? ""}`
+      : "";
+    if (key !== lastKeyRef.current || participantsCount > lastCountRef.current) {
+      lastKeyRef.current = key;
+      lastCountRef.current = participantsCount;
+      sendPresence(location ?? undefined);
+    } else {
+      sendPresence(undefined);
+    }
+    const id = window.setInterval(() => sendPresence(undefined), 6000);
     return () => window.clearInterval(id);
     function computeLocation(): import("@/lib/together/protocol").ParticipantLocation | null {
       const metaToLoc = (m: import("@/lib/cinemeta").Meta) => ({

@@ -23,6 +23,41 @@ export function buildInviteUrl(relayUrl: string, roomCode: string, origin?: stri
   return `${base}/?${params.toString()}`;
 }
 
+export function isValidRelayUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    const isDev = typeof import.meta !== "undefined" && Boolean((import.meta as any).env?.DEV);
+    if (parsed.protocol === "ws:") {
+      return isDev && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1");
+    }
+    if (parsed.protocol !== "wss:") {
+      return false;
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "0.0.0.0" ||
+      host === "::1" ||
+      host.endsWith(".local") ||
+      host.endsWith(".internal")
+    ) {
+      return isDev;
+    }
+    if (
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
+      /^169\.254\./.test(host)
+    ) {
+      return isDev;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function parseInviteFromLocation(): ParsedInvite | null {
   if (typeof window === "undefined") return null;
   const params = new URLSearchParams(window.location.search);
@@ -31,7 +66,7 @@ export function parseInviteFromLocation(): ParsedInvite | null {
   if (!relay || !roomRaw) return null;
   const room = normalizeRoomCode(roomRaw);
   if (!room) return null;
-  if (!/^wss?:\/\//.test(relay)) return null;
+  if (!isValidRelayUrl(relay)) return null;
   return { relayUrl: relay, roomCode: room };
 }
 

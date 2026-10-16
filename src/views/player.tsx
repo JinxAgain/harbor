@@ -1298,12 +1298,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     }
   }, [src]);
 
-  const overlayProps: PlayerOverlayLayersProps = {
-    tenFoot,
-    snap,
-    engine,
-    src,
-    homeServerQualityControl: (
+  const homeServerQualityControl = useMemo(
+    () => (
       <HomeServerQualityControl
         src={src}
         positionMs={Math.max(0, snap.positionSec * 1000)}
@@ -1312,6 +1308,19 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
         replace={replacePlayerSrc}
       />
     ),
+    [src, snap.positionSec, playing, settings.theme, settings.playerChromeTheme, replacePlayerSrc],
+  );
+
+  const handleScreenshot = useCallback(() => {
+    frameGrab.trigger();
+  }, [frameGrab]);
+
+  const overlayProps: PlayerOverlayLayersProps = {
+    tenFoot,
+    snap,
+    engine,
+    src,
+    homeServerQualityControl,
     adStreamRef: playStreamRef,
     adUrl: playUrl,
     subShowInPip: settings.subShowInPip,
@@ -1376,7 +1385,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     showChrome,
     ab,
     frameGrabToast: frameGrab.toast,
-    onScreenshot: () => frameGrab.trigger(),
+    onScreenshot: handleScreenshot,
     gif,
     clip,
     loaderActive,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTogether, type ChatMessage } from "@/lib/together/provider";
 import { useView } from "@/lib/view";
+import { nameHue } from "@/lib/together/colors";
 
 const VISIBLE_MS = 5500;
 const MAX_TOASTS = 3;
@@ -103,10 +104,4 @@ function ChatBubble({
       </div>
     </div>
   );
-}
-
-function nameHue(name: string): number {
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360;
-  return h;
 }

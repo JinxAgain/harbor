@@ -6,7 +6,7 @@ import type { RoomSnapshot } from "@/lib/together/client";
 import type { SourceDescriptor, SyncState } from "@/lib/together/protocol";
 import type { PlayerSrc } from "@/lib/view";
 import type { RoomCommand } from "@/lib/together/protocol";
-import { HOST_HEARTBEAT_MS, SEEK_APPLY_DEBOUNCE_MS, SYNC_DRIFT_TOLERANCE_S, SYNC_MAX_AGE_S, SYNC_PLAY_LOOKAHEAD_S, SYNC_SEEK_JUMP_S, SYNC_SUPPRESS_MS } from "../player-utils";
+import { HOST_HEARTBEAT_MS, SEEK_APPLY_DEBOUNCE_MS, SYNC_DRIFT_TOLERANCE_S, SYNC_MAX_AGE_S, SYNC_PLAY_LOOKAHEAD_S, SYNC_SEEK_COOLDOWN_MS, SYNC_SEEK_JUMP_S, SYNC_SUPPRESS_MS } from "../player-utils";
 
 type ForeignNotice = { title: string | null; from: string };
 
@@ -16,7 +16,13 @@ function syncRate(state: SyncState): number {
     : 1;
 }
 
-function syncTarget(state: SyncState, duration: number): number {
+export function syncExpectedPosition(state: SyncState, duration: number): number {
+  const age = Math.min(SYNC_MAX_AGE_S, Math.max(0, (Date.now() - state.updatedAt) / 1000));
+  const expected = state.positionSeconds + (state.playing ? age * syncRate(state) : 0);
+  return duration > 0 ? Math.min(expected, Math.max(0, duration - 0.25)) : expected;
+}
+
+export function syncTarget(state: SyncState, duration: number): number {
   const age = Math.min(SYNC_MAX_AGE_S, Math.max(0, (Date.now() - state.updatedAt) / 1000));
   // Age and lookahead are wall-clock seconds; project them at the host's rate.
   const target = state.positionSeconds + (state.playing ? (age + SYNC_PLAY_LOOKAHEAD_S) * syncRate(state) : 0);
@@ -89,6 +95,9 @@ export function useRoomSync(params: {
   isHostRef.current = isHost;
   const syncCatchUpRef = useRef(false);
   const lastAppliedStateAtRef = useRef(0);
+  const lastSeekAtRef = useRef(0);
+  const bufferingRef = useRef(snap.buffering);
+  bufferingRef.current = snap.buffering;
   const mediaKey = `${src.meta.id}|${src.episode?.season ?? ""}|${src.episode?.episode ?? ""}`;
 
   useEffect(() => {
@@ -220,10 +229,17 @@ export function useRoomSync(params: {
         b.setRate(rate);
       }
       const livePos = getPlaybackPosition();
+      const expectedPos = syncExpectedPosition(state, durationRef.current);
       const target = syncTarget(state, durationRef.current);
-      const drift = Math.abs(livePos - target);
+      const drift = Math.abs(livePos - expectedPos);
       const playStateChanged = state.playing !== (snap.status === "playing");
       const driftTooBig = drift > SYNC_DRIFT_TOLERANCE_S;
+
+      if (!playStateChanged && drift < SYNC_SEEK_JUMP_S) {
+        if (bufferingRef.current) return;
+        if (Date.now() - lastSeekAtRef.current < SYNC_SEEK_COOLDOWN_MS) return;
+      }
+
       if (syncCatchUpRef.current) {
         if (drift < SYNC_SEEK_JUMP_S) {
           const buffered = getPlaybackBuffered();
@@ -243,6 +259,7 @@ export function useRoomSync(params: {
       if (!playStateChanged && !driftTooBig) return;
       if (playStateChanged || driftTooBig) {
         b.seek(target);
+        lastSeekAtRef.current = Date.now();
         if (driftTooBig) syncCatchUpRef.current = true;
       }
       if (state.playing && snap.status !== "playing") b.play().catch(() => {});
@@ -262,13 +279,21 @@ export function useRoomSync(params: {
       }
       if (state.updatedAt < lastAppliedStateAtRef.current) return;
       lastAppliedStateAtRef.current = state.updatedAt;
+      const expectedPos = syncExpectedPosition(state, durationRef.current);
       const target = syncTarget(state, durationRef.current);
       const playing = cast.isPlaying();
-      const drift = Math.abs(cast.getPosition() - target);
+      const drift = Math.abs(cast.getPosition() - expectedPos);
       const playStateChanged = state.playing !== playing;
-      if (!playStateChanged && drift <= SYNC_DRIFT_TOLERANCE_S) return;
+      const driftTooBig = drift > SYNC_DRIFT_TOLERANCE_S;
+      if (!playStateChanged && !driftTooBig) return;
+      if (!playStateChanged && drift < SYNC_SEEK_JUMP_S && Date.now() - lastSeekAtRef.current < SYNC_SEEK_COOLDOWN_MS) {
+        return;
+      }
       suppressOutgoingFor(SYNC_SUPPRESS_MS);
-      if (drift > SYNC_DRIFT_TOLERANCE_S) void cast.seek(target);
+      if (playStateChanged || driftTooBig) {
+        void cast.seek(target);
+        lastSeekAtRef.current = Date.now();
+      }
       if (state.playing && !playing) void cast.play();
       if (!state.playing && playing) void cast.pause();
     });
@@ -313,12 +338,19 @@ export function useRoomSync(params: {
     markReady(false);
   }, [mediaKey, inRoom, markReady, selfFrameReadyRef]);
   useEffect(() => {
-    if (!inRoom || selfFrameReadyRef.current) return;
+    if (!inRoom) return;
+    if (selfFrameReadyRef.current) {
+      const self = roomSnapshot.participants.find((p) => p.id === clientId);
+      if (self && self.ready === false) {
+        markReady(true);
+      }
+      return;
+    }
     if (snap.videoWidth > 0 && snap.videoHeight > 0 && snap.durationSec > 0) {
       selfFrameReadyRef.current = true;
       markReady(true);
     }
-  }, [inRoom, snap.videoWidth, snap.videoHeight, snap.durationSec, markReady, selfFrameReadyRef]);
+  }, [inRoom, snap.videoWidth, snap.videoHeight, snap.durationSec, markReady, selfFrameReadyRef, roomSnapshot.participants, clientId]);
 
   useEffect(() => {
     if (!inRoom || hasStarted || roomSnapshot.started) return;

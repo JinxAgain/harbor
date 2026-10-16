@@ -18,6 +18,8 @@ import { ListenTogetherCta } from "./together-modal/listen-together-cta";
 import { useListenTogether } from "@/lib/listen-together/provider";
 import { TogetherRelayBanner } from "./together-relay-banner";
 import { ThreeLiquidGlassSurface } from "@/components/ThreeLiquidGlassSurface";
+import { isValidRelayUrl } from "@/lib/together/invite";
+import { normalizeRoomCode } from "@/lib/together/protocol";
 
 export function TogetherModalShell() {
   const { closeModal } = useTogether();
@@ -103,9 +105,10 @@ export function TogetherPopover({
             ? value
             : `https://x${value.startsWith("?") ? value : `?${value}`}`,
         );
-        const relay = url.searchParams.get("harbor-relay");
-        const room = url.searchParams.get("harbor-room");
-        if (relay && room) {
+        const relay = url.searchParams.get("harbor-relay")?.trim();
+        const roomRaw = url.searchParams.get("harbor-room")?.trim();
+        const room = roomRaw ? normalizeRoomCode(roomRaw) : null;
+        if (relay && room && isValidRelayUrl(relay)) {
           if (settings.togetherRelayUrl !== relay) {
             update({ togetherRelayUrl: relay });
           }

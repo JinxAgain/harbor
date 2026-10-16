@@ -1,5 +1,6 @@
-const WORKER_VERSION = 11;
+const WORKER_VERSION = 12;
 const MAX_AVATAR_LENGTH = 600_000;
+const RECONNECT_GRACE_MS = 8000;
 
 function sanitizeAvatar(v) {
   if (typeof v !== "string") return null;
@@ -18,6 +19,38 @@ function sanitizeSource(v) {
   if (typeof v.durationSec === "number" && isFinite(v.durationSec) && v.durationSec >= 0) out.durationSec = v.durationSec;
   if (typeof v.fileIdx === "number" && isFinite(v.fileIdx) && v.fileIdx >= 0) out.fileIdx = v.fileIdx;
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function sanitizeLocation(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const kind = typeof v.kind === "string" ? v.kind.slice(0, 32) : "";
+  if (!kind) return undefined;
+  const out = { kind };
+  if (typeof v.id === "string" && v.id.length <= 256) out.id = v.id;
+  if (typeof v.name === "string" && v.name.length <= 300) out.name = v.name;
+  if (typeof v.service === "string" && v.service.length <= 64) out.service = v.service;
+  if (typeof v.addonId === "string" && v.addonId.length <= 256) out.addonId = v.addonId;
+  if (typeof v.personId === "number" && isFinite(v.personId)) out.personId = v.personId;
+  if (typeof v.meta === "object" && v.meta && !Array.isArray(v.meta)) {
+    const m = {};
+    if (typeof v.meta.id === "string" && v.meta.id.length <= 256) m.id = v.meta.id;
+    if (typeof v.meta.type === "string" && v.meta.type.length <= 32) m.type = v.meta.type;
+    if (typeof v.meta.name === "string" && v.meta.name.length <= 300) m.name = v.meta.name;
+    if (typeof v.meta.poster === "string" && v.meta.poster.length <= 2000) m.poster = v.meta.poster;
+    if (typeof v.meta.background === "string" && v.meta.background.length <= 2000) m.background = v.meta.background;
+    if (typeof v.meta.logo === "string" && v.meta.logo.length <= 2000) m.logo = v.meta.logo;
+    if (typeof v.meta.releaseInfo === "string" && v.meta.releaseInfo.length <= 64) m.releaseInfo = v.meta.releaseInfo;
+    out.meta = m;
+  }
+  if (typeof v.episode === "object" && v.episode && !Array.isArray(v.episode)) {
+    const ep = {
+      season: typeof v.episode.season === "number" ? v.episode.season : 0,
+      episode: typeof v.episode.episode === "number" ? v.episode.episode : 0,
+    };
+    if (typeof v.episode.name === "string" && v.episode.name.length <= 300) ep.name = v.episode.name;
+    out.episode = ep;
+  }
+  return out;
 }
 
 function sanitizeColor(v) {
@@ -69,8 +102,10 @@ export default {
 function checkRate(ip) {
   if (!ip) return true;
   const now = Date.now();
-  for (const [k, e] of RATE_BUCKET) {
-    if (now - e.windowStart > RATE_WINDOW_MS) RATE_BUCKET.delete(k);
+  if (RATE_BUCKET.size > 2000) {
+    for (const [k, e] of RATE_BUCKET) {
+      if (now - e.windowStart > RATE_WINDOW_MS || RATE_BUCKET.size > 1500) RATE_BUCKET.delete(k);
+    }
   }
   const entry = RATE_BUCKET.get(ip);
   if (!entry || now - entry.windowStart > RATE_WINDOW_MS) {
@@ -147,19 +182,33 @@ export class Room {
   constructor(state) {
     this.state = state;
     this.peers = new Map();
+    this.disconnectTimers = new Map();
     this.syncState = null;
     this.hostClientId = null;
+    this.explicitHostClientId = null;
     this.started = false;
     this.lastActivity = Date.now();
     for (const ws of state.getWebSockets()) {
       const att = ws.deserializeAttachment();
-      if (att && att.clientId) this.peers.set(ws, { ...att, avatar: null, lastStateAt: 0 });
+      if (att && att.clientId) this.peers.set(ws, { ...att, avatar: null, location: null, lastStateAt: 0 });
     }
     state.blockConcurrencyWhile(async () => {
-      const stored = await state.storage.get(["syncState", "hostClientId", "started"]);
+      const stored = await state.storage.get(["syncState", "hostClientId", "explicitHostClientId", "started"]);
       this.syncState = stored.get("syncState") ?? null;
       this.hostClientId = stored.get("hostClientId") ?? null;
+      this.explicitHostClientId = stored.get("explicitHostClientId") ?? null;
       this.started = stored.get("started") ?? false;
+      const peerKeys = Array.from(this.peers.values()).map((p) => `peer:${p.clientId}`);
+      if (peerKeys.length > 0) {
+        const peerData = await state.storage.get(peerKeys);
+        for (const peer of this.peers.values()) {
+          const meta = peerData.get(`peer:${peer.clientId}`);
+          if (meta) {
+            if (meta.avatar) peer.avatar = meta.avatar;
+            if (meta.location) peer.location = meta.location;
+          }
+        }
+      }
     });
   }
 
@@ -167,12 +216,38 @@ export class Room {
     if (this.hostClientId == null) this.state.storage.delete("hostClientId");
     else this.state.storage.put("hostClientId", this.hostClientId);
   }
+  saveExplicitHost() {
+    if (this.explicitHostClientId == null) this.state.storage.delete("explicitHostClientId");
+    else this.state.storage.put("explicitHostClientId", this.explicitHostClientId);
+  }
   saveStarted() {
     this.state.storage.put("started", this.started);
   }
   saveSync() {
     if (this.syncState == null) this.state.storage.delete("syncState");
     else this.state.storage.put("syncState", this.syncState);
+  }
+  savePeerMeta(peer) {
+    if (peer.avatar || peer.location) {
+      this.state.storage.put(`peer:${peer.clientId}`, {
+        avatar: peer.avatar ?? null,
+        location: peer.location ?? null,
+      });
+    } else {
+      this.state.storage.delete(`peer:${peer.clientId}`);
+    }
+  }
+
+  resetIfEmpty() {
+    if (this.peers.size > 0 || this.disconnectTimers.size > 0) return;
+    this.started = false;
+    this.syncState = null;
+    this.hostClientId = null;
+    this.explicitHostClientId = null;
+    this.saveStarted();
+    this.saveSync();
+    this.saveHost();
+    this.saveExplicitHost();
   }
   attach(ws, peer) {
     try {
@@ -259,7 +334,20 @@ export class Room {
     const peer = this.peers.get(socket);
     if (!peer) return;
     if (this.hostClientId === peer.clientId && !msg.fresh) return;
+
+    if (!msg.fresh && this.hostClientId != null && this.hostClientId !== peer.clientId) {
+      const currentHostActive = Array.from(this.peers.values()).some((p) => p.clientId === this.hostClientId);
+      if (currentHostActive && this.explicitHostClientId !== peer.clientId) {
+        this.send(socket, { t: "host", hostClientId: this.hostClientId });
+        return;
+      }
+    }
+
     this.hostClientId = peer.clientId;
+    if (msg.fresh) {
+      this.explicitHostClientId = peer.clientId;
+      this.saveExplicitHost();
+    }
     this.saveHost();
     this.broadcast({ t: "host", hostClientId: this.hostClientId });
     if (msg.fresh) {
@@ -350,12 +438,17 @@ export class Room {
   handlePresence(socket, msg) {
     const peer = this.peers.get(socket);
     if (!peer) return;
+    const cleanLocation = msg && msg.location ? sanitizeLocation(msg.location) : undefined;
+    if (cleanLocation) {
+      peer.location = cleanLocation;
+      this.savePeerMeta(peer);
+    }
     this.broadcast(
       {
         t: "presence",
         from: peer.clientId,
         activeAt: Date.now(),
-        location: msg && typeof msg.location === "object" ? msg.location : undefined,
+        location: cleanLocation ?? peer.location ?? undefined,
       },
       socket,
     );
@@ -369,7 +462,10 @@ export class Room {
       { t: "host-leaving", from: peer.clientId, name: peer.name, at: Date.now() },
       socket,
     );
-    this.reassignHost(peer.clientId);
+    this.started = false;
+    this.saveStarted();
+    this.syncState = null;
+    this.saveSync();
   }
 
   reassignHost(excludeClientId) {
@@ -389,31 +485,69 @@ export class Room {
       try { socket.close(1008, "missing_client_id"); } catch {}
       return;
     }
+    const pendingDisconnect = this.disconnectTimers.get(msg.clientId);
+    if (pendingDisconnect) {
+      clearTimeout(pendingDisconnect.timer);
+      this.disconnectTimers.delete(msg.clientId);
+    }
     const name = (msg.name || "Guest").toString().slice(0, 32);
     const avatar = sanitizeAvatar(msg.avatar);
     const color = sanitizeColor(msg.color);
-    const peer = { clientId: msg.clientId, name, joinedAt: Date.now(), ready: false, avatar, color, lastStateAt: 0 };
+
+    let prevPeer = pendingDisconnect ? pendingDisconnect.peer : null;
     for (const [s, p] of this.peers) {
       if (p.clientId === msg.clientId && s !== socket) {
+        prevPeer = p;
         try { s.close(1000, "replaced"); } catch {}
         this.peers.delete(s);
       }
     }
+
+    const peer = {
+      clientId: msg.clientId,
+      name,
+      joinedAt: prevPeer ? prevPeer.joinedAt : Date.now(),
+      ready: prevPeer ? prevPeer.ready : false,
+      avatar: avatar ?? (prevPeer ? prevPeer.avatar : null),
+      color: color ?? (prevPeer ? prevPeer.color : null),
+      location: prevPeer ? prevPeer.location : null,
+      lastStateAt: 0,
+    };
     this.peers.set(socket, peer);
     this.attach(socket, peer);
+    this.savePeerMeta(peer);
+
     const becameHost = !this.hostClientId;
     if (becameHost) {
       this.hostClientId = peer.clientId;
+      this.explicitHostClientId = peer.clientId;
       this.saveHost();
+      this.saveExplicitHost();
     }
-    const participants = Array.from(this.peers.values()).map((p) => ({
-      id: p.clientId,
-      name: p.name,
-      joinedAt: p.joinedAt,
-      ready: !!p.ready,
-      avatar: p.avatar ?? null,
-      color: p.color ?? null,
-    }));
+    const participantsMap = new Map();
+    for (const p of this.peers.values()) {
+      participantsMap.set(p.clientId, {
+        id: p.clientId,
+        name: p.name,
+        joinedAt: p.joinedAt,
+        ready: !!p.ready,
+        avatar: p.avatar ?? null,
+        color: p.color ?? null,
+      });
+    }
+    for (const { peer: pendingPeer } of this.disconnectTimers.values()) {
+      if (!participantsMap.has(pendingPeer.clientId)) {
+        participantsMap.set(pendingPeer.clientId, {
+          id: pendingPeer.clientId,
+          name: pendingPeer.name,
+          joinedAt: pendingPeer.joinedAt,
+          ready: !!pendingPeer.ready,
+          avatar: pendingPeer.avatar ?? null,
+          color: pendingPeer.color ?? null,
+        });
+      }
+    }
+    const participants = Array.from(participantsMap.values());
     this.send(socket, {
       t: "joined",
       room: "",
@@ -421,23 +555,25 @@ export class Room {
       state: this.syncState,
       hostClientId: this.hostClientId,
       started: this.started,
-      srvAt: Date.now(),
+      srvAt: this.syncState?.srvAt ?? Date.now(),
       relayVersion: WORKER_VERSION,
     });
-    this.broadcast(
-      {
-        t: "participant-joined",
-        participant: {
-          id: peer.clientId,
-          name: peer.name,
-          joinedAt: peer.joinedAt,
-          ready: false,
-          avatar: peer.avatar,
-          color: peer.color,
+    if (!pendingDisconnect && !prevPeer) {
+      this.broadcast(
+        {
+          t: "participant-joined",
+          participant: {
+            id: peer.clientId,
+            name: peer.name,
+            joinedAt: peer.joinedAt,
+            ready: peer.ready,
+            avatar: peer.avatar,
+            color: peer.color,
+          },
         },
-      },
-      socket,
-    );
+        socket,
+      );
+    }
     if (becameHost) this.broadcast({ t: "host", hostClientId: this.hostClientId }, socket);
   }
 
@@ -448,6 +584,7 @@ export class Room {
     peer.avatar = sanitizeAvatar(msg.avatar);
     peer.color = sanitizeColor(msg.color);
     this.attach(socket, peer);
+    this.savePeerMeta(peer);
     this.broadcast({
       t: "participant-profile",
       participant: {
@@ -462,9 +599,15 @@ export class Room {
   handleLeave(socket) {
     const peer = this.peers.get(socket);
     if (!peer) return;
+    if (this.disconnectTimers.has(peer.clientId)) {
+      clearTimeout(this.disconnectTimers.get(peer.clientId)?.timer);
+      this.disconnectTimers.delete(peer.clientId);
+    }
     this.peers.delete(socket);
+    this.state.storage.delete(`peer:${peer.clientId}`);
     this.broadcast({ t: "participant-left", clientId: peer.clientId, name: peer.name });
     if (this.hostClientId === peer.clientId) this.reassignHost();
+    this.resetIfEmpty();
     try { socket.close(1000, "left"); } catch {}
   }
 
@@ -492,7 +635,7 @@ export class Room {
       if (this.syncState && s.updatedAt < this.syncState.updatedAt - 2000) return;
     }
     peer.lastStateAt = now;
-    const stamped = { ...s, hostClientId: this.hostClientId };
+    const stamped = { ...s, hostClientId: this.hostClientId, srvAt: now };
     this.syncState = stamped;
     this.saveSync();
     this.broadcast({ t: "state", state: stamped, srvAt: now }, socket);
@@ -547,14 +690,21 @@ export class Room {
     const peer = this.peers.get(socket);
     if (!peer) return;
     this.peers.delete(socket);
-    this.broadcast({ t: "participant-left", clientId: peer.clientId, name: peer.name });
-    if (this.hostClientId === peer.clientId) this.reassignHost();
-    if (this.peers.size === 0 && Date.now() - this.lastActivity > ROOM_IDLE_MS) {
-      this.syncState = null;
-      this.hostClientId = null;
-      this.saveSync();
-      this.saveHost();
+
+    if (this.disconnectTimers.has(peer.clientId)) {
+      clearTimeout(this.disconnectTimers.get(peer.clientId)?.timer);
+      this.disconnectTimers.delete(peer.clientId);
     }
+
+    const timer = setTimeout(() => {
+      this.disconnectTimers.delete(peer.clientId);
+      this.broadcast({ t: "participant-left", clientId: peer.clientId, name: peer.name });
+      if (this.hostClientId === peer.clientId) this.reassignHost();
+      this.state.storage.delete(`peer:${peer.clientId}`);
+      this.resetIfEmpty();
+    }, RECONNECT_GRACE_MS);
+
+    this.disconnectTimers.set(peer.clientId, { timer, peer });
   }
 
   send(socket, msg) {

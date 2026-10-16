@@ -1,4 +1,4 @@
-import { memo, type ComponentProps, type RefObject } from "react";
+import { memo, useCallback, type ComponentProps, type RefObject } from "react";
 import { DrawCanvas, StrokesLayer, type Stroke } from "@/components/player/draw-canvas";
 import { cropTransform } from "./hooks/use-video-fill";
 import { StreamSwitcher } from "@/components/player/stream-switcher";
@@ -214,6 +214,15 @@ export const PlayerOverlayLayers = memo(function PlayerOverlayLayers(p: PlayerOv
       : "top-end"
     : "top-start";
 
+  const handlePiP = useCallback(() => p.togglePipMode(), [p.togglePipMode]);
+  const handleToggleDraw = useCallback(() => {
+    p.setDrawMode((d) => !d);
+    p.wakeChrome();
+  }, [p.setDrawMode, p.wakeChrome]);
+  const handleToggleHideOthers = useCallback(() => {
+    p.setHideOthersDrawings((h) => !h);
+  }, [p.setHideOthersDrawings]);
+
   return (
     <>
       <StageOverlays
@@ -377,14 +386,11 @@ export const PlayerOverlayLayers = memo(function PlayerOverlayLayers(p: PlayerOv
           anime4kMode={p.anime4kMode}
           onAnime4kMode={p.onAnime4kMode}
           anime4kAvailable={p.anime4kAvailable}
-          onPiP={() => p.togglePipMode()}
+          onPiP={handlePiP}
           onFullscreen={p.toggleFullscreen}
           openCastMenu={p.cast.openCastMenu}
-          onToggleDraw={() => {
-            p.setDrawMode((d) => !d);
-            p.wakeChrome();
-          }}
-          onToggleHideOthers={() => p.setHideOthersDrawings((h) => !h)}
+          onToggleDraw={handleToggleDraw}
+          onToggleHideOthers={handleToggleHideOthers}
           onClearDraw={p.clearStrokes}
           onScreenshot={p.onScreenshot}
           onPickAnother={p.pickAnotherOrGuide}

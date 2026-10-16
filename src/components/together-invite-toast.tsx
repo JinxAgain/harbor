@@ -10,7 +10,7 @@ const TICK_MS = 60;
 
 export function TogetherInviteToast() {
   const { incomingInvite, dismissInvite } = useTogether();
-  const { openPicker } = useView();
+  const { openPicker, player, picker } = useView();
   const t = useT();
   const handledRef = useRef<number | null>(null);
   const [progress, setProgress] = useState(0);
@@ -20,6 +20,20 @@ export function TogetherInviteToast() {
       handledRef.current = null;
       setProgress(0);
       return;
+    }
+    const { invite } = incomingInvite;
+    const sameMedia =
+      (player && player.meta.id === invite.mediaId) ||
+      (picker && picker.meta.id === invite.mediaId);
+    if (sameMedia) {
+      const activeEp = player?.meta.id === invite.mediaId ? player.episode : picker?.episode;
+      const sameSeason = (activeEp?.season ?? null) === (invite.episode?.season ?? null);
+      const sameEpisode = (activeEp?.episode ?? null) === (invite.episode?.episode ?? null);
+      if (sameSeason && sameEpisode) {
+        handledRef.current = incomingInvite.at;
+        dismissInvite();
+        return;
+      }
     }
     if (handledRef.current === incomingInvite.at) return;
     setProgress(0);
@@ -40,6 +54,13 @@ export function TogetherInviteToast() {
       if (handledRef.current === incomingInvite.at) return;
       handledRef.current = incomingInvite.at;
       const { invite } = incomingInvite;
+      const activeEp = player?.meta.id === invite.mediaId ? player.episode : picker?.episode;
+      const sameSeason = (activeEp?.season ?? null) === (invite.episode?.season ?? null);
+      const sameEpisode = (activeEp?.episode ?? null) === (invite.episode?.episode ?? null);
+      if (sameMedia && sameSeason && sameEpisode) {
+        dismissInvite();
+        return;
+      }
       const meta: Meta = {
         id: invite.mediaId,
         type: invite.mediaType,
@@ -52,11 +73,20 @@ export function TogetherInviteToast() {
       openPicker(meta, invite.episode, { autoPlay: invite.guestPick !== true });
       dismissInvite();
     }
-  }, [incomingInvite, openPicker, dismissInvite]);
+  }, [incomingInvite, openPicker, dismissInvite, player, picker]);
 
   if (!incomingInvite) return null;
   if (handledRef.current === incomingInvite.at) return null;
   const { name, invite } = incomingInvite;
+  const sameMedia =
+    (player && player.meta.id === invite.mediaId) ||
+    (picker && picker.meta.id === invite.mediaId);
+  if (sameMedia) {
+    const activeEp = player?.meta.id === invite.mediaId ? player.episode : picker?.episode;
+    const sameSeason = (activeEp?.season ?? null) === (invite.episode?.season ?? null);
+    const sameEpisode = (activeEp?.episode ?? null) === (invite.episode?.episode ?? null);
+    if (sameSeason && sameEpisode) return null;
+  }
   const guestPick = invite.guestPick === true;
   const subtitle = invite.episode
     ? `S${invite.episode.imdbSeason ?? invite.episode.season} · E${String(invite.episode.imdbEpisode ?? invite.episode.episode).padStart(2, "0")}`

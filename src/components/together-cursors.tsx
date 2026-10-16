@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSettings } from "@/lib/settings";
 import { useTogether, type RemoteCursor } from "@/lib/together/provider";
 import { useView } from "@/lib/view";
+import { nameHue } from "@/lib/together/colors";
 
 const SEND_INTERVAL_MS = 60;
 const HIDDEN_AFTER_IDLE_MS = 1500;
@@ -247,10 +248,4 @@ function RemotePointer({
       </span>
     </div>
   );
-}
-
-function nameHue(name: string): number {
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360;
-  return h;
 }

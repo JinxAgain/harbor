@@ -60,7 +60,7 @@ test("an established room reconnects after the socket drops", () => {
   h.client.claimHost(false);
   h.client.sendInvite({ mediaId: "tt123", mediaTitle: "Fixture" });
   first.close(); h.advance(0);
-  assert.equal(h.client.getSnapshot().state, "connecting");
+  assert.equal(h.client.getSnapshot().state, "joined");
   h.advance(1000); assert.equal(h.sockets.length, 2);
   h.joined(); const next = h.sockets[1];
   assert.equal(h.client.getSnapshot().state, "joined");
@@ -68,15 +68,63 @@ test("an established room reconnects after the socket drops", () => {
   assert.equal(next.url, first.url);
   assert.ok(next.sent.some(m => m.t === "hello" && m.clientId === "self"));
   assert.ok(next.sent.some(m => m.t === "claim-host"));
-  assert.ok(next.sent.some(m => m.t === "invite" && m.invite.mediaId === "tt123"));
+  assert.equal(next.sent.some(m => m.t === "invite"), false);
 });
 
 test("a silent established connection also reconnects after liveness timeout", () => {
   const h = harness(); h.client.join("ABC123"); h.joined();
-  h.advance(51000);
+  h.advance(62000);
   assert.equal(h.sockets.length, 2);
-  assert.equal(h.client.getSnapshot().state, "connecting");
+  assert.equal(h.client.getSnapshot().state, "joined");
   h.joined(); assert.equal(h.client.getSnapshot().state, "joined");
+});
+
+test("repeated socket drops transition state to connecting after initial grace attempt", () => {
+  const h = harness(); h.client.join("ABC123"); h.joined();
+  const first = h.sockets[0];
+  first.close(); h.advance(0);
+  assert.equal(h.client.getSnapshot().state, "joined");
+  h.advance(1000);
+  assert.equal(h.sockets.length, 2);
+  h.sockets[1].close(); h.advance(0);
+  assert.equal(h.client.getSnapshot().state, "connecting");
+});
+
+test("a guest passively assigned host does not poison claimedHost to steal host on reconnect", () => {
+  const h = harness(); h.client.join("ABC123");
+  h.sockets[0].open();
+  h.sockets[0].message({
+    t: "joined",
+    participants: [{ id: "host1", name: "Host" }, { id: "self", name: "Fixture" }],
+    hostClientId: "host1",
+    state: null,
+    started: true,
+    srvAt: 100000,
+  });
+  assert.equal(h.client.getSnapshot().hostClientId, "host1");
+  h.sockets[0].message({ t: "host", hostClientId: "self" });
+  assert.equal(h.client.getSnapshot().hostClientId, "self");
+  h.sockets[0].message({ t: "host", hostClientId: "host1" });
+  assert.equal(h.client.getSnapshot().hostClientId, "host1");
+  h.sockets[0].close(); h.advance(1000);
+  assert.equal(h.sockets.length, 2);
+  h.sockets[1].open();
+  assert.equal(h.sockets[1].sent.some((m) => m.t === "claim-host"), false);
+});
+
+test("name collision renames via profile message without tearing down the socket", () => {
+  const h = harness(); h.client.join("ABC123"); h.joined();
+  const socket = h.sockets[0];
+  const initialSentCount = socket.sent.length;
+  socket.message({
+    t: "participant-joined",
+    participant: { id: "other", name: "Fixture", joinedAt: 50000, ready: true, avatar: null, color: null },
+  });
+  assert.equal(h.sockets.length, 1);
+  assert.equal(socket.readyState, 1);
+  const profileMsg = socket.sent.slice(initialSentCount).find((m) => m.t === "profile");
+  assert.ok(profileMsg);
+  assert.notEqual(profileMsg.name, "Fixture");
 });
 
 test("leaving a joined room does not reconnect", () => {

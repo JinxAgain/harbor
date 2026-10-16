@@ -158,24 +158,25 @@ export function SeekBar({
   };
 
   return (
-    <div dir="ltr" className="pointer-events-auto group/seek relative h-12">
-      <div
-        ref={ref}
-        data-player-seekbar
-        onPointerMove={onMove}
-        onPointerLeave={onLeave}
-        onPointerDown={onDown}
-        onPointerUp={onUp}
-        onPointerCancel={onCancel}
-        onClick={(e) => {
-          if (e.isTrusted) return;
-          const seek = fromEvent(e.clientX);
-          setPending(seek);
-          pendingAtRef.current = Date.now();
-          onSeek(seek);
-        }}
-        className="absolute inset-x-0 top-1/2 -translate-y-1/2 cursor-pointer"
-      >
+    <div
+      ref={ref}
+      dir="ltr"
+      data-player-seekbar
+      onPointerMove={onMove}
+      onPointerLeave={onLeave}
+      onPointerDown={onDown}
+      onPointerUp={onUp}
+      onPointerCancel={onCancel}
+      onClick={(e) => {
+        if (e.isTrusted) return;
+        const seek = fromEvent(e.clientX);
+        setPending(seek);
+        pendingAtRef.current = Date.now();
+        onSeek(seek);
+      }}
+      className="pointer-events-auto group/seek relative h-12 cursor-pointer"
+    >
+      <div className="absolute inset-x-0 top-1/2 -translate-y-1/2">
         <SeekBarVisual
           settings={settings}
           pct={pct}
