@@ -258,6 +258,15 @@ function saveMusicCheckpoint(): void {
   writeMusicPreference(SESSION_KEY, JSON.stringify(checkpoint));
 }
 
+export function clearMusicCheckpoint(): void {
+  writeCheckpointToDb(null);
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Optional persistence cleanup must never throw.
+  }
+}
+
 if (typeof window !== "undefined") {
   // A throttled checkpoint can be up to two seconds stale, so closing flushes the exact position.
   const flush = () => {
@@ -368,6 +377,22 @@ export function initializeMusic(): Promise<void> {
   ])
     .then(([bootstrap, stored]) => {
       clearLegacyMigration(migration);
+      if (!bootstrap.queue.length) {
+        clearMusicCheckpoint();
+        publish({
+          phase: "idle",
+          current: null,
+          queue: [],
+          queueIndex: -1,
+          currentTime: 0,
+          duration: 0,
+          error: null,
+          likedIds: completeLikedIds(bootstrap.likedIds, bootstrap.likedTracks),
+          likedTracks: bootstrap.likedTracks,
+          recents: dedupeMusicTracks(bootstrap.recents),
+        });
+        return;
+      }
       let mirrored: MusicCheckpoint | null = null;
       try {
         // Direct storage read: the preference cache can outlive a hot update and would then
@@ -386,12 +411,11 @@ export function initializeMusic(): Promise<void> {
           )
         : -1;
       // A track that played through a substitute source no longer matches the saved queue, so
-      // the checkpoint itself carries the track. With no usable checkpoint at all, the most
-      // recent track is the honest fallback: the queue top is arbitrary and would resume a song
-      // the listener did not choose, which is how one miss became a permanent wrong resume.
+      // the checkpoint itself carries the track. When there is a saved queue, fallback to the
+      // top of the queue if no substitute is recorded; never resurrect history tracks when idle.
       const recovered =
-        restoredIndex < 0 ? (saved?.track ?? bootstrap.recents[0] ?? null) : null;
-      const queue = recovered
+        restoredIndex < 0 ? (saved?.track ?? bootstrap.queue[0] ?? null) : null;
+      const queue = recovered && recovered !== bootstrap.queue[0]
         ? [
             recovered,
             ...bootstrap.queue.filter(
@@ -1251,6 +1275,7 @@ export async function closeMusicPlayer(): Promise<void> {
     enginePrimed = false;
     audioReady = null;
     resetMusicOrder();
+    clearMusicCheckpoint();
     publish({
       current: null,
       queue: [],
