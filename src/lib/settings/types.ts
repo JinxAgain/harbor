@@ -269,6 +269,9 @@ export type Settings = {
   togetherCfDeployed: boolean;
   togetherShareCursors: boolean;
   togetherGuestsPick: boolean;
+  togetherSlowOnDesync: boolean;
+  togetherRewindThresholdSec: number;
+  togetherSyncOnPause: boolean;
   discordRichPresence: boolean;
   discordHideTitle: boolean;
   discordShowWhenPaused: boolean;

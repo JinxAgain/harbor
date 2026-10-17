@@ -68,7 +68,11 @@ export function TogetherCursors() {
   const pathRef = useRef(topPath);
   pathRef.current = topPath;
 
-  const live = snapshot.state === "joined" && settings.togetherShareCursors && !chromeHidden;
+  const live =
+    snapshot.state === "joined" &&
+    settings.togetherShareCursors &&
+    !chromeHidden &&
+    topPath !== "/player";
 
   useEffect(() => {
     if (!live) return;
@@ -172,6 +176,7 @@ export function TogetherCursors() {
   if (snapshot.state !== "joined") return null;
   if (!settings.togetherShareCursors) return null;
   if (chromeHidden) return null;
+  if (topPath === "/player") return null;
 
   const visibleCursors = remoteCursors.filter(
     (c) => c.visible && c.from !== clientId && c.path === topPath,

@@ -1,4 +1,4 @@
-const WORKER_VERSION = 12;
+const WORKER_VERSION = 13;
 const MAX_AVATAR_LENGTH = 600_000;
 const RECONNECT_GRACE_MS = 8000;
 
@@ -318,7 +318,7 @@ export class Room {
       case "presence":
         return this.handlePresence(socket, msg);
       case "ping":
-        return this.send(socket, { t: "pong", srvAt: Date.now() });
+        return this.handlePing(socket, msg);
     }
   }
 
@@ -330,13 +330,23 @@ export class Room {
     this.broadcast({ t: "participant-ready", clientId: peer.clientId, ready: peer.ready });
   }
 
+  handlePing(socket, msg) {
+    const peer = this.peers.get(socket);
+    if (peer && typeof msg?.rtt === "number" && Number.isFinite(msg.rtt) && msg.rtt >= 0) {
+      peer.rtt = msg.rtt;
+    }
+    this.send(socket, { t: "pong", srvAt: Date.now() });
+  }
+
   handleClaimHost(socket, msg) {
     const peer = this.peers.get(socket);
     if (!peer) return;
     if (this.hostClientId === peer.clientId && !msg.fresh) return;
 
-    if (!msg.fresh && this.hostClientId != null && this.hostClientId !== peer.clientId) {
-      const currentHostActive = Array.from(this.peers.values()).some((p) => p.clientId === this.hostClientId);
+    if (this.hostClientId != null && this.hostClientId !== peer.clientId) {
+      const currentHostConnected = Array.from(this.peers.values()).some((p) => p.clientId === this.hostClientId);
+      const currentHostPending = this.disconnectTimers.has(this.hostClientId);
+      const currentHostActive = currentHostConnected || currentHostPending;
       if (currentHostActive && this.explicitHostClientId !== peer.clientId) {
         this.send(socket, { t: "host", hostClientId: this.hostClientId });
         return;
@@ -614,6 +624,9 @@ export class Room {
   handleState(socket, msg) {
     const peer = this.peers.get(socket);
     if (!peer || !msg.state) return;
+    if (typeof msg.rtt === "number" && Number.isFinite(msg.rtt) && msg.rtt >= 0) {
+      peer.rtt = msg.rtt;
+    }
     const s = msg.state;
     if (typeof s.positionSeconds !== "number" || !isFinite(s.positionSeconds) || s.positionSeconds < 0) return;
     if (typeof s.updatedAt !== "number" || !isFinite(s.updatedAt)) return;
@@ -627,6 +640,7 @@ export class Room {
     if (cleanSource) s.source = cleanSource;
     else delete s.source;
     if (s.guestPick !== true) delete s.guestPick;
+    if (s.buffering !== true) delete s.buffering;
     const isHostWrite = this.hostClientId != null && peer.clientId === this.hostClientId;
     if (this.hostClientId != null && !isHostWrite) return;
     const now = Date.now();
@@ -635,10 +649,12 @@ export class Room {
       if (this.syncState && s.updatedAt < this.syncState.updatedAt - 2000) return;
     }
     peer.lastStateAt = now;
-    const stamped = { ...s, hostClientId: this.hostClientId, srvAt: now };
+    const transitCompensation = Math.min(1000, Math.round((peer.rtt ?? 0) / 2));
+    const srvAt = now - transitCompensation;
+    const stamped = { ...s, hostClientId: this.hostClientId, srvAt };
     this.syncState = stamped;
     this.saveSync();
-    this.broadcast({ t: "state", state: stamped, srvAt: now }, socket);
+    this.broadcast({ t: "state", state: stamped, srvAt }, socket);
   }
 
   handleCommand(socket, msg) {

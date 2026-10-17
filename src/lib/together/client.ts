@@ -59,6 +59,7 @@ export class TogetherClient {
   private haveRttOffset = false;
   private pingSentAt = 0;
   private lastInboundAt = 0;
+  private lastRtt = 0;
 
   constructor(url: string, clientId: string, name: string, avatar: string | null = null, color: string | null = null) {
     this.url = url;
@@ -176,7 +177,7 @@ export class TogetherClient {
   publishState(state: SyncState): void {
     if (!this.room) return;
     if (Date.now() < this.suppressUntil) return;
-    this.send({ t: "state", room: this.room, clientId: this.clientId, state });
+    this.send({ t: "state", room: this.room, clientId: this.clientId, state, rtt: this.lastRtt || undefined });
     this.update({ syncState: state });
   }
 
@@ -550,7 +551,7 @@ export class TogetherClient {
   private sendPing() {
     if (this.ws?.readyState !== WebSocket.OPEN || !this.room) return;
     this.pingSentAt = Date.now();
-    this.sendNow({ t: "ping", room: this.room, clientId: this.clientId });
+    this.sendNow({ t: "ping", room: this.room, clientId: this.clientId, rtt: this.lastRtt || undefined });
   }
 
   private startPing() {
@@ -572,6 +573,7 @@ export class TogetherClient {
     if (typeof srvAt !== "number" || this.pingSentAt === 0) return;
     const rtt = Date.now() - this.pingSentAt;
     if (rtt < 0 || rtt > 10_000) return;
+    this.lastRtt = rtt;
     const sample = srvAt - (this.pingSentAt + rtt / 2);
     if (!this.haveRttOffset) {
       this.relayOffset = sample;

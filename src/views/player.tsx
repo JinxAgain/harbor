@@ -224,8 +224,6 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     active: snap.status !== "ended" && (snap.videoWidth <= 0 || isP2pEngine),
   });
   useEffect(() => {
-    const isLive = src.isLive || !!src.meta.id?.startsWith("iptv:");
-    const isHls = src.url.includes("/hlsv2/");
     if (isP2pEngine) {
       setPlaybackDownloaded(
         resolvePlaybackDownloadedFraction({
@@ -236,23 +234,14 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
       );
     } else if (isLocalSrc) {
       setPlaybackDownloaded(1);
-    } else if (!isLive && !isHls) {
-      const dur = snap.durationSec || 0;
-      setPlaybackDownloaded(dur > 0 ? Math.min(1, (snap.positionSec + snap.bufferedSec) / dur) : 0);
     } else {
       setPlaybackDownloaded(0);
     }
   }, [
     engineStats?.streamProgress,
     engineStats?.streamLen,
-    src.url,
     isP2pEngine,
     isLocalSrc,
-    src.isLive,
-    src.meta.id,
-    snap.positionSec,
-    snap.bufferedSec,
-    snap.durationSec,
   ]);
   const shellSnapRef = useRef(snap);
   const snapRef = useRef(snap);

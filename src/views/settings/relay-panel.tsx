@@ -25,6 +25,7 @@ import { useT } from "@/lib/i18n";
 import { downloadText } from "@/lib/download-text";
 import {
   ModalButton,
+  OptionScale,
   SettingGroup,
   SettingRow,
   SettingsModal,
@@ -32,6 +33,7 @@ import {
   ROW_ACTION_DANGER,
   ROW_ACTION_PRIMARY,
 } from "./kit";
+import { ToggleRow } from "./shared";
 import { useRelayHealth, type PassiveRelayHealth } from "./relay-panel/use-relay-health";
 import { HoverTooltip } from "@/components/hover-tooltip";
 
@@ -158,6 +160,39 @@ function StatusValue({ tone, children }: { tone: "success" | "muted"; children: 
       />
       {children}
     </span>
+  );
+}
+
+function PlaybackSyncGroup() {
+  const { settings, update } = useSettings();
+  const t = useT();
+
+  return (
+    <SettingGroup label={t("Playback Sync")}>
+      <ToggleRow
+        label={t("Smooth speed catch-up (Syncplay style)")}
+        sub={t("Gently slow down or speed up playback (0.95× / 1.05×) to correct small drift (1.5s–4.0s) without jarring seeks.")}
+        value={settings.togetherSlowOnDesync}
+        onChange={(togetherSlowOnDesync) => update({ togetherSlowOnDesync })}
+      />
+      <SettingRow
+        label={t("Hard-seek drift threshold")}
+        desc={t("How far playback can drift before Harbor seeks directly to the target position.")}
+      >
+        <OptionScale
+          value={settings.togetherRewindThresholdSec}
+          options={[3, 4, 6, 10] as const}
+          onChange={(togetherRewindThresholdSec) => update({ togetherRewindThresholdSec })}
+          format={(v) => `${v}s`}
+        />
+      </SettingRow>
+      <ToggleRow
+        label={t("Seek on pause/unpause")}
+        sub={t("Force an exact position seek when pausing or unpausing, even if drift is within the threshold.")}
+        value={settings.togetherSyncOnPause}
+        onChange={(togetherSyncOnPause) => update({ togetherSyncOnPause })}
+      />
+    </SettingGroup>
   );
 }
 
@@ -382,6 +417,8 @@ export function TogetherRelayPanel({
           </SettingRow>
         </SettingGroup>
 
+        <PlaybackSyncGroup />
+
         <DocsGroup onOpenDocs={onOpenDocs} />
 
         <RelayUrlModal
@@ -502,6 +539,8 @@ export function TogetherRelayPanel({
               </div>
             )}
           </SettingGroup>
+
+          <PlaybackSyncGroup />
         </>
       )}
       {tab === "manage" && (

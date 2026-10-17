@@ -435,7 +435,7 @@ export function TogetherProvider({ children }: { children: ReactNode }) {
 
   const wasInvitedTo = useCallback((key: string): boolean => {
     const r = lastInviteRef.current;
-    return !!r && r.key === key && Date.now() - r.at < 60_000;
+    return !!r && r.key === key && Date.now() - r.at < 30 * 60_000;
   }, []);
 
   const hostSource = useMemo(() => deriveHostSource(snapshot), [snapshot]);

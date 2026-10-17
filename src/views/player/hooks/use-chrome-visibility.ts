@@ -70,6 +70,7 @@ export function useChromeVisibility(params: {
     const playingChanged = prevPlayingRef.current !== playing;
     prevPlayingRef.current = playing;
     if (playingChanged && lastInputKeyboardRef.current && !keyboardPauseShowsControls) {
+      if (drawModeRef.current) return;
       if (hideTimer.current) window.clearTimeout(hideTimer.current);
       setChromeVisible(false);
       setChromeHidden(true);
@@ -139,6 +140,7 @@ export function useChromeVisibility(params: {
 
   useEffect(() => {
     const onBlur = () => {
+      if (drawModeRef.current) return;
       if (hideTimer.current) window.clearTimeout(hideTimer.current);
       setChromeVisible(false);
       setChromeHidden(true);

@@ -309,18 +309,18 @@ export function TransportStremio(p: TransportStremioProps) {
           visible ? "opacity-100" : "opacity-0"
         }`}
       >
-        <div className="pointer-events-auto flex h-6 items-center">
+        <div className={`flex h-6 items-center ${drawMode ? "pointer-events-none" : "pointer-events-auto"}`}>
           {isLiveChannel ? (
             <>
               <LiveBadge />
               <div className="flex-1">
-                <LiveSeekBar durationSec={snap.durationSec} onSeek={onSeek} active={visible} />
+                <LiveSeekBar durationSec={snap.durationSec} onSeek={onSeek} active={visible && !drawMode} />
               </div>
               <GoToLive durationSec={snap.durationSec} onSeek={onSeek} />
             </>
           ) : (
             <div className="min-w-0 flex-1">
-              <SeekBar durationSec={snap.durationSec} onSeek={onSeek} active={visible} />
+              <SeekBar durationSec={snap.durationSec} onSeek={onSeek} active={visible && !drawMode} />
             </div>
           )}
         </div>

@@ -197,39 +197,42 @@ export function usePlaybackControls(params: {
 
   const seekAccumRef = useRef<{ target: number; at: number; clock: number } | null>(null);
 
-  const seekStep = (delta: number) => {
-    const now = performance.now();
-    const observed = getPlaybackPosition();
-    const acc = seekAccumRef.current;
-    // Chain rapid presses onto the previous request (the clock lags mpv by
-    // ~200ms and may not have ticked yet), but once it ticks to a value
-    // behind the chained target, restart the chain from reality.
-    let base = observed;
-    if (acc && now - acc.at < SEEK_ACCUM_WINDOW_MS) {
-      base =
-        observed !== acc.clock && observed < acc.target - SEEK_REBASE_TOLERANCE_SEC
-          ? observed
-          : acc.target;
-    }
-    const dur = snapRef.current.durationSec;
-    const upper = dur > 0 ? dur : Number.POSITIVE_INFINITY;
-    const target = Math.min(upper, Math.max(0, base + delta));
-    if (castDevice) {
+  const seekStep = useCallback(
+    (delta: number) => {
+      const now = performance.now();
+      const observed = getPlaybackPosition();
+      const acc = seekAccumRef.current;
+      // Chain rapid presses onto the previous request (the clock lags mpv by
+      // ~200ms and may not have ticked yet), but once it ticks to a value
+      // behind the chained target, restart the chain from reality.
+      let base = observed;
+      if (acc && now - acc.at < SEEK_ACCUM_WINDOW_MS) {
+        base =
+          observed !== acc.clock && observed < acc.target - SEEK_REBASE_TOLERANCE_SEC
+            ? observed
+            : acc.target;
+      }
+      const dur = snapRef.current.durationSec;
+      const upper = dur > 0 ? dur : Number.POSITIVE_INFINITY;
+      const target = Math.min(upper, Math.max(0, base + delta));
+      if (castDevice) {
+        seekAccumRef.current = { target, at: now, clock: observed };
+        void seekCast(target);
+        return;
+      }
+      if (!canControl) return;
       seekAccumRef.current = { target, at: now, clock: observed };
-      void seekCast(target);
-      return;
-    }
-    if (!canControl) return;
-    seekAccumRef.current = { target, at: now, clock: observed };
-    if (inRoom && !isHost) {
-      sendCommand({ action: "seek", positionSeconds: target });
-      return;
-    }
-    // Exact: keyframe seeks snap to the previous keyframe and can land behind
-    // the request (several seconds on sparse-GOP HEVC), so forward steps stall.
-    bridgeRef.current?.seek(target, "exact");
-    notifyMediaSeeked(target);
-  };
+      if (inRoom && !isHost) {
+        sendCommand({ action: "seek", positionSeconds: target });
+        return;
+      }
+      // Exact: keyframe seeks snap to the previous keyframe and can land behind
+      // the request (several seconds on sparse-GOP HEVC), so forward steps stall.
+      bridgeRef.current?.seek(target, "exact");
+      notifyMediaSeeked(target);
+    },
+    [snapRef, bridgeRef, castDevice, seekCast, canControl, inRoom, isHost, sendCommand],
+  );
 
   const seekTo = useCallback(
     (sec: number) => {

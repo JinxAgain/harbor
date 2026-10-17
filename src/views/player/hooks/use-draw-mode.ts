@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Stroke } from "@/components/player/draw-canvas";
 import { nameColor } from "@/lib/together/colors";
 import type { IncomingDraw } from "@/lib/together/provider";
@@ -33,25 +33,37 @@ export function useDrawMode(params: {
     }
   }, [drawMode, inRoom, participantCount]);
 
-  const onDrawStart = (s: Stroke) => {
-    setStrokes((prev) => [...prev, { ...s, path: topPath }]);
-    if (inRoom) {
-      const p = s.points[0];
-      sendDraw(s.id, "start", topPath, p?.x, p?.y, s.color);
-    }
-  };
-  const onDrawPoint = (id: string, x: number, y: number) => {
-    setStrokes((prev) => prev.map((s) => (s.id === id ? { ...s, points: [...s.points, { x, y }] } : s)));
-    if (inRoom) sendDraw(id, "point", topPath, x, y);
-  };
-  const onDrawEnd = (id: string) => {
-    setStrokes((prev) => prev.filter((s) => Date.now() - s.bornAt < STROKE_GC_MS));
-    if (inRoom) sendDraw(id, "end", topPath);
-  };
-  const clearStrokes = () => {
+  const onDrawStart = useCallback(
+    (s: Stroke) => {
+      setStrokes((prev) => [...prev, { ...s, path: topPath }]);
+      if (inRoom) {
+        const p = s.points[0];
+        sendDraw(s.id, "start", topPath, p?.x, p?.y, s.color);
+      }
+    },
+    [inRoom, topPath, sendDraw],
+  );
+
+  const onDrawPoint = useCallback(
+    (id: string, x: number, y: number) => {
+      setStrokes((prev) => prev.map((s) => (s.id === id ? { ...s, points: [...s.points, { x, y }] } : s)));
+      if (inRoom) sendDraw(id, "point", topPath, x, y);
+    },
+    [inRoom, topPath, sendDraw],
+  );
+
+  const onDrawEnd = useCallback(
+    (id: string) => {
+      setStrokes((prev) => prev.filter((s) => Date.now() - s.bornAt < STROKE_GC_MS));
+      if (inRoom) sendDraw(id, "end", topPath);
+    },
+    [inRoom, topPath, sendDraw],
+  );
+
+  const clearStrokes = useCallback(() => {
     setStrokes((prev) => prev.filter((s) => s.path !== topPath));
     if (inRoom) sendDraw("", "clear", topPath);
-  };
+  }, [inRoom, topPath, sendDraw]);
 
   useEffect(() => {
     if (!inRoom) return;

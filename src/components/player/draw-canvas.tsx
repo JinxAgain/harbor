@@ -137,23 +137,53 @@ export function DrawCanvas({
   onStrokeEnd: (id: string) => void;
 }) {
   const surfaceRef = useRef<HTMLDivElement>(null);
-  const [pointer, setPointer] = useState<{ x: number; y: number; visible: boolean }>({
-    x: 0,
-    y: 0,
-    visible: false,
-  });
+  const penRef = useRef<HTMLDivElement>(null);
+  const rectRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
   const drawing = useRef<{ id: string; lastX: number; lastY: number } | null>(null);
+  const pendingPointRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  const rafIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const el = surfaceRef.current;
+    if (!el) return;
+    const updateRect = () => {
+      const r = el.getBoundingClientRect();
+      rectRef.current = { left: r.left, top: r.top, width: r.width, height: r.height };
+    };
+    updateRect();
+    const ro = new ResizeObserver(updateRect);
+    ro.observe(el);
+    window.addEventListener("resize", updateRect);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", updateRect);
+    };
+  }, [enabled]);
+
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current != null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+    };
+  }, []);
 
   if (!enabled) return null;
 
-  const norm = (e: React.PointerEvent) => {
-    const r = surfaceRef.current?.getBoundingClientRect();
-    if (!r || r.width === 0 || r.height === 0) return { x: 0, y: 0 };
+  const norm = (clientX: number, clientY: number) => {
+    let r = rectRef.current;
+    if (!r || r.width === 0 || r.height === 0) {
+      const domRect = surfaceRef.current?.getBoundingClientRect();
+      if (!domRect || domRect.width === 0 || domRect.height === 0) return { x: 0, y: 0 };
+      r = { left: domRect.left, top: domRect.top, width: domRect.width, height: domRect.height };
+      rectRef.current = r;
+    }
     const box = videoContentBox(r.width, r.height, videoWidth, videoHeight, transform);
     if (box.width === 0 || box.height === 0) return { x: 0, y: 0 };
     return {
-      x: (e.clientX - r.left - box.left) / box.width,
-      y: (e.clientY - r.top - box.top) / box.height,
+      x: (clientX - r.left - box.left) / box.width,
+      y: (clientY - r.top - box.top) / box.height,
     };
   };
 
@@ -164,9 +194,19 @@ export function DrawCanvas({
     } catch {
       /* unsupported */
     }
-    const { x, y } = norm(e);
+    const domRect = surfaceRef.current?.getBoundingClientRect();
+    if (domRect) {
+      rectRef.current = { left: domRect.left, top: domRect.top, width: domRect.width, height: domRect.height };
+    }
+    const { x, y } = norm(e.clientX, e.clientY);
     const id = `${selfId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     drawing.current = { id, lastX: x, lastY: y };
+    if (penRef.current && rectRef.current) {
+      const px = e.clientX - rectRef.current.left;
+      const py = e.clientY - rectRef.current.top;
+      penRef.current.style.display = "block";
+      penRef.current.style.transform = `translate3d(${px}px, ${py}px, 0) translate(-70%, -77%)`;
+    }
     onStrokeStart({
       id,
       authorId: selfId,
@@ -176,24 +216,56 @@ export function DrawCanvas({
       bornAt: Date.now(),
     });
   };
+
   const onMove = (e: React.PointerEvent) => {
-    const r = surfaceRef.current?.getBoundingClientRect();
-    if (r) setPointer({ x: e.clientX - r.left, y: e.clientY - r.top, visible: true });
+    let r = rectRef.current;
+    if (!r) {
+      const domRect = surfaceRef.current?.getBoundingClientRect();
+      if (domRect) {
+        r = { left: domRect.left, top: domRect.top, width: domRect.width, height: domRect.height };
+        rectRef.current = r;
+      }
+    }
+    if (r && penRef.current) {
+      const px = e.clientX - r.left;
+      const py = e.clientY - r.top;
+      penRef.current.style.display = "block";
+      penRef.current.style.transform = `translate3d(${px}px, ${py}px, 0) translate(-70%, -77%)`;
+    }
     const cur = drawing.current;
     if (!cur) return;
-    const { x, y } = norm(e);
+    const { x, y } = norm(e.clientX, e.clientY);
     const dx = x - cur.lastX;
     const dy = y - cur.lastY;
     if (dx * dx + dy * dy < MIN_POINT_DIST_SQ) return;
     cur.lastX = x;
     cur.lastY = y;
-    onStrokePoint(cur.id, x, y);
+
+    // Throttle point emission to requestAnimationFrame
+    pendingPointRef.current = { id: cur.id, x, y };
+    if (rafIdRef.current == null) {
+      rafIdRef.current = requestAnimationFrame(() => {
+        rafIdRef.current = null;
+        if (pendingPointRef.current) {
+          onStrokePoint(pendingPointRef.current.id, pendingPointRef.current.x, pendingPointRef.current.y);
+          pendingPointRef.current = null;
+        }
+      });
+    }
   };
+
   const onUp = (e: React.PointerEvent) => {
+    if (rafIdRef.current != null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
     const cur = drawing.current;
     if (cur) {
-      const { x, y } = norm(e);
-      if (x !== cur.lastX || y !== cur.lastY) onStrokePoint(cur.id, x, y);
+      const { x, y } = norm(e.clientX, e.clientY);
+      if (x !== cur.lastX || y !== cur.lastY || pendingPointRef.current != null) {
+        onStrokePoint(cur.id, x, y);
+      }
+      pendingPointRef.current = null;
       onStrokeEnd(cur.id);
       drawing.current = null;
     }
@@ -203,7 +275,12 @@ export function DrawCanvas({
       /* unsupported */
     }
   };
-  const onLeave = () => setPointer((p) => ({ ...p, visible: false }));
+
+  const onLeave = () => {
+    if (penRef.current) {
+      penRef.current.style.display = "none";
+    }
+  };
 
   void strokes;
   void hideOthers;
@@ -220,18 +297,18 @@ export function DrawCanvas({
       className="pointer-events-auto absolute inset-0 z-20"
       style={{ cursor: "none", touchAction: "none" }}
     >
-      {pointer.visible && (
-        <div
-          className="pointer-events-none absolute"
-          style={{
-            left: pointer.x,
-            top: pointer.y,
-            transform: "translate(-70%, -77%)",
-          }}
-        >
-          <PenCursor tint={selfColor} size={40} />
-        </div>
-      )}
+      <div
+        ref={penRef}
+        className="pointer-events-none absolute"
+        style={{
+          display: "none",
+          left: 0,
+          top: 0,
+          willChange: "transform",
+        }}
+      >
+        <PenCursor tint={selfColor} size={40} />
+      </div>
     </div>
   );
 }
@@ -253,7 +330,7 @@ function StrokesSvg({ strokes }: { strokes: Stroke[] }) {
             fill="none"
             vectorEffect="non-scaling-stroke"
             style={{
-              filter: "drop-shadow(0 0 4px rgba(0,0,0,0.55))",
+              willChange: "opacity",
               animation: `harbor-stroke-fade ${STROKE_LIFETIME_MS}ms cubic-bezier(0.32, 0.72, 0.24, 1) forwards`,
             }}
           />

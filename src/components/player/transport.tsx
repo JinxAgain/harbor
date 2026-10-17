@@ -473,8 +473,8 @@ export function Transport({
               <div className={fadeClassName}>
                 <LiveBadge />
               </div>
-              <div className={`flex-1 ${fadeClassName}`}>
-                <LiveSeekBar durationSec={snap.durationSec} onSeek={onSeek} active={visible} />
+              <div className={`flex-1 ${fadeClassName} ${drawMode ? "pointer-events-none" : ""}`}>
+                <LiveSeekBar durationSec={snap.durationSec} onSeek={onSeek} active={visible && !drawMode} />
               </div>
               <div className={fadeClassName}>
                 <GoToLive durationSec={snap.durationSec} onSeek={onSeek} />
@@ -485,8 +485,8 @@ export function Transport({
               {controlsInSlot(chromeConfig, "seek-leading").map((c) => (
                 <Fragment key={c.id}>{renderFadedControl(c.id)}</Fragment>
               ))}
-              <div className={`flex-1 ${fadeClassName}`}>
-                <SeekBar durationSec={snap.durationSec} onSeek={onSeek} active={visible} />
+              <div className={`flex-1 ${fadeClassName} ${drawMode ? "pointer-events-none" : ""}`}>
+                <SeekBar durationSec={snap.durationSec} onSeek={onSeek} active={visible && !drawMode} />
               </div>
               {controlsInSlot(chromeConfig, "seek-trailing").map((c) => (
                 <Fragment key={c.id}>{renderFadedControl(c.id)}</Fragment>

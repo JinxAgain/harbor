@@ -805,12 +805,15 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
           : null;
         const cacheEnd = typeof state["cache-end"] === "number" ? state["cache-end"] : null;
         if (rawRanges) {
-          lastSeekableRanges = rawRanges
+          const parsed = rawRanges
             .map((r) => ({
               start: typeof r.start === "number" ? r.start : 0,
               end: typeof r.end === "number" ? r.end : 0,
             }))
             .filter((r) => r.end >= r.start);
+          if (parsed.length > 0 || lastSeekableRanges.length === 0) {
+            lastSeekableRanges = parsed;
+          }
         }
         if (typeof cacheEnd === "number" && cacheEnd >= 0) {
           lastCachedEnd = cacheEnd;

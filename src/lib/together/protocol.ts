@@ -39,6 +39,7 @@ export type SyncState = {
   posterUrl: string | null;
   positionSeconds: number;
   playing: boolean;
+  buffering?: boolean;
   speed?: number;
   source?: SourceDescriptor;
   guestPick?: boolean;
@@ -111,7 +112,7 @@ export type ClientMessage =
   | { t: "hello"; room: RoomCode; clientId: string; name: string; avatar?: string | null; color?: string | null }
   | { t: "profile"; room: RoomCode; clientId: string; name: string; avatar?: string | null; color?: string | null }
   | { t: "leave"; room: RoomCode; clientId: string }
-  | { t: "state"; room: RoomCode; clientId: string; state: SyncState }
+  | { t: "state"; room: RoomCode; clientId: string; state: SyncState; rtt?: number }
   | { t: "cmd"; room: RoomCode; clientId: string; command: RoomCommand }
   | { t: "chat"; room: RoomCode; clientId: string; text: string }
   | { t: "invite"; room: RoomCode; clientId: string; invite: PlayInvite }
@@ -123,7 +124,7 @@ export type ClientMessage =
   | { t: "cursor"; room: RoomCode; clientId: string; x: number; y: number; visible: boolean; path: string }
   | { t: "draw"; room: RoomCode; clientId: string; strokeId: string; phase: "start" | "point" | "end" | "clear"; x?: number; y?: number; color?: string; path: string }
   | { t: "presence"; room: RoomCode; clientId: string; activeAt: number; location?: ParticipantLocation }
-  | { t: "ping"; room: RoomCode; clientId: string };
+  | { t: "ping"; room: RoomCode; clientId: string; rtt?: number };
 
 export type ServerMessage =
   | { t: "joined"; room: RoomCode; participants: Participant[]; state: SyncState | null; hostClientId: string | null; started?: boolean; srvAt?: number; relayVersion?: number }
