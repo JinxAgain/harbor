@@ -1,4 +1,10 @@
 const playback: Record<string, string> = {
+  "Move subtitles closer to the bottom of the video.": "将字幕向视频底部下移。",
+  "Move subtitles higher on the video.": "将字幕在视频画面中上移。",
+  "Increase subtitle size": "增大字幕大小",
+  "Make subtitles larger during playback.": "在播放期间增大字幕字号。",
+  "Decrease subtitle size": "减小字幕大小",
+  "Make subtitles smaller during playback.": "在播放期间减小字幕字号。",
   "Cast · {n}": "演员 · {n}",
   "Download Subtitle": "下载字幕",
   "Pause · Space": "暂停 · Space",

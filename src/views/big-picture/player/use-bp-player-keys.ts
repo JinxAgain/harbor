@@ -38,6 +38,7 @@ export function useBpPlayerIdleKeys(params: {
     if (!enabled) return;
     const onKey = (e: KeyboardEvent) => {
       if (bpOverlayOpen() || editing()) return;
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
 
       const dir = DIRS[e.key];
       if (dir) {

@@ -438,6 +438,30 @@ export function useKeyboardShortcuts(params: {
         writePlayerPrefs(metaId, { subDelaySec: delay });
         return;
       }
+      if (match("playerSubPosDown")) {
+        e.preventDefault();
+        const nextMarginY = Math.max(0, Math.min(100, (Number(settings.subMarginY) || 0) - 2));
+        update({ subMarginY: nextMarginY });
+        return;
+      }
+      if (match("playerSubPosUp")) {
+        e.preventDefault();
+        const nextMarginY = Math.max(0, Math.min(100, (Number(settings.subMarginY) || 0) + 2));
+        update({ subMarginY: nextMarginY });
+        return;
+      }
+      if (match("playerSubSizeUp")) {
+        e.preventDefault();
+        const nextFontSize = Math.max(16, Math.min(120, (Number(settings.subFontSize) || 32) + 2));
+        update({ subFontSize: nextFontSize });
+        return;
+      }
+      if (match("playerSubSizeDown")) {
+        e.preventDefault();
+        const nextFontSize = Math.max(16, Math.min(120, (Number(settings.subFontSize) || 32) - 2));
+        update({ subFontSize: nextFontSize });
+        return;
+      }
       if (match("playerStreamSwitcher") && toggleSwitcher) {
         e.preventDefault();
         toggleSwitcher();
@@ -587,6 +611,8 @@ export function useKeyboardShortcuts(params: {
     settings.playerHdrToSdr,
     settings.playerRtxHdr,
     settings.playerRtxVsr,
+    settings.subMarginY,
+    settings.subFontSize,
     svpActive,
     update,
   ]);

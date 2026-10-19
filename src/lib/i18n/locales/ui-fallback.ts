@@ -1,5 +1,12 @@
 // Newly introduced UI copy remains usable until each locale provides an override.
 const uiFallback: Record<string, string> = {
+  "Move subtitles closer to the bottom of the video.":
+    "Move subtitles closer to the bottom of the video.",
+  "Move subtitles higher on the video.": "Move subtitles higher on the video.",
+  "Increase subtitle size": "Increase subtitle size",
+  "Make subtitles larger during playback.": "Make subtitles larger during playback.",
+  "Decrease subtitle size": "Decrease subtitle size",
+  "Make subtitles smaller during playback.": "Make subtitles smaller during playback.",
   "Big Picture display": "Big Picture display",
   "Which monitor Big Picture opens on at startup.":
     "Which monitor Big Picture opens on at startup.",

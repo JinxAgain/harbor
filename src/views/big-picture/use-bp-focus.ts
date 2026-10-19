@@ -504,6 +504,7 @@ export function useBpFocusRoot(params: {
     };
     const onKey = (e: KeyboardEvent) => {
       if (bpOverlayOpen()) return;
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
       const dirs: Record<string, BpDir> = {
         ArrowUp: "up",
         ArrowDown: "down",

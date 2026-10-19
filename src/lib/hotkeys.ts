@@ -39,6 +39,10 @@ export type HotkeyId =
   | "playerSpeedUp"
   | "playerSubDelayDown"
   | "playerSubDelayUp"
+  | "playerSubPosDown"
+  | "playerSubPosUp"
+  | "playerSubSizeUp"
+  | "playerSubSizeDown"
   | "playerStreamSwitcher"
   | "playerEpisodePanel"
   | "playerTvGuide"
@@ -384,6 +388,38 @@ export const HOTKEYS: HotkeyDef[] = [
     description: "Shift subtitle timing later (Shift for fine steps).",
     defaultBinding: "x",
   },
+  {
+    id: "playerSubPosUp",
+    scope: "Player",
+    group: "Tracks",
+    label: "Raise subtitles",
+    description: "Move subtitles higher on the video.",
+    defaultBinding: "alt+ArrowUp",
+  },
+  {
+    id: "playerSubPosDown",
+    scope: "Player",
+    group: "Tracks",
+    label: "Lower subtitles",
+    description: "Move subtitles closer to the bottom of the video.",
+    defaultBinding: "alt+ArrowDown",
+  },
+  {
+    id: "playerSubSizeUp",
+    scope: "Player",
+    group: "Tracks",
+    label: "Increase subtitle size",
+    description: "Make subtitles larger during playback.",
+    defaultBinding: "alt+PageUp",
+  },
+  {
+    id: "playerSubSizeDown",
+    scope: "Player",
+    group: "Tracks",
+    label: "Decrease subtitle size",
+    description: "Make subtitles smaller during playback.",
+    defaultBinding: "alt+PageDown",
+  },
 
   {
     id: "playerNextEpisode",
@@ -555,6 +591,8 @@ export function formatBindingForDisplay(binding: string): string {
       if (p === "ArrowDown") return "↓";
       if (p === "ArrowLeft") return "←";
       if (p === "ArrowRight") return "→";
+      if (p === "PageUp") return "PgUp";
+      if (p === "PageDown") return "PgDn";
       if (p.length === 1) return p.toUpperCase();
       return p;
     })
