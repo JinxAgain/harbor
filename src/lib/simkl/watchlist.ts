@@ -1,4 +1,8 @@
-import { currentActivitiesAll } from "./activities/gate";
+import {
+  currentActivitiesAll,
+  resetActivitiesGate,
+  subscribeActivitiesMutation,
+} from "./activities/gate";
 import { simklRequest } from "./client";
 import { simklTargetIds } from "./ids";
 import type { SimklIds, SimklItem, SimklTarget } from "./types";
@@ -57,6 +61,8 @@ export function invalidateWatchlistCache(): void {
   statusCache.clear();
 }
 
+subscribeActivitiesMutation?.(() => invalidateWatchlistCache());
+
 async function fetchByStatus(status: string): Promise<SimklItem[]> {
   const all = await currentActivitiesAll();
   const hit = statusCache.get(status);
@@ -77,7 +83,10 @@ async function fetchByStatusRaw(status: string): Promise<SimklItem[]> {
       }
       throw err;
     })
-    .catch(() => ({}) as RawAllItems);
+    .catch(() => {
+      statusCache.delete(status);
+      return {} as RawAllItems;
+    });
   const out: SimklItem[] = [];
   for (const e of data?.movies ?? []) {
     const m = e.movie;
@@ -141,6 +150,7 @@ export async function addToWatchlist(target: SimklTarget): Promise<boolean> {
         : { shows: [{ to: "plantowatch", ids: simklTargetIds(target) }] };
     await simklRequest("/sync/add-to-list", { method: "POST", body });
     invalidateWatchlistCache();
+    resetActivitiesGate?.({ kind: "write" });
     return true;
   } catch {
     return false;
@@ -149,12 +159,21 @@ export async function addToWatchlist(target: SimklTarget): Promise<boolean> {
 
 export async function removeFromWatchlist(target: SimklTarget): Promise<boolean> {
   try {
+    const ids = target.kind === "movie" ? target.ids : simklTargetIds(target);
+    resetActivitiesGate?.({
+      kind: "remove-target",
+      ids: ids as Record<string, unknown>,
+      targetKind: target.kind,
+    });
     const body =
-      target.kind === "movie"
-        ? { movies: [{ ids: target.ids }] }
-        : { shows: [{ ids: simklTargetIds(target) }] };
+      target.kind === "movie" ? { movies: [{ ids }] } : { shows: [{ ids }] };
     await simklRequest("/sync/history/remove", { method: "POST", body });
     invalidateWatchlistCache();
+    resetActivitiesGate?.({
+      kind: "remove-target",
+      ids: ids as Record<string, unknown>,
+      targetKind: target.kind,
+    });
     return true;
   } catch {
     return false;

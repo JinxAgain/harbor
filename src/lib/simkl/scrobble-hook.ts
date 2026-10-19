@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useSimkl } from "./provider";
 import { simklScrobble, buildBody, type ScrobbleInfo } from "./scrobble";
-import { recordPendingWatch } from "./pending-sync";
+import { recordPendingWatch, removePendingWatch } from "./pending-sync";
 import { recordWatchedFallback } from "./record-watched";
 import { getPlaybackPosition } from "@/lib/player/playback-clock";
 import { useSettings } from "@/lib/settings";
@@ -68,7 +68,7 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       if (a.snap.durationSec < STUB_MAX_SEC) return;
       if (lastActionRef.current !== "start" && lastActionRef.current !== "pause") return;
       const live = (getPlaybackPosition() / a.snap.durationSec) * 100;
-      const progress = Math.min(100, Math.max(0, progressRef.current, live));
+      const progress = Math.min(100, Math.max(0, live > 0 ? live : progressRef.current));
       const action = progress >= WATCHED_MARK_PCT ? "stop" : "pause";
       sendBeacon(a.metaId, a.episode, action === "stop" ? 100 : progress, action, a.info);
       if (action === "stop") {
@@ -89,6 +89,7 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
           sendBeacon(prev.metaId, prev.episode, 100, "stop", prev.info);
           void recordWatchedFallback(prev.metaId, prev.episode, prev.info).then((ok) => {
             if (!ok) recordPendingWatch(prev.metaId, prev.episode, prev.info?.imdb);
+            else removePendingWatch(prev.metaId, prev.episode);
           });
         } else if (prevProgress > 0) {
           void simklScrobble("pause", prev.metaId, prev.episode, prevProgress, prev.info);
@@ -122,6 +123,7 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
           const info = infoRef.current;
           void recordWatchedFallback(metaId, ep, info).then((ok) => {
             if (!ok) recordPendingWatch(metaId, ep, info?.imdb);
+            else removePendingWatch(metaId, ep);
           });
         }
         lastActionRef.current = "stop";
@@ -134,7 +136,7 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
     }
     if (snap.durationSec < STUB_MAX_SEC) return;
     const progress = Math.min(100, Math.max(0, (getPlaybackPosition() / snap.durationSec) * 100));
-    if (progress > progressRef.current) progressRef.current = progress;
+    if (progress > 0) progressRef.current = progress;
 
     if (lastActionRef.current === "stop") return;
 
@@ -153,7 +155,7 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
     if (key !== lastKeyRef.current) return;
     if (lastActionRef.current !== "start" && lastActionRef.current !== "pause") return;
     const pct = Math.min(100, Math.max(0, (snap.positionSec / snap.durationSec) * 100));
-    if (pct > progressRef.current) progressRef.current = pct;
+    if (pct > 0) progressRef.current = pct;
   }, [enabled, key, snap.positionSec, snap.durationSec]);
 
   useEffect(() => {
@@ -162,11 +164,14 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       const a = stopArgsRef.current;
       if (a.snap.durationSec >= STUB_MAX_SEC) {
         const live = (getPlaybackPosition() / a.snap.durationSec) * 100;
-        const progress = Math.min(100, Math.max(progressRef.current, live));
+        const progress = Math.min(100, Math.max(0, live > 0 ? live : progressRef.current));
         const action = progress >= WATCHED_MARK_PCT ? "stop" : "pause";
         sendBeacon(a.metaId, a.episode, action === "stop" ? 100 : progress, action, a.info);
         if (action === "stop") {
           recordPendingWatch(a.metaId, a.episode, a.info?.imdb);
+          void recordWatchedFallback(a.metaId, a.episode, a.info).then((ok) => {
+            if (ok) removePendingWatch(a.metaId, a.episode);
+          });
         }
         lastActionRef.current = action;
       } else {

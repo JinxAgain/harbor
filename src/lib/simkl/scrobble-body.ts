@@ -72,5 +72,13 @@ export function buildBody(
       : { progress: p, movie: node({ [idKey]: num }, ids) };
   }
 
+  if (metaId.startsWith("simkl:")) {
+    const id = Number(metaId.split(":")[1]);
+    if (!Number.isFinite(id)) return null;
+    return episode?.episode != null
+      ? { progress: p, show: node({ simkl: id }, ids), episode: ep }
+      : { progress: p, movie: node({ simkl: id }, ids) };
+  }
+
   return null;
 }

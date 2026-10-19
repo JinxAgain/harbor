@@ -47,10 +47,14 @@ function cacheKey(): string {
 }
 let memoryCache: SimklCache | null = null;
 let memoryCacheLoaded = false;
+let memoryCacheProfile: string | null = null;
 let writeTimeout: number | null = null;
 
 export function getLocalCache(): SimklCache | null {
-  if (memoryCacheLoaded) return memoryCache;
+  const profile = activeProfileId();
+  if (memoryCacheLoaded && memoryCacheProfile === profile) return memoryCache;
+  memoryCache = null;
+  memoryCacheProfile = profile;
   if (typeof window === "undefined" || typeof localStorage === "undefined") return null;
   try {
     const raw = localStorage.getItem(cacheKey());
@@ -63,14 +67,19 @@ export function getLocalCache(): SimklCache | null {
 }
 
 export function saveLocalCache(cache: SimklCache) {
+  const profile = activeProfileId();
+  const key = cacheKey();
   memoryCache = cache;
   memoryCacheLoaded = true;
+  memoryCacheProfile = profile;
   if (typeof window === "undefined" || typeof localStorage === "undefined") return;
   if (writeTimeout !== null) return;
   writeTimeout = window.setTimeout(() => {
     writeTimeout = null;
     try {
-      if (memoryCache) localStorage.setItem(cacheKey(), JSON.stringify(memoryCache));
+      if (memoryCache && memoryCacheProfile === profile) {
+        localStorage.setItem(key, JSON.stringify(memoryCache));
+      }
     } catch (e) {
       console.error("Failed to save SIMKL cache asynchronously", e);
     }
@@ -80,6 +89,7 @@ export function saveLocalCache(cache: SimklCache) {
 export function clearLocalCache() {
   memoryCache = null;
   memoryCacheLoaded = true;
+  memoryCacheProfile = activeProfileId();
   if (writeTimeout !== null) {
     window.clearTimeout(writeTimeout);
     writeTimeout = null;
@@ -95,6 +105,7 @@ export function clearLocalCache() {
 export function resetForProfile() {
   memoryCache = null;
   memoryCacheLoaded = false;
+  memoryCacheProfile = null;
   if (writeTimeout !== null) {
     window.clearTimeout(writeTimeout);
     writeTimeout = null;

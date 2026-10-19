@@ -6,6 +6,8 @@ import { stremioIdToTraktTarget } from "@/lib/trakt/ids";
 import { getSession as getTraktSession } from "@/lib/trakt/session";
 import { activeProfileId } from "@/lib/active-profile-id";
 import { addToHistory as simklAddToHistory } from "@/lib/simkl/history";
+import { clearSimklStatus } from "@/lib/simkl/list-status";
+import { isAuthenticated as simklConnected } from "@/lib/simkl/session";
 import { setMovieWatchedLocal } from "@/lib/movie-watched";
 import { recordManualWatchedMeta, setManualWatchedMany } from "@/lib/manual-watched";
 import { setWatchedFlag } from "@/lib/watched-flag";
@@ -50,7 +52,12 @@ export async function unmarkMovieWatched(meta: Meta, imdbId?: string | null): Pr
   const imdb = imdbId ?? (meta.id.startsWith("tt") ? meta.id : undefined);
   const authKey = readActiveStremioAuthKey();
   const cid = authKey ? cloudWriteId(meta.id, imdb ?? null, !!imdb) : null;
-  if (authKey && cid) await markMovieWatchedStremio(authKey, meta, cid, false);
+  const writes: Promise<unknown>[] = [];
+  if (authKey && cid) writes.push(markMovieWatchedStremio(authKey, meta, cid, false));
+  if (imdb && simklConnected()) {
+    writes.push(clearSimklStatus({ kind: "movie", ids: { imdb } }));
+  }
+  await Promise.allSettled(writes);
 }
 
 function resolveSeriesImdb(meta: Meta, imdbId?: string | null): string | null {

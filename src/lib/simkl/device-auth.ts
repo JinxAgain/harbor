@@ -56,7 +56,11 @@ export function pollForToken(pin: SimklPin, onUpdate: (result: PollResult) => vo
         onUpdate({ kind: "authorized", session });
         return;
       }
-      await new Promise((r) => setTimeout(r, pin.pollIntervalSec * 1000));
+      const intervalSec =
+        Number.isFinite(pin.pollIntervalSec) && pin.pollIntervalSec > 0
+          ? pin.pollIntervalSec
+          : 5;
+      await new Promise((r) => setTimeout(r, intervalSec * 1000));
     }
   })();
   return {

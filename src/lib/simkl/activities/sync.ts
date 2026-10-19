@@ -50,7 +50,8 @@ interface RawAllItems {
 }
 
 interface RawRatingEntry {
-  rating?: number;
+  rating?: number | null;
+  user_rating?: number | null;
   movie?: { ids?: RawIds };
   show?: { ids?: RawIds };
   anime?: { ids?: RawIds };
@@ -91,6 +92,7 @@ function parseAndMergeEntry(cache: SimklCache, entry: RawEntry, type: "movie" | 
     status = entry.status;
   }
 
+  const hasRatingField = entry.user_rating !== undefined || entry.rating !== undefined;
   let userRating: number | null = null;
   if (entry.user_rating != null) {
     userRating = entry.user_rating;
@@ -119,7 +121,7 @@ function parseAndMergeEntry(cache: SimklCache, entry: RawEntry, type: "movie" | 
     title: node.title ?? existing?.title ?? "",
     year: node.year ?? existing?.year ?? null,
     status,
-    userRating: userRating ?? existing?.userRating ?? null,
+    userRating: hasRatingField ? userRating : (existing?.userRating ?? null),
     watchedAt: entry.last_watched_at ?? entry.added_to_watchlist_at ?? existing?.watchedAt ?? null,
     watchedEpisodes: watchedEpisodes ?? existing?.watchedEpisodes,
     poster:
@@ -146,17 +148,19 @@ function mergeRatings(cache: SimklCache, ratings: RawRatingsResponse) {
       const simklId = node.ids.simkl;
       const simklIdStr = String(simklId);
 
+      const score =
+        entry.user_rating !== undefined ? (entry.user_rating ?? null) : (entry.rating ?? null);
       const existing = cache.items[simklIdStr];
       if (existing) {
-        existing.userRating = entry.rating ?? null;
-      } else {
+        existing.userRating = score;
+      } else if (score != null) {
         const item: SimklCacheItem = {
           simklId,
           type,
           title: "",
           year: null,
           status: "completed",
-          userRating: entry.rating ?? null,
+          userRating: score,
           watchedAt: null,
         };
         cache.items[simklIdStr] = item;
@@ -283,6 +287,20 @@ async function performDeltaSync(cache: SimklCache, activities: any): Promise<Sim
         pruneItem(cache, item.simklId);
       }
     }
+  }
+
+  const tvShowsRatedAt = activities.shows?.rated_at || activities.tv_shows?.rated_at;
+  const nextRatings = getLatestTimestamp(
+    activities.movies?.rated_at,
+    tvShowsRatedAt,
+    activities.anime?.rated_at,
+  );
+  if (nextRatings && nextRatings !== cache.activities?.ratings) {
+    const ratingsQuery = cache.activities?.ratings
+      ? `?date_from=${encodeURIComponent(cache.activities.ratings)}`
+      : "";
+    const ratingsData = await simklRequest<RawRatingsResponse>(`/sync/ratings${ratingsQuery}`);
+    mergeRatings(cache, ratingsData ?? {});
   }
 
   applyActivities(cache, activities);

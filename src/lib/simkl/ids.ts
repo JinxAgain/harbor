@@ -21,6 +21,17 @@ async function animeIdToMal(harborId: string): Promise<number | null> {
   return null;
 }
 
+function nativeAnimeIds(harborId: string): SimklIds | null {
+  const [prefix, raw] = harborId.split(":");
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  if (prefix === "mal") return { mal: n };
+  if (prefix === "kitsu") return { kitsu: n };
+  if (prefix === "anilist") return { anilist: n };
+  if (prefix === "anidb") return { anidb: n };
+  return null;
+}
+
 type EpisodeIdentity = {
   season: number;
   episode: number;
@@ -43,8 +54,14 @@ export async function resolveSimklEpisodeTarget(
     return { kind: "episode", show: { ids: { imdb: fallbackImdb } }, season, number };
   }
   const mal = await animeIdToMal(harborId);
-  if (mal == null) return null;
-  return { kind: "anime-episode", anime: { ids: { mal } }, season, number };
+  if (mal != null) {
+    return { kind: "anime-episode", anime: { ids: { mal } }, season, number };
+  }
+  const native = nativeAnimeIds(harborId);
+  if (native) {
+    return { kind: "anime-episode", anime: { ids: native }, season, number };
+  }
+  return null;
 }
 
 export async function resolveSimklTarget(
@@ -57,12 +74,27 @@ export async function resolveSimklTarget(
     tgt = resolution.target;
   } else {
     const mal = await animeIdToMal(harborId);
-    if (mal != null) tgt = { kind: "show", ids: { mal } };
+    const native = nativeAnimeIds(harborId);
+    if (mal != null || native != null) {
+      tgt = {
+        kind: "show",
+        ids: { ...(native ?? {}), ...(mal != null ? { mal } : {}) },
+      };
+    }
   }
   if (!tgt) return null;
   if (type === "series" && tgt.kind === "movie") tgt = { kind: "show", ids: tgt.ids };
   if (type === "movie" && tgt.kind === "show") tgt = { kind: "movie", ids: tgt.ids };
   return tgt;
+}
+
+export function simklShowIdsForMeta(metaId: string): SimklIds | null {
+  const r = stremioIdToSimklTarget(metaId, { season: 1, episode: 1 });
+  if (r.ok) {
+    if (r.target.kind === "episode") return r.target.show.ids;
+    if (r.target.kind === "anime-episode") return r.target.anime.ids;
+  }
+  return nativeAnimeIds(metaId);
 }
 
 export function stremioIdToSimklTarget(
@@ -148,6 +180,23 @@ export function stremioIdToSimklTarget(
       return { ok: true, target: { kind: "show", ids: { tmdb: id } } };
     }
     return { ok: false, reason: "unrecognized" };
+  }
+
+  if (metaId.startsWith("simkl:")) {
+    const n = Number(metaId.split(":")[1]);
+    if (!Number.isFinite(n)) return { ok: false, reason: "unrecognized" };
+    if (episode) {
+      return {
+        ok: true,
+        target: {
+          kind: "episode",
+          show: { ids: { simkl: n } },
+          season: episode.season,
+          number: episode.episode,
+        },
+      };
+    }
+    return { ok: true, target: { kind: "show", ids: { simkl: n } } };
   }
 
   return { ok: false, reason: "unrecognized" };

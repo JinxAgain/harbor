@@ -14,6 +14,72 @@ export function clearPendingWatches(): void {
     /* ignore unavailable storage */
   }
 }
+
+export function removePendingWatch(
+  metaId: string,
+  episode?: { season?: number; episode?: number } | null,
+): void {
+  if (!metaId) return;
+  generation += 1;
+  if (episode == null) {
+    save(
+      load().filter(
+        (p) => p.episode != null || (p.metaId !== metaId && p.imdb !== metaId),
+      ),
+    );
+    return;
+  }
+  const clean = cleanEpisode(episode);
+  if (!clean) return;
+  clearPending(keyOf({ metaId, episode: clean }));
+}
+
+export function removePendingWatchesByIds(
+  ids: {
+    simkl?: number;
+    imdb?: string;
+    tmdb?: number | string;
+    mal?: number | string;
+    kitsu?: number | string;
+    anilist?: number | string;
+    anidb?: number | string;
+  },
+  episode?: { season: number; epochs?: number[]; episodes?: number[] },
+): void {
+  const keys = new Set<string>();
+  if (ids.imdb) keys.add(ids.imdb);
+  if (ids.tmdb != null) {
+    keys.add(`tmdb:movie:${ids.tmdb}`);
+    keys.add(`tmdb:tv:${ids.tmdb}`);
+  }
+  if (ids.mal != null) keys.add(`mal:${ids.mal}`);
+  if (ids.kitsu != null) keys.add(`kitsu:${ids.kitsu}`);
+  if (ids.anilist != null) keys.add(`anilist:${ids.anilist}`);
+  if (ids.anidb != null) keys.add(`anidb:${ids.anidb}`);
+  if (ids.simkl != null) keys.add(`simkl:${ids.simkl}`);
+  if (keys.size === 0) return;
+
+  const epSet = episode?.episodes ? new Set(episode.episodes) : null;
+  const current = load();
+  const next = current.filter((p) => {
+    const matchesId =
+      keys.has(p.metaId) ||
+      (p.imdb != null && keys.has(p.imdb)) ||
+      (p.episode?.imdbId != null && keys.has(p.episode.imdbId));
+    if (!matchesId) return true;
+    if (!episode) return false;
+    if (!p.episode) return true;
+    const seasonMatch =
+      p.episode.season === episode.season || p.episode.imdbSeason === episode.season;
+    if (!seasonMatch) return true;
+    if (!epSet) return false;
+    return !epSet.has(p.episode.episode) && !(p.episode.imdbEpisode != null && epSet.has(p.episode.imdbEpisode));
+  });
+  if (next.length !== current.length) {
+    generation += 1;
+    save(next);
+  }
+}
 const MAX = 50;
 
 export type PendingEpisode = {

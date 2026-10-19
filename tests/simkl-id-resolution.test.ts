@@ -2,7 +2,11 @@
 import assert from "node:assert/strict";
 // @ts-expect-error Node test types are intentionally outside the browser-only tsconfig.
 import test from "node:test";
-import { resolveSimklEpisodeTarget } from "../src/lib/simkl/ids.ts";
+import {
+  resolveSimklEpisodeTarget,
+  simklShowIdsForMeta,
+  stremioIdToSimklTarget,
+} from "../src/lib/simkl/ids.ts";
 
 test("Simkl watched fallback resolves direct MAL episodes", async () => {
   assert.deepEqual(await resolveSimklEpisodeTarget("mal:21", { season: 1, episode: 7 }), {
@@ -27,4 +31,15 @@ test("Simkl watched fallback prefers a verified IMDb episode identity", async ()
       number: 3,
     },
   );
+});
+
+test("Simkl ID resolution supports direct simkl: IDs and anime episode show IDs", () => {
+  assert.deepEqual(stremioIdToSimklTarget("simkl:831411"), {
+    ok: true,
+    target: { kind: "show", ids: { simkl: 831411 } },
+  });
+  assert.deepEqual(simklShowIdsForMeta("kitsu:42"), { kitsu: 42 });
+  assert.deepEqual(simklShowIdsForMeta("mal:21"), { mal: 21 });
+  assert.deepEqual(simklShowIdsForMeta("anilist:101"), { anilist: 101 });
+  assert.deepEqual(simklShowIdsForMeta("tt0903747"), { imdb: "tt0903747" });
 });

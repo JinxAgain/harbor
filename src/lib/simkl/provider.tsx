@@ -96,14 +96,17 @@ export function SimklProvider({ children }: { children: ReactNode }) {
     try {
       const pin = await requestPin();
       setConnectState({ kind: "awaiting", pin });
-      pollHandleRef.current = pollForToken(pin, async (result: PollResult) => {
+      const handle = pollForToken(pin, async (result: PollResult) => {
+        if (pollHandleRef.current !== handle) return;
         if (result.kind === "authorized") {
           const final = await completeAuthorization(result.session);
+          if (pollHandleRef.current !== handle) return;
           setConnectState({ kind: "success", session: final });
         } else if (result.kind === "expired") {
           setConnectState({ kind: "expired" });
         }
       });
+      pollHandleRef.current = handle;
     } catch (e) {
       setConnectState({
         kind: "error",

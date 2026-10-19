@@ -1,7 +1,13 @@
 import { activeProfileId, activeProfileIsPrimary } from "@/lib/active-profile-id";
 import { getSecret, setSecret, subscribeSecretsReady } from "@/lib/secret-store";
-import { clearPendingWatches } from "./pending-sync";
+import {
+  clearPendingWatches,
+  removePendingWatch,
+  removePendingWatchesByIds,
+} from "./pending-sync";
 import type { SimklSession } from "./types";
+
+export { removePendingWatch, removePendingWatchesByIds };
 
 const BASE_KEY = "harbor.simkl.session.v1";
 

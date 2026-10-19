@@ -14,6 +14,7 @@ import {
 import {
   getCachedRatingByTarget,
   updateCachedRatingByTarget,
+  updateCachedStatusByTarget,
 } from "../src/lib/simkl/activities/targets.ts";
 import type { SimklTarget } from "../src/lib/simkl/types.ts";
 
@@ -101,4 +102,14 @@ test("an explicit SIMKL ID wins over an inconsistent external ID", () => {
   updateCachedRatingByTarget(target, 7);
   assert.equal(getCachedRatingByTarget(target), 7);
   assert.equal(getCachedRatingByTarget({ kind: "show", ids: { simkl: 101 } }), 8);
+});
+
+test("status updates and list removal resolve provider IDs against the SIMKL cache", () => {
+  const cache = seed();
+  const movieTarget: SimklTarget = { kind: "movie", ids: { imdb: "tt7654321" } };
+  updateCachedStatusByTarget(movieTarget, "completed");
+  assert.equal(cache.items["102"].status, "completed");
+  updateCachedStatusByTarget(movieTarget, null);
+  assert.equal(cache.items["102"], undefined);
+  assert.equal(cache.imdbToSimkl["tt7654321"], undefined);
 });

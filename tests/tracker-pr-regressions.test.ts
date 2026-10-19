@@ -201,18 +201,70 @@ test("history success requires an acknowledged write, not HTTP success alone", a
 
 test("Simkl must acknowledge the requested episodes, not merely find their show", async () => {
   let response: any = { added: { shows: 1, episodes: 0 }, not_found: { episodes: [{}] } };
+  const session = { username: "a" };
   const api = load("src/lib/simkl/history.ts", {
-    "@/lib/active-profile-id": {},
-    "./session": {},
+    "@/lib/active-profile-id": { activeProfileId: () => "a" },
+    "./session": { getSession: () => session },
     "@/lib/tracker-resolve": {},
     "./activities/gate": {},
-    "./ids": {},
+    "./ids": { simklTargetIds: (t: any) => t.ids },
     "./client": { simklRequest: async () => response },
   });
   assert.equal(await api.markEpisodesWatched({ imdb: "tt100" }, 1, [1]), false);
   response = { added: { episodes: 1 } };
   assert.equal(await api.markEpisodesWatched({ imdb: "tt100" }, 1, [1]), true);
   assert.equal(await api.markEpisodesWatched({ imdb: "tt100" }, 1, [1, 2]), false);
+
+  // When /scrobble/stop already marked a movie or episode watched moments earlier,
+  // Simkl's /sync/history returns added: 0 with empty not_found and resolved statuses.
+  response = {
+    added: {
+      movies: 0,
+      shows: 0,
+      episodes: 0,
+      statuses: [{ response: { status: "completed", simkl_type: "movie" } }],
+    },
+    not_found: { movies: [], shows: [], episodes: [] },
+  };
+  assert.equal(await api.addToHistory({ kind: "movie", ids: { imdb: "tt37281055" } }), true);
+  assert.equal(await api.markEpisodesWatched({ imdb: "tt100" }, 1, [1]), true);
+
+  response = {
+    added: { movies: 0, shows: 0, episodes: 0, statuses: [] },
+    not_found: { movies: [{ ids: { imdb: "tt9999999" } }], shows: [], episodes: [] },
+  };
+  assert.equal(await api.addToHistory({ kind: "movie", ids: { imdb: "tt9999999" } }), false);
+});
+
+test("Simkl stop scrobble treats 409 Conflict as already recorded", async () => {
+  class SimklApiError extends Error {
+    status: number;
+    constructor(status: number) {
+      super(`HTTP ${status}`);
+      this.status = status;
+    }
+  }
+  const session = { username: "a" };
+  let status = 409;
+  const api = load("src/lib/simkl/scrobble.ts", {
+    "@/lib/active-profile-id": { activeProfileId: () => "a" },
+    "./session": { getSession: () => session },
+    "@/lib/tracker-resolve": { resolveForMeta: async () => ({ ok: false }) },
+    "./scrobble-body": {
+      buildBody: () => ({ progress: 100, movie: { ids: { imdb: "tt37281055" } } }),
+      buildEpisodeBody: () => ({}),
+    },
+    "./client": {
+      SimklApiError,
+      simklRequest: async () => {
+        throw new SimklApiError(status);
+      },
+    },
+  });
+  assert.equal(await api.simklScrobble("stop", "tt37281055", undefined, 100), true);
+  assert.equal(await api.simklScrobble("pause", "tt37281055", undefined, 50), false);
+  status = 500;
+  assert.equal(await api.simklScrobble("stop", "tt37281055", undefined, 100), false);
 });
 test("Trakt's cached history accepts empty success and stays with its account", () => {
   const data = new Map();

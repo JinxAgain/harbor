@@ -13,7 +13,7 @@ import { isEpisodeHidden, setEpisodeHidden } from "@/lib/hidden-episodes";
 import { useSettings } from "@/lib/settings";
 import { clearResume, readResumeEntry } from "@/lib/resume";
 import { markEpisodesWatched, unmarkEpisodeWatched } from "@/lib/simkl/history";
-import { stremioIdToSimklTarget } from "@/lib/simkl/ids";
+import { simklShowIdsForMeta } from "@/lib/simkl/ids";
 import { useSimkl } from "@/lib/simkl/provider";
 
 export type WatchedMenuTarget = {
@@ -64,14 +64,7 @@ export function EpisodeWatchedMenu({
     };
   }, [onClose]);
 
-  const showIds = (() => {
-    if (!simklConnected) return null;
-    const r = stremioIdToSimklTarget(metaId, { season: target.season, episode: target.episode });
-    if (!r.ok) return null;
-    if (r.target.kind === "episode") return r.target.show.ids;
-    if (r.target.kind === "anime-episode") return r.target.anime.ids;
-    return null;
-  })();
+  const showIds = simklConnected ? simklShowIdsForMeta(metaId) : null;
 
   const started = !target.watched && readResumeEntry(metaId, target.season, target.episode) != null;
 

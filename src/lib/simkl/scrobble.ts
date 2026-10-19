@@ -1,7 +1,7 @@
 import { activeProfileId } from "@/lib/active-profile-id";
 import { getSession } from "./session";
 import { resolveForMeta } from "@/lib/tracker-resolve";
-import { simklRequest } from "./client";
+import { SimklApiError, simklRequest } from "./client";
 import {
   buildBody,
   buildEpisodeBody,
@@ -19,7 +19,12 @@ async function post(action: ScrobbleAction, body: Record<string, unknown>): Prom
   try {
     await simklRequest(`/scrobble/${action}`, { method: "POST", body });
     return true;
-  } catch {
+  } catch (e) {
+    // Simkl returns 409 Conflict when stopping a session that was already
+    // finalized as watched within the past hour; treat as already recorded.
+    if (action === "stop" && e instanceof SimklApiError && e.status === 409) {
+      return true;
+    }
     // Background-safe: live scrobble failures must never break playback.
     return false;
   }

@@ -3,7 +3,7 @@ import type { Meta } from "@/lib/cinemeta";
 import { recordManualWatchedMeta, setManualWatchedMany } from "@/lib/manual-watched";
 import type { Episode } from "@/lib/providers/tmdb";
 import { markEpisodesWatched, unmarkEpisodesWatched } from "@/lib/simkl/history";
-import { stremioIdToSimklTarget } from "@/lib/simkl/ids";
+import { simklShowIdsForMeta } from "@/lib/simkl/ids";
 import { airedOnly } from "../helpers";
 
 export function useMarkSeason({
@@ -36,14 +36,7 @@ export function useMarkSeason({
         watched,
       );
       if (!simklConnected) return;
-      const r = stremioIdToSimklTarget(meta.id, { season: active, episode: 1 });
-      const showIds =
-        r.ok &&
-        (r.target.kind === "episode"
-          ? r.target.show.ids
-          : r.target.kind === "anime-episode"
-            ? r.target.anime.ids
-            : null);
+      const showIds = simklShowIdsForMeta(meta.id);
       if (!showIds) return;
       if (watched) {
         void markEpisodesWatched(

@@ -1,5 +1,9 @@
 import { activeProfileId } from "@/lib/active-profile-id";
-import { currentActivitiesAll } from "./activities/gate";
+import {
+  currentActivitiesAll,
+  resetActivitiesGate,
+  subscribeActivitiesMutation,
+} from "./activities/gate";
 import { simklRequest } from "./client";
 import { simklTargetIds } from "./ids";
 import { getSession, subscribeSession } from "./session";
@@ -73,12 +77,17 @@ function idKeys(ids: RawIds | undefined, kind: "movie" | "show"): string[] {
   if (ids.kitsu != null) keys.push(`kitsu:${ids.kitsu}`);
   if (ids.anilist != null) keys.push(`anilist:${ids.anilist}`);
   if (ids.anidb != null) keys.push(`anidb:${ids.anidb}`);
+  if (ids.simkl != null && keys.length === 0) keys.push(`simkl:${ids.simkl}`);
   return keys;
 }
 
 function targetKeys(target: SimklTarget): string[] {
-  const ids = simklTargetIds(target);
-  return idKeys(ids as RawIds, target.kind === "movie" ? "movie" : "show");
+  const ids = simklTargetIds(target) as RawIds | undefined;
+  const keys = idKeys(ids, target.kind === "movie" ? "movie" : "show");
+  if (ids?.simkl != null && !keys.includes(`simkl:${ids.simkl}`)) {
+    keys.push(`simkl:${ids.simkl}`);
+  }
+  return keys;
 }
 
 let cache: Promise<SimklProgress> | null = null;
@@ -89,6 +98,28 @@ subscribeSession(() => {
   sessionGeneration += 1;
   cache = null;
   cacheMarker = null;
+});
+
+subscribeActivitiesMutation?.((mutation) => {
+  if (!mutation) return;
+  cacheMarker = null;
+  if (mutation.kind === "remove-episodes" && cache) {
+    const keys = idKeys(mutation.ids as RawIds, "show");
+    void cache
+      .then((data) => {
+        for (const k of keys) {
+          const eps = data.watched.get(k);
+          const times = data.watchedAt.get(k);
+          for (const epNum of mutation.episodes) {
+            const epKey = `${mutation.season}:${epNum}`;
+            eps?.delete(epKey);
+            times?.delete(epKey);
+          }
+        }
+        rememberSimklWatched(data.watched);
+      })
+      .catch(() => {});
+  }
 });
 
 async function pull(): Promise<SimklProgress> {
@@ -300,6 +331,7 @@ export async function setSimklStatus(
   );
   const echoed = r?.added?.[bucket]?.[0]?.to;
   const final = isStatus(echoed) ? echoed : status;
+  resetActivitiesGate?.({ kind: "write" });
   const statuses = await loadData()
     .then((data) => data.statuses)
     .catch(() => null);
@@ -310,9 +342,24 @@ export async function setSimklStatus(
 export async function clearSimklStatus(target: SimklTarget): Promise<void> {
   const ids = simklTargetIds(target);
   const bucket = target.kind === "movie" ? "movies" : "shows";
+  resetActivitiesGate?.({
+    kind: "remove-target",
+    ids: (ids ?? target) as Record<string, unknown>,
+    targetKind: target.kind,
+  });
   await simklRequest("/sync/history/remove", { method: "POST", body: { [bucket]: [{ ids }] } });
-  const statuses = await loadData()
-    .then((data) => data.statuses)
-    .catch(() => null);
-  if (statuses) for (const k of targetKeys(target)) statuses.delete(k);
+  resetActivitiesGate?.({
+    kind: "remove-target",
+    ids: (ids ?? target) as Record<string, unknown>,
+    targetKind: target.kind,
+  });
+  const data = await loadData().catch(() => null);
+  if (data) {
+    for (const k of targetKeys(target)) {
+      data.statuses.delete(k);
+      data.watched.delete(k);
+      data.watchedAt.delete(k);
+    }
+    rememberSimklWatched(data.watched);
+  }
 }

@@ -10,6 +10,8 @@ import {
   flushPendingWatches,
   listPendingWatches,
   recordPendingWatch,
+  removePendingWatch,
+  removePendingWatchesByIds,
 } from "../src/lib/simkl/pending-sync.ts";
 
 function clearPending() {
@@ -164,9 +166,36 @@ test("hook queues failed stops and provider flushes on session", () => {
   const hook = readFileSync(new URL("../src/lib/simkl/scrobble-hook.ts", import.meta.url), "utf8");
   assert.match(hook, /recordPendingWatch\(prev\.metaId, prev\.episode,/);
   assert.match(hook, /recordPendingWatch\(a\.metaId, a\.episode,/);
+  assert.match(hook, /removePendingWatch\(a\.metaId, a\.episode\)/);
   const provider = readFileSync(new URL("../src/lib/simkl/provider.tsx", import.meta.url), "utf8");
   assert.match(provider, /armOnlineFlush\(\{/);
   assert.match(provider, /stopScrobble:/);
   assert.match(provider, /simklScrobble\("stop", metaId, episode, 100\)/);
   assert.match(provider, /flushPendingWatches\(\)/);
+});
+
+test("confirmed unmount watch or list removal purges the pending queue so restarts cannot resurrect it", async () => {
+  clearPending();
+  recordPendingWatch("tt37281055", undefined, "tt37281055");
+  assert.equal(listPendingWatches().length, 1);
+  removePendingWatch("tt37281055", undefined);
+  assert.deepEqual(listPendingWatches(), []);
+
+  recordPendingWatch("tt37281055", undefined, "tt37281055");
+  recordPendingWatch("tt1234567", { season: 1, episode: 2 }, "tt1234567");
+  recordPendingWatch("tt1234567", { season: 1, episode: 3 }, "tt1234567");
+  removePendingWatchesByIds({ imdb: "tt37281055" });
+  assert.deepEqual(
+    listPendingWatches().map((p) => [p.metaId, p.episode?.episode]),
+    [
+      ["tt1234567", 3],
+      ["tt1234567", 2],
+    ],
+  );
+  removePendingWatchesByIds({ imdb: "tt1234567" }, { season: 1, episodes: [2] });
+  assert.deepEqual(
+    listPendingWatches().map((p) => [p.metaId, p.episode?.episode]),
+    [["tt1234567", 3]],
+  );
+  clearPending();
 });

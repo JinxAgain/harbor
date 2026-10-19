@@ -79,9 +79,12 @@ export function updateCachedStatus(
 }
 
 export function updateCachedStatusByTarget(target: SimklTarget, status: WatchlistStatus | null) {
+  const cache = getLocalCache();
+  if (!cache) return;
   const ids = targetIds(target);
-  if (!ids?.simkl) return;
-  updateCachedStatus(ids.simkl, targetType(target), "", null, status, ids);
+  const simklId = cachedTargetId(cache, target);
+  if (simklId == null) return;
+  updateCachedStatus(simklId, targetType(target), "", null, status, ids);
 }
 
 export function updateCachedRatingByTarget(target: SimklTarget, rating: number | null) {
