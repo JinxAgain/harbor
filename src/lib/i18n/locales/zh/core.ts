@@ -64,7 +64,9 @@ const core: Record<string, string> = {
   "arabic.row.trending": "阿拉伯热门内容",
   "nav.kids": "观看",
   "nav.catalogs": "目录",
+  "nav.plugins": "脚本插件",
   "nav.manga": "漫画",
+  "nav.sports": "体育",
   "nav.people": "热门人物",
 };
 

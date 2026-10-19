@@ -7,6 +7,7 @@ export function DockButton({
   baseSize,
   onClick,
   hideIndicator,
+  onHoverChange,
   children,
 }: {
   label: string;
@@ -15,28 +16,73 @@ export function DockButton({
   baseSize: number;
   onClick: () => void;
   hideIndicator?: boolean;
+  onHoverChange?: (hovered: boolean) => void;
   children: ReactNode;
 }) {
   const [punch, setPunch] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   const handleClick = () => {
     setPunch(true);
     onClick();
     window.setTimeout(() => setPunch(false), 220);
   };
+  const setHover = (next: boolean) => {
+    setHovered(next);
+    onHoverChange?.(next);
+  };
   const lift = scale > 1 ? (scale - 1) * 14 : 0;
+  const tipOffset = lift + baseSize * (scale - 1);
+  const showTip = (hovered || focused) && !hideIndicator;
+  const tipBg = "color-mix(in srgb, var(--color-elevated) 92%, var(--color-canvas))";
   return (
     <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       className="relative flex shrink-0 flex-col items-center justify-end"
       style={{
         width: baseSize * scale,
         height: baseSize,
-        zIndex: Math.round(scale * 100),
+        zIndex: showTip ? 200 : Math.round(scale * 100),
         transition: "width 140ms cubic-bezier(0.34, 1.56, 0.64, 1)",
       }}
     >
+      <span
+        role="tooltip"
+        aria-hidden={!showTip}
+        className="harbor-minui-tooltip pointer-events-none absolute left-1/2 z-20 whitespace-nowrap rounded-xl border px-3 py-1.5 text-[12.5px] font-semibold leading-none tracking-[0.01em] backdrop-blur-xl"
+        style={{
+          bottom: baseSize + 10,
+          background: tipBg,
+          color: "var(--color-ink)",
+          borderColor: "var(--color-edge)",
+          boxShadow:
+            "0 12px 28px -8px rgba(15,15,18,0.38), 0 4px 12px -4px rgba(15,15,18,0.20), inset 0 1px 0 color-mix(in srgb, var(--color-ink) 10%, transparent)",
+          opacity: showTip ? 1 : 0,
+          transform: `translateX(-50%) translateY(${-(tipOffset + (showTip ? 0 : -4))}px) scale(${showTip ? 1 : 0.92})`,
+          transformOrigin: "center bottom",
+          transition:
+            "transform 140ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 140ms ease",
+        }}
+      >
+        {label}
+        <span
+          aria-hidden
+          className="absolute -bottom-[4px] left-1/2 h-[7px] w-[7px] -translate-x-1/2 rotate-45"
+          style={{
+            background: tipBg,
+            borderRight: "1px solid var(--color-edge)",
+            borderBottom: "1px solid var(--color-edge)",
+          }}
+        />
+      </span>
       <button
         type="button"
         onClick={handleClick}
+        onFocus={(e) => {
+          if (e.currentTarget.matches(":focus-visible")) setFocused(true);
+        }}
+        onBlur={() => setFocused(false)}
         aria-label={label}
         aria-current={active ? "page" : undefined}
         className="harbor-minui-button flex items-center justify-center rounded-2xl border outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -44,7 +90,7 @@ export function DockButton({
           width: baseSize,
           height: baseSize,
           background: active ? "var(--color-accent)" : "var(--color-elevated)",
-          color: active ? "#fff" : "var(--color-ink-muted)",
+          color: active ? "#fff" : hovered ? "var(--color-ink)" : "var(--color-ink-muted)",
           borderColor: active ? "transparent" : "var(--color-edge-soft)",
           boxShadow: active
             ? "0 10px 24px -10px var(--color-accent-soft), inset 0 1px 0 rgba(255,255,255,0.22)"

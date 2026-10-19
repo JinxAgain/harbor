@@ -168,6 +168,7 @@ function MinUIDockItem({
 }) {
   const t = useT();
   const label = t(item.label);
+  const [hovered, setHovered] = useState(false);
   const { open: openContextMenu } = useContextMenu();
   const editing = useNavEditMode();
   const drag = useNavDrag(item.id, "horizontal");
@@ -196,6 +197,7 @@ function MinUIDockItem({
         scale={scale}
         baseSize={ICON_BASE}
         hideIndicator={editing}
+        onHoverChange={setHovered}
         onClick={() => navigate(item)}
       >
         <span
@@ -205,7 +207,7 @@ function MinUIDockItem({
             transition: "transform 140ms cubic-bezier(0.34, 1.56, 0.64, 1)",
           }}
         >
-          {item.render(active)}
+          {item.render(active, hovered)}
         </span>
       </DockButton>
     </span>

@@ -45,6 +45,7 @@ export function FloatingTop() {
           onClick={() => setView("home")}
           className="harbor-minui-mark flex shrink-0 items-center gap-2 rounded-full px-1.5 py-1 text-ink transition-colors"
           aria-label={t("chrome.harborHome")}
+          title={t("chrome.harborHome")}
         >
           {customMark ? (
             <img src={customMark} alt="" draggable={false} className="h-8 w-8 object-contain" />

@@ -7,6 +7,7 @@ const chrome: Record<string, string> = {
   "nav.ebook": "電子書籍",
   "nav.live": "ライブ",
   "nav.sports": "スポーツ",
+  "nav.plugins": "プラグイン",
   "nav.playlists": "プレイリスト",
   "nav.calendar": "カレンダー",
   "nav.library": "マイライブラリ",

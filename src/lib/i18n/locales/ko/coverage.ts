@@ -13,6 +13,8 @@ const coverage: Record<string, string> = {
   "nav.manga": "만화",
   "nav.ebook": "전자책",
   "nav.live": "라이브 TV",
+  "nav.sports": "스포츠",
+  "nav.plugins": "플러그인",
   "nav.playlists": "재생목록",
   "nav.calendar": "캘린더",
   "nav.library": "내 라이브러리",

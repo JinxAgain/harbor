@@ -78,6 +78,7 @@ const chrome: Record<string, string> = {
   "nav.library": "Mi biblioteca",
   "nav.live": "TV en vivo",
   "nav.sports": "Deportes",
+  "nav.plugins": "Plugins",
   "nav.movies": "Películas",
   "nav.playlists": "Listas de reproducción",
   "nav.settings": "Configuración",

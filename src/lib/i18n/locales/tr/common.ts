@@ -324,6 +324,8 @@ const common: Record<string, string> = {
   "nav.home": "Ana Sayfa",
   "nav.library": "Kütüphanem",
   "nav.live": "Canlı TV",
+  "nav.sports": "Spor",
+  "nav.plugins": "Uzantılar",
   "nav.movies": "Filmler",
   "nav.playlists": "Oynatma Listeleri",
   "nav.settings": "Ayarlar",

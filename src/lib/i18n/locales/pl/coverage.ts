@@ -14,6 +14,8 @@ const coverage: Record<string, string> = {
   "nav.manga": "Manga",
   "nav.ebook": "eBook",
   "nav.live": "Telewizja na żywo",
+  "nav.sports": "Sport",
+  "nav.plugins": "Wtyczki",
   "nav.playlists": "Playlisty",
   "nav.calendar": "Kalendarz",
   "nav.library": "Moja biblioteka",
