@@ -1,5 +1,6 @@
 import { Popcorn } from "lucide-react";
 import { ImdbIcon } from "./icons/imdb-icon";
+import { DoubanIcon } from "./icons/douban-icon";
 import { MalLogo } from "./icons/mal-logo";
 import { RtBadge } from "./rt-badge";
 import mdblistLogo from "@/assets/addon-logos/mdblist.png";
@@ -14,7 +15,8 @@ export type CardBadge =
   | { kind: "letterboxd"; value: number }
   | { kind: "mdblist"; value: number }
   | { kind: "trakt"; value: number }
-  | { kind: "simkl"; value: number };
+  | { kind: "simkl"; value: number }
+  | { kind: "douban"; value: number };
 
 function metacriticTone(v: number): string {
   if (v >= 61) return "bg-emerald-500";
@@ -85,6 +87,13 @@ function BadgeContent({ badge }: { badge: CardBadge }) {
         <span className="flex items-center gap-0.5">
           <img src={simklLogo} alt="" className="h-[11px] w-[11px] rounded-[2px] object-contain" />
           <span>{Math.round(badge.value)}</span>
+        </span>
+      );
+    case "douban":
+      return (
+        <span className="flex items-center gap-0.5">
+          <DoubanIcon className="h-[11px] w-[11px] rounded-[2px]" />
+          <span>{badge.value.toFixed(1)}</span>
         </span>
       );
   }

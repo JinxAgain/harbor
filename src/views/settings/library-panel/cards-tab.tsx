@@ -25,6 +25,7 @@ export function CardsTab() {
     showTrakt: settings.showTraktBadge && !!settings.mdblistKey,
     showMal: settings.showMalBadge,
     showSimkl: settings.showSimklBadge,
+    showDouban: settings.showDoubanBadge,
   };
   const enabledBadgeCount =
     (badgeFlags.showImdb || badgeFlags.showTmdb || badgeFlags.showMal ? 1 : 0) +
@@ -34,7 +35,8 @@ export function CardsTab() {
     (badgeFlags.showLetterboxd ? 1 : 0) +
     (badgeFlags.showMdblist ? 1 : 0) +
     (badgeFlags.showTrakt ? 1 : 0) +
-    (badgeFlags.showSimkl ? 1 : 0);
+    (badgeFlags.showSimkl ? 1 : 0) +
+    (badgeFlags.showDouban ? 1 : 0);
 
   const prevBadgeCountRef = useRef(enabledBadgeCount);
   useEffect(() => {

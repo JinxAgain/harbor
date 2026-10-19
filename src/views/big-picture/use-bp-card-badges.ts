@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type RefObject } from "react";
 import type { Meta } from "@/lib/cinemeta";
 import { externalToKitsu, kitsuToImdb } from "@/lib/providers/anime-mapping";
 import { cinemetaRatingPrefetch, useCinemetaRating } from "@/lib/providers/cinemeta-rating";
+import { doubanPrefetch, useDoubanScore } from "@/lib/providers/douban";
 import { harborImdbTitle } from "@/lib/providers/harbor-imdb";
 import { mdblistCardPrefetch, useMdblistCardScores } from "@/lib/providers/mdblist-batch";
 import { omdbPrefetch, useOmdbScores } from "@/lib/providers/omdb";
@@ -27,7 +28,8 @@ export type BpCardBadge =
   | { kind: "metacritic"; value: number }
   | { kind: "letterboxd"; value: number }
   | { kind: "mdblist"; value: number }
-  | { kind: "trakt"; value: number };
+  | { kind: "trakt"; value: number }
+  | { kind: "douban"; value: number };
 
 export type BpCardBadges = { badges: readonly BpCardBadge[]; imdbId: string | undefined };
 
@@ -53,6 +55,7 @@ type BpBadgeGates = {
   mdblist: boolean;
   trakt: boolean;
   simkl: boolean;
+  douban: boolean;
   /** Detail shows an anime's MAL and IMDb scores side by side. A card shows one. */
   pairAnimeImdb: boolean;
 };
@@ -68,6 +71,7 @@ const NO_GATES: BpBadgeGates = {
   mdblist: false,
   trakt: false,
   simkl: false,
+  douban: false,
   pairAnimeImdb: false,
 };
 
@@ -96,6 +100,7 @@ function badgeGates(settings: Settings, surface: BpBadgeSurface): BpBadgeGates {
       mdblist: on && settings.showMdblistDetail,
       trakt: on && settings.showTraktDetail,
       simkl: on && settings.showSimklDetail,
+      douban: on && settings.showDoubanDetail,
       pairAnimeImdb: true,
     };
   }
@@ -110,6 +115,7 @@ function badgeGates(settings: Settings, surface: BpBadgeSurface): BpBadgeGates {
     mdblist: settings.showMdblistBadge,
     trakt: settings.showTraktBadge,
     simkl: settings.showSimklBadge,
+    douban: settings.showDoubanBadge,
     pairAnimeImdb: false,
   };
 }
@@ -151,7 +157,7 @@ export function useBpCardBadges(
     gate.audience || gate.metacritic || gate.letterboxd || gate.mdblist || gate.trakt || gate.simkl;
   // One boolean before any subscription. On a default install with no keys the
   // MDBList branch alone is off for six of the ten providers.
-  const want = gate.imdb || gate.tmdb || gate.mal || gate.rt || wantMdblist;
+  const want = gate.imdb || gate.tmdb || gate.mal || gate.rt || gate.douban || wantMdblist;
 
   // Resolved even when no badge wants it: the watchlist, watched and local
   // library marks all match on the alternate id too.
@@ -166,7 +172,10 @@ export function useBpCardBadges(
   // A card shows one anime score and animeCardRating picks which. A detail page
   // shows both, so there the IMDb chip alone is enough to want the mapping.
   const animeWantsImdb =
-    isAnime && (gate.pairAnimeImdb ? gate.imdb : settings.animeCardRating === "imdb" && gate.mal);
+    isAnime &&
+    (gate.pairAnimeImdb
+      ? gate.imdb || gate.douban
+      : (settings.animeCardRating === "imdb" && gate.mal) || gate.douban);
   // Two round trips through the kitsu mapping per tile, so it stays behind the
   // viewport gate and behind a setting that ships off.
   const wantAnimeMap = visible && animeWantsImdb;
@@ -213,7 +222,7 @@ export function useBpCardBadges(
     if (!visible || !want) return;
     const needsOmdb = !!settings.omdbKey && wantOmdb;
     const needsMdblist = !!settings.mdblistKey && wantMdblist;
-    if (!needsOmdb && !needsMdblist && !wantCinemetaRating) return;
+    if (!needsOmdb && !needsMdblist && !wantCinemetaRating && !gate.douban) return;
     let cancelled = false;
     void (async () => {
       const id = imdbId ?? (await tmdbImdbId(settings.tmdbKey, meta.id).catch(() => null));
@@ -221,6 +230,7 @@ export function useBpCardBadges(
       if (needsOmdb) void omdbPrefetch(settings.omdbKey, id);
       if (needsMdblist) mdblistCardPrefetch(id, mediaKind);
       if (wantCinemetaRating) cinemetaRatingPrefetch(id, cinemetaKind);
+      if (gate.douban) doubanPrefetch(id, mediaKind);
     })();
     return () => {
       cancelled = true;
@@ -231,6 +241,7 @@ export function useBpCardBadges(
     wantOmdb,
     wantMdblist,
     wantCinemetaRating,
+    gate.douban,
     imdbId,
     meta.id,
     mediaKind,
@@ -253,6 +264,13 @@ export function useBpCardBadges(
   const simklImdb = useSimklCardScores(gate.simkl && !isAnime ? scoreId : undefined);
   const simklAnime = useSimklCardScoresByAnimeId(gate.simkl && isAnime ? meta.id : undefined);
   const simklValue = (isAnime ? simklAnime.score : simklImdb.score) ?? cardScores?.simkl ?? null;
+  const doubanTt = isAnime ? animeImdb : scoreId;
+  const doubanScore = useDoubanScore(
+    gate.douban ? doubanTt : undefined,
+    mediaKind,
+    gate.douban,
+    surface === "detail" ? "high" : "normal",
+  );
 
   const imdbValue = isAnime
     ? undefined
@@ -294,6 +312,8 @@ export function useBpCardBadges(
     if (gate.mdblist && cardScores?.score != null)
       out.push({ kind: "mdblist", value: cardScores.score });
     if (gate.trakt && cardScores?.trakt != null) out.push({ kind: "trakt", value: cardScores.trakt });
+    if (gate.douban && doubanScore?.rating != null)
+      out.push({ kind: "douban", value: doubanScore.rating });
     return out.length > 0 ? out : NO_BADGES;
   }, [
     want,
@@ -304,11 +324,13 @@ export function useBpCardBadges(
     imdbValue,
     tmdbVote,
     simklValue,
+    doubanScore,
     rtCritics,
     cardScores,
     gate.imdb,
     gate.tmdb,
     gate.simkl,
+    gate.douban,
     gate.rt,
     gate.audience,
     gate.metacritic,

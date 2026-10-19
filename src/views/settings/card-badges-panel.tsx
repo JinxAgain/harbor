@@ -7,6 +7,7 @@ import traktLogo from "@/assets/trakt.svg";
 import simklLogo from "@/assets/simkl.png";
 import tmdbLogo from "@/assets/addon-logos/tmdb.png";
 import { ImdbIcon } from "@/components/icons/imdb-icon";
+import { DoubanIcon } from "@/components/icons/douban-icon";
 import { MalLogo } from "@/components/icons/mal-logo";
 import { RtFresh } from "@/components/icons/rt-fresh";
 import type { Settings } from "@/lib/settings";
@@ -25,6 +26,7 @@ export type PreviewFlags = {
   showTrakt: boolean;
   showMal: boolean;
   showSimkl: boolean;
+  showDouban: boolean;
 };
 
 type WatchlistPos = "off" | "topStart" | "topEnd" | "bottomStart" | "bottomEnd";
@@ -81,6 +83,13 @@ function previewExtras(f: PreviewFlags): React.ReactNode[] {
       <span className="flex items-center gap-0.5">
         <img src={simklLogo} alt="" className="h-[13px] w-[13px] rounded-sm object-contain" />
         <span>8.5</span>
+      </span>,
+    );
+  if (f.showDouban)
+    out.push(
+      <span className="flex items-center gap-0.5">
+        <DoubanIcon className="h-[13px] w-[13px] rounded-sm" />
+        <span>8.6</span>
       </span>,
     );
   return out;

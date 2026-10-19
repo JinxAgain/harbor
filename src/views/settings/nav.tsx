@@ -8364,6 +8364,13 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
     keywords: ["simkl", "simkl score", "simkl rating", "card badge", "community rating"],
   },
   {
+    label: "Show Douban score on cards",
+    section: "library",
+    tab: "cards",
+    anchorTitle: "Scores",
+    keywords: ["douban", "豆瓣", "douban score", "douban rating", "card badge"],
+  },
+  {
     label: "Watched badge",
     section: "library",
     tab: "cards",

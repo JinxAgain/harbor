@@ -1,5 +1,6 @@
 import { Popcorn } from "lucide-react";
 import { ImdbIcon } from "@/components/icons/imdb-icon";
+import { DoubanIcon } from "@/components/icons/douban-icon";
 import { MalLogo } from "@/components/icons/mal-logo";
 import { RtBadge } from "@/components/rt-badge";
 import letterboxdLogo from "@/assets/addon-logos/letterboxd.png";
@@ -49,6 +50,8 @@ function markFor(badge: BpCardBadge, size: string) {
       return <img src={traktLogo} alt="" className={size} />;
     case "simkl":
       return <img src={simklLogo} alt="" className={`${size} rounded-[0.16em]`} />;
+    case "douban":
+      return <DoubanIcon className={`${size} rounded-[0.16em]`} />;
   }
 }
 
@@ -62,6 +65,8 @@ function valueFor(badge: BpCardBadge): string {
       return `${Math.round(badge.value)}%`;
     case "letterboxd":
       return (badge.value / 2).toFixed(1);
+    case "douban":
+      return badge.value.toFixed(1);
     default:
       return String(Math.round(badge.value));
   }

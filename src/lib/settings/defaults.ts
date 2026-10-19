@@ -52,6 +52,8 @@ export const DEFAULT: Settings = {
   showTraktComments: false,
   showSimklBadge: true,
   showSimklDetail: true,
+  showDoubanBadge: false,
+  showDoubanDetail: true,
   showDubBadge: true,
   simklShowCommunityRatings: true,
   simklEnableUserRatings: true,

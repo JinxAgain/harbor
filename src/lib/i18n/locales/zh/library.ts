@@ -567,6 +567,8 @@ const library: Record<string, string> = {
     "在详情页显示按钮，用于将影片或单集标记为已看。连接 Trakt 和 Simkl 后会同步。",
   "Show Simkl rails on Home": "在首页显示 Simkl 内容栏",
   "Show SIMKL score on cards": "在卡片上显示 SIMKL 评分",
+  Douban: "豆瓣",
+  "Show Douban score on cards": "在卡片上显示豆瓣评分",
   "Show Simkl Trending Today rail": "显示“Simkl 今日热门”内容栏",
   "Show the IMDb rating and synopsis on episodes across the list, grid, and panel layouts.":
     "在列表、网格和面板布局的单集中显示 IMDb 评分和剧情简介。",

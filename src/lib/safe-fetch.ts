@@ -78,6 +78,8 @@ const PROXY_HOSTS = new Set([
   "graphql.anilist.co",
   "www.googleapis.com",
   "www.wikidata.org",
+  "m.douban.com",
+  "www.douban.com",
   "api.deepseek.com",
   "api.deezer.com",
   "api.igdb.com",
@@ -115,6 +117,8 @@ const DEV_PROXY_HOSTS = new Set([
   "covers.openlibrary.org",
   "www.googleapis.com",
   "www.wikidata.org",
+  "m.douban.com",
+  "www.douban.com",
   "api.deepseek.com",
 ]);
 
@@ -165,7 +169,8 @@ function rewriteForWeb(url: string, init?: RequestInit): { url: string; init?: R
   const proxiable =
     PROXY_HOSTS.has(parsed.hostname) || PROXY_SUFFIXES.some((s) => parsed.hostname.endsWith(s));
   if (!proxiable) return { url, init };
-  const localDev = /^(?:localhost|127\.0\.0\.1)$/i.test(window.location.hostname);
+  const localDev =
+    typeof window !== "undefined" && /^(?:localhost|127\.0\.0\.1)$/i.test(window.location.hostname);
   if (!webProxyAvailable() && !(localDev && DEV_PROXY_HOSTS.has(parsed.hostname)))
     return { url, init };
 

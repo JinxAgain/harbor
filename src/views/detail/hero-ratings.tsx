@@ -1,6 +1,7 @@
 import { Popcorn } from "lucide-react";
 import type { ReactNode } from "react";
 import { ImdbIcon } from "@/components/icons/imdb-icon";
+import { DoubanIcon } from "@/components/icons/douban-icon";
 import { MalLogo } from "@/components/icons/mal-logo";
 import { RtBadge } from "@/components/rt-badge";
 import { HoverTooltip } from "@/components/hover-tooltip";
@@ -8,6 +9,7 @@ import { useT } from "@/lib/i18n";
 import { useSettings } from "@/lib/settings";
 import type { OmdbScores } from "@/lib/providers/omdb";
 import type { MdblistScores } from "@/lib/providers/mdblist";
+import { useDoubanScore } from "@/lib/providers/douban";
 import { useSimklCommunityRating } from "@/lib/simkl/ratings";
 import mdblistLogo from "@/assets/addon-logos/mdblist.png";
 import letterboxdLogo from "@/assets/addon-logos/letterboxd.png";
@@ -101,6 +103,12 @@ export function HeroRatings({
       : settings.showImdbDetail;
 
   const { rating: simklCommunityRating } = useSimklCommunityRating(imdbId);
+  const douban = useDoubanScore(
+    imdbId,
+    mediaType,
+    settings.showDetailRatings && settings.showDoubanDetail,
+    "high",
+  );
 
   const items: ReactNode[] = [];
 
@@ -249,6 +257,25 @@ export function HeroRatings({
           className="h-[14px] w-[14px] rounded-[3px] object-contain"
         />
         <span>{Math.round(mdblist.score)}</span>
+      </ScoreItem>,
+    );
+  }
+
+  if (settings.showDetailRatings && settings.showDoubanDetail && douban?.rating != null) {
+    items.push(
+      <ScoreItem
+        compact={compact}
+        key="douban"
+        label={t("Douban")}
+        sublabel={t("Rating /10")}
+        onClick={
+          douban.doubanId
+            ? () => onOpenUrl(`https://movie.douban.com/subject/${douban.doubanId}/`)
+            : undefined
+        }
+      >
+        <DoubanIcon className="h-[14px] w-[14px] rounded-[3px]" />
+        <span>{douban.rating.toFixed(1)}</span>
       </ScoreItem>,
     );
   }

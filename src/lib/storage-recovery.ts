@@ -1,5 +1,7 @@
 const PRUNABLE_EXACT = new Set<string>([
   "harbor.omdb.v1",
+  "harbor.douban.v1",
+  "harbor.douban.v2",
   "harbor.omdb.misses",
   "harbor.omdb.budget",
   "harbor.iptv.hydration.v2",

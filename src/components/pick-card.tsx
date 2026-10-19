@@ -21,6 +21,7 @@ import {
 import { animeKitsuMeta } from "@/lib/providers/anime-kitsu-addon";
 import { omdbPrefetch, useOmdbScores } from "@/lib/providers/omdb";
 import { cinemetaRatingPrefetch, useCinemetaRating } from "@/lib/providers/cinemeta-rating";
+import { doubanPrefetch, useDoubanScore } from "@/lib/providers/douban";
 import { harborImdbTitle } from "@/lib/providers/harbor-imdb";
 import { mdblistCardPrefetch, useMdblistCardScores } from "@/lib/providers/mdblist-batch";
 import { needsImdbForPoster, needsTmdbForPoster, rpdbPoster } from "@/lib/providers/rpdb";
@@ -207,6 +208,13 @@ const PosterCard = memo(function PosterCard({
   );
   const simklCardScore = isAnimeCardId ? simklCardScoreAnime : simklCardScoreImdb;
   const simklCardValue = simklCardScore.score ?? cardScores?.simkl ?? null;
+  const doubanTt = isAnimeCardId ? animeImdb : imdbId;
+  const doubanCard = useDoubanScore(
+    settings.showDoubanBadge ? doubanTt : undefined,
+    mediaKind,
+    settings.showDoubanBadge,
+    "normal",
+  );
   const cardBadges: CardBadge[] = [];
   if (isAnimeCardId) {
     if (animeRating)
@@ -231,6 +239,8 @@ const PosterCard = memo(function PosterCard({
     cardBadges.push({ kind: "mdblist", value: cardScores.score });
   if (settings.showTraktBadge && cardScores?.trakt != null)
     cardBadges.push({ kind: "trakt", value: cardScores.trakt });
+  if (settings.showDoubanBadge && doubanCard?.rating != null)
+    cardBadges.push({ kind: "douban", value: doubanCard.rating });
   const tilt = useTilt<HTMLDivElement>();
   const tiltable = !activeCustom;
   const altIds = useMemo(() => [imdbId], [imdbId]);
@@ -294,7 +304,11 @@ const PosterCard = memo(function PosterCard({
   }, [meta.id]);
 
   useEffect(() => {
-    if (!isAnimeCardId || (!settings.rpdbKey && !settings.posterBaseUrl && !animeWantsImdb)) return;
+    if (
+      !isAnimeCardId ||
+      (!settings.rpdbKey && !settings.posterBaseUrl && !animeWantsImdb && !settings.showDoubanBadge)
+    )
+      return;
     const m = meta.id.match(/^(kitsu|mal|anilist|anidb):(\d+)/);
     if (!m) return;
     const source = m[1];
@@ -319,7 +333,14 @@ const PosterCard = memo(function PosterCard({
     return () => {
       cancelled = true;
     };
-  }, [meta.id, isAnimeCardId, settings.rpdbKey, settings.posterBaseUrl, animeWantsImdb]);
+  }, [
+    meta.id,
+    isAnimeCardId,
+    settings.rpdbKey,
+    settings.posterBaseUrl,
+    animeWantsImdb,
+    settings.showDoubanBadge,
+  ]);
 
   useEffect(() => {
     if (posterSrc !== undefined || hydratedPoster || posterPending) return;
@@ -497,7 +518,8 @@ const PosterCard = memo(function PosterCard({
       !settings.mdblistKey &&
       !needsImdbForPoster(settings.rpdbKey, meta.id) &&
       !wantTmdbPoster &&
-      !wantCinemetaRating
+      !wantCinemetaRating &&
+      !settings.showDoubanBadge
     )
       return;
     const el = ref.current;
@@ -521,9 +543,10 @@ const PosterCard = memo(function PosterCard({
         mdblistCardPrefetch(id, meta.type === "series" ? "show" : "movie");
       }
       if (wantCinemetaRating) cinemetaRatingPrefetch(id, meta.type === "series" ? "series" : "movie");
+      if (settings.showDoubanBadge) doubanPrefetch(id, meta.type === "series" ? "show" : "movie");
     });
     return () => off?.();
-  }, [meta.id, meta.type, settings.tmdbKey, settings.omdbKey, settings.mdblistKey, wantMdblist, settings.rpdbKey, wantCinemetaRating]);
+  }, [meta.id, meta.type, settings.tmdbKey, settings.omdbKey, settings.mdblistKey, wantMdblist, settings.rpdbKey, wantCinemetaRating, settings.showDoubanBadge]);
 
   const awardYear = parseAwardYear(meta.releaseInfo);
   const awardImdb =

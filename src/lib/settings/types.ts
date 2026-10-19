@@ -147,6 +147,8 @@ export type Settings = {
   showTraktComments: boolean;
   showSimklBadge: boolean;
   showSimklDetail: boolean;
+  showDoubanBadge: boolean;
+  showDoubanDetail: boolean;
   showDubBadge: boolean;
   simklShowCommunityRatings: boolean;
   simklEnableUserRatings: boolean;

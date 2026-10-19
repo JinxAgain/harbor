@@ -10,6 +10,7 @@ import metacriticLogo from "@/assets/service-logos/metacritic.png";
 import traktLogo from "@/assets/trakt.svg";
 import simklLogo from "@/assets/simkl.png";
 import { ImdbIcon } from "@/components/icons/imdb-icon";
+import { DoubanIcon } from "@/components/icons/douban-icon";
 import { MalLogo } from "@/components/icons/mal-logo";
 import { RtFresh } from "@/components/icons/rt-fresh";
 import { RtRotten } from "@/components/icons/rt-rotten";
@@ -83,6 +84,10 @@ function TraktBadge() {
 
 function SimklBadge() {
   return <img src={simklLogo} alt="" className="h-7 w-7 shrink-0 rounded-md object-contain" />;
+}
+
+function DoubanBadge() {
+  return <DoubanIcon className="h-7 w-7 shrink-0 rounded-md" />;
 }
 
 type BoolKey = {
@@ -187,6 +192,7 @@ export function RatingsMatrix({
     { id: "mdblist", name: "MDBList", badge: <MdblistBadge />, cardKey: "showMdblistBadge", detailKey: "showMdblistDetail", lockKey: "mdblist" },
     { id: "trakt", name: "Trakt", badge: <TraktBadge />, cardKey: "showTraktBadge", detailKey: "showTraktDetail", lockKey: "mdblist" },
     { id: "simkl", name: "SIMKL", badge: <SimklBadge />, cardKey: "showSimklBadge", detailKey: "showSimklDetail" },
+    { id: "douban", name: t("Douban"), badge: <DoubanBadge />, cardKey: "showDoubanBadge", detailKey: "showDoubanDetail" },
     { id: "mal", name: "MAL", badge: <MalBadge />, cardKey: "showMalBadge", detailKey: "showMalDetail", anime: true },
   ];
 
