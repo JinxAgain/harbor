@@ -89,7 +89,7 @@ export default defineConfig(({ mode }) => {
       : { build: { rollupOptions: { input: { main: "index.html", retro: "retro-player.html" } } } }),
     server: {
       host: devHost || "127.0.0.1",
-      port: 1420,
+      port: 14210,
       strictPort: true,
       ...(devHost ? { hmr: { protocol: "ws", host: devHost, port: 1421 } } : {}),
       watch: {
@@ -128,18 +128,23 @@ export default defineConfig(({ mode }) => {
           "covers.openlibrary.org",
           "www.googleapis.com",
           "www.wikidata.org",
+          "m.douban.com",
+          "www.douban.com",
           "api.deepseek.com",
         ].map((host) => [
           `/api-proxy/${host}`,
           {
             target: `https://${host}`,
             changeOrigin: true,
-            ...(["www.youtube.com", "kick.com", "prosettings.net"].includes(host) ? {
+            ...(["www.youtube.com", "kick.com", "prosettings.net", "m.douban.com", "www.douban.com"].includes(host) ? {
               configure(proxy: HttpProxy.ProxyServer) {
                 proxy.on("proxyReq", (request) => {
                   // Public guide fetches are server-to-server, like native Harbor.
                   // Local webview fetch metadata describes our proxy, not the source.
                   for (const name of ["origin", "referer", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest"]) request.removeHeader(name);
+                  if (host === "m.douban.com" || host === "www.douban.com") {
+                    request.setHeader("referer", `https://${host}/`);
+                  }
                 });
               },
             } : {}),

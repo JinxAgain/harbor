@@ -5,7 +5,7 @@
   "identifier": "app.harbor",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:14210",
     "beforeBuildCommand": "pnpm build:desktop",
     "frontendDist": "../dist"
   },
