@@ -535,6 +535,18 @@ function parseStoredSettings(raw: string | null): Settings {
       tmdbImageLangs: Array.isArray(parsed.tmdbImageLangs)
         ? parsed.tmdbImageLangs.filter((l): l is string => typeof l === "string")
         : DEFAULT.tmdbImageLangs,
+      pickerSortBy:
+        parsed.pickerSortBy === "default" ||
+        parsed.pickerSortBy === "size" ||
+        parsed.pickerSortBy === "seeders" ||
+        parsed.pickerSortBy === "resolution" ||
+        parsed.pickerSortBy === "score"
+          ? parsed.pickerSortBy
+          : DEFAULT.pickerSortBy,
+      pickerSortDir:
+        parsed.pickerSortDir === "desc" || parsed.pickerSortDir === "asc"
+          ? parsed.pickerSortDir
+          : DEFAULT.pickerSortDir,
     };
   } catch {
     return DEFAULT;

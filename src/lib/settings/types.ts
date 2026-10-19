@@ -104,6 +104,9 @@ export type MusicSpeedPreset = {
   keepPitch: boolean;
 };
 
+export type PickerSortBy = "default" | "size" | "seeders" | "resolution" | "score";
+export type PickerSortDir = "desc" | "asc";
+
 export type Settings = {
   soundTheme: "none" | "glass" | "modern" | "retro" | "cinematic";
   sfxVolume: number;
@@ -637,6 +640,8 @@ export type Settings = {
   syncIndicatorPosition: SyncIndicatorPosition;
   pickerLayout: "condensed" | "stremio";
   streamSort: "harbor" | "addon";
+  pickerSortBy: PickerSortBy;
+  pickerSortDir: PickerSortDir;
   streamPriority: StreamPriorityEntry[];
   fullStreamDescription: boolean;
   pickerShowFilename: boolean;

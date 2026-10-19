@@ -11,6 +11,13 @@ import { useT } from "@/lib/i18n";
 import type { CustomStreamFilter } from "@/lib/streams/custom-filters";
 import { FacetMenuRow } from "./facet-menu-row";
 import { FilterBuilder } from "./filter-builder";
+import { SearchSortRow } from "./search-sort-row";
+import {
+  compileStreamSearch,
+  sortPickerStreams,
+  type StreamSearchMode,
+  type StreamSortField,
+} from "./stream-search-sort";
 
 export function StremioLayout({
   streams,
@@ -41,7 +48,17 @@ export function StremioLayout({
   const [filter, setFilter] = useState<string>("all");
   const [filterOpen, setFilterOpen] = useState(false);
   const [facet, setFacet] = useState<FacetState>({});
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<StreamSearchMode>("plain");
   const { settings, update } = useSettings();
+  const sortBy = settings.pickerSortBy ?? "default";
+  const sortDir = settings.pickerSortDir ?? "desc";
+  const handleSortByChange = (newSortBy: StreamSortField) => {
+    update({ pickerSortBy: newSortBy });
+  };
+  const handleSortDirToggle = () => {
+    update({ pickerSortDir: sortDir === "desc" ? "asc" : "desc" });
+  };
   const customFilters = settings.customStreamFilters;
   const activeFilterId = settings.activeStreamFilterId;
   const setActiveFilterId = (id: string | null) => update({ activeStreamFilterId: id });
@@ -68,10 +85,18 @@ export function StremioLayout({
     () => (filter === "all" ? streams : streams.filter((s) => addonInstanceKey(s) === filter)),
     [streams, filter],
   );
+  const compiledSearch = useMemo(
+    () => compileStreamSearch(searchQuery, searchMode),
+    [searchQuery, searchMode],
+  );
+  const searchFiltered = useMemo(
+    () => (compiledSearch.active ? addonFiltered.filter(compiledSearch.test) : addonFiltered),
+    [addonFiltered, compiledSearch],
+  );
   const facetData = useMemo(
     () =>
       FACET_DIMS.map((dim) => {
-        const base = addonFiltered.filter((s) => matchesFacets(s, facet, dim.key));
+        const base = searchFiltered.filter((s) => matchesFacets(s, facet, dim.key));
         return {
           dim,
           options: facetOptions(base, dim),
@@ -79,7 +104,7 @@ export function StremioLayout({
           value: facet[dim.key] ?? "all",
         };
       }),
-    [addonFiltered, facet],
+    [searchFiltered, facet],
   );
   useEffect(() => {
     for (const f of facetData) {
@@ -92,30 +117,32 @@ export function StremioLayout({
     if (filter !== "all" && addonFiltered.length === 0 && streams.length > 0) setFilter("all");
   }, [filter, addonFiltered.length, streams.length]);
   const visibleStreams = useMemo(() => {
-    const filtered = addonFiltered.filter((s) => matchesFacets(s, facet));
-    if (filter !== "all") return filtered;
-    if (preserveOrder) return filtered;
-    const downloadRx = /[⏳⌛⬇⏬🔽📥]|\bdownload(ing)?\b|\bqueued?\b|\bnot[\s_-]?cached\b/iu;
-    const isDownload = (s: ScoredStream) => {
-      const haystack = `${s.name ?? ""} ${s.title ?? ""} ${s.description ?? ""}`;
-      return downloadRx.test(haystack);
+    const filtered = searchFiltered.filter((s) => matchesFacets(s, facet));
+    const defaultOrderFn = (list: ScoredStream[]) => {
+      if (filter !== "all" || preserveOrder) return list;
+      const downloadRx = /[⏳⌛⬇⏬🔽📥]|\bdownload(ing)?\b|\bqueued?\b|\bnot[\s_-]?cached\b/iu;
+      const isDownload = (s: ScoredStream) => {
+        const haystack = `${s.name ?? ""} ${s.title ?? ""} ${s.description ?? ""}`;
+        return downloadRx.test(haystack);
+      };
+      return list.slice().sort((a, b) => {
+        const aw = /watchhub/i.test(a.addonId) || /watchhub/i.test(a.addonName ?? "") ? 1 : 0;
+        const bw = /watchhub/i.test(b.addonId) || /watchhub/i.test(b.addonName ?? "") ? 1 : 0;
+        if (aw !== bw) return aw - bw;
+        const ad = isDownload(a) ? 1 : 0;
+        const bd = isDownload(b) ? 1 : 0;
+        if (ad !== bd) return ad - bd;
+        const ar = addonRank.get(a.addonUrl ?? "") ?? 9999;
+        const br = addonRank.get(b.addonUrl ?? "") ?? 9999;
+        if (ar !== br) return ar - br;
+        const ai = isInstantText(a) ? 1 : 0;
+        const bi = isInstantText(b) ? 1 : 0;
+        if (ai !== bi) return bi - ai;
+        return 0;
+      });
     };
-    return filtered.slice().sort((a, b) => {
-      const aw = /watchhub/i.test(a.addonId) || /watchhub/i.test(a.addonName ?? "") ? 1 : 0;
-      const bw = /watchhub/i.test(b.addonId) || /watchhub/i.test(b.addonName ?? "") ? 1 : 0;
-      if (aw !== bw) return aw - bw;
-      const ad = isDownload(a) ? 1 : 0;
-      const bd = isDownload(b) ? 1 : 0;
-      if (ad !== bd) return ad - bd;
-      const ar = addonRank.get(a.addonUrl ?? "") ?? 9999;
-      const br = addonRank.get(b.addonUrl ?? "") ?? 9999;
-      if (ar !== br) return ar - br;
-      const ai = isInstantText(a) ? 1 : 0;
-      const bi = isInstantText(b) ? 1 : 0;
-      if (ai !== bi) return bi - ai;
-      return 0;
-    });
-  }, [addonFiltered, facet, filter, addonRank, preserveOrder]);
+    return sortPickerStreams(filtered, sortBy, sortDir, defaultOrderFn);
+  }, [searchFiltered, facet, filter, addonRank, preserveOrder, sortBy, sortDir]);
   const filterLabel =
     filter === "all" ? t("All") : (addonOptions.find((o) => o.id === filter)?.name ?? t("All"));
   const filterLogo = filter === "all" ? null : (addonLogoMap.get(filter) ?? null);
@@ -180,6 +207,17 @@ export function StremioLayout({
           </div>
         )}
       </div>
+      <SearchSortRow
+        query={searchQuery}
+        onQueryChange={setSearchQuery}
+        mode={searchMode}
+        onModeChange={setSearchMode}
+        regexError={Boolean(compiledSearch.error)}
+        sortBy={sortBy}
+        onSortByChange={handleSortByChange}
+        sortDir={sortDir}
+        onSortDirToggle={handleSortDirToggle}
+      />
       <FacetMenuRow
         facets={facetData}
         onFacet={(key, v) => setFacet((prev) => ({ ...prev, [key]: v }))}
@@ -194,6 +232,8 @@ export function StremioLayout({
           setEditingFilter(f);
           setBuilderOpen(true);
         }}
+        extraNarrowed={compiledSearch.active}
+        onResetExtra={() => setSearchQuery("")}
       />
       <div className="flex flex-col gap-2">
         {visibleStreams.map((s, i) => (
@@ -213,14 +253,17 @@ export function StremioLayout({
       {streams.length > 0 && visibleStreams.length === 0 && (
         <div className="flex flex-col items-center gap-3 rounded-2xl bg-elevated/60 px-5 py-6 text-center ring-1 ring-edge-soft">
           <p className="text-[14px] text-ink-muted">
-            {streams.length === 1
-              ? t("All {n} source is hidden by the active filter.", { n: streams.length })
-              : t("All {n} sources are hidden by the active filter.", { n: streams.length })}
+            {compiledSearch.error
+              ? t("Invalid regular expression")
+              : streams.length === 1
+                ? t("All {n} source is hidden by the active filter.", { n: streams.length })
+                : t("All {n} sources are hidden by the active filter.", { n: streams.length })}
           </p>
           <button
             onClick={() => {
               setFilter("all");
               setFacet({});
+              setSearchQuery("");
             }}
             className="rounded-full bg-accent-soft px-4 py-2 text-[13px] font-semibold text-accent ring-1 ring-edge-soft transition-transform hover:scale-[1.02] active:scale-[0.98] motion-reduce:transition-none motion-reduce:hover:scale-100"
           >

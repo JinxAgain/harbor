@@ -21,6 +21,8 @@ export function FacetMenuRow({
   onSelectFilter,
   onNewFilter,
   onEditFilter,
+  extraNarrowed,
+  onResetExtra,
 }: {
   facets: FacetRowEntry[];
   onFacet: (key: string, value: string) => void;
@@ -29,15 +31,19 @@ export function FacetMenuRow({
   onSelectFilter: (id: string | null) => void;
   onNewFilter: () => void;
   onEditFilter: (filter: CustomStreamFilter) => void;
+  extraNarrowed?: boolean;
+  onResetExtra?: () => void;
 }) {
   const t = useT();
   const [openKey, setOpenKey] = useState<string | null>(null);
   const visible = facets.filter((f) => f.options.length >= 2 || f.value !== "all");
-  const narrowed = facets.some((f) => f.value !== "all") || activeFilterId !== null;
+  const narrowed =
+    facets.some((f) => f.value !== "all") || activeFilterId !== null || Boolean(extraNarrowed);
   const newFilterLabel = filters.length > 0 ? t("New filter") : t("Create a custom filter");
   const reset = () => {
     for (const f of facets) if (f.value !== "all") onFacet(f.dim.key, "all");
     if (activeFilterId !== null) onSelectFilter(null);
+    onResetExtra?.();
     setOpenKey(null);
   };
   return (
