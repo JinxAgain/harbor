@@ -9,7 +9,12 @@ import { fetchAniSkipSegments, kitsuToMal } from "./aniskip";
 import { chaptersToSegments } from "./chapters";
 import { fetchIntroDbAppSegments } from "./introdb-app";
 import { fetchSkipDbSegments } from "./skipdb";
-import { fetchIntroDbSegments, readTheIntroDbKey, setTheIntroDbApiKey } from "./theintrodb";
+import {
+  fetchIntroDbSegments,
+  isIntroDbSupportedId,
+  readTheIntroDbKey,
+  setTheIntroDbApiKey,
+} from "./theintrodb";
 import type { SkipSegment } from "./types";
 import { getLocalCache } from "../simkl/activities";
 import { useSettings } from "../settings";
@@ -54,6 +59,13 @@ function resolveAnimeToExternalId(metaId: string): string | null {
       const tmdbKey = tmdbEntry[0];
       if (tmdbKey.startsWith("movie:")) return `tmdb:movie:${tmdbKey.slice("movie:".length)}`;
       if (tmdbKey.startsWith("tv:")) return `tmdb:tv:${tmdbKey.slice("tv:".length)}`;
+    }
+    const itemWithTvdb = Object.values(cache.items || {}).find(
+      (item) => item.simklId === simklId && item.ids?.tvdb != null,
+    );
+    if (itemWithTvdb && itemWithTvdb.ids?.tvdb) {
+      const prefix = itemWithTvdb.type === "movie" ? "tvdb:movie:" : "tvdb:series:";
+      return `${prefix}${itemWithTvdb.ids.tvdb}`;
     }
   } catch (e) {
     console.error("Failed to resolve anime ID to external ID", e);
@@ -110,7 +122,7 @@ export function useSkipSegments(
   const introSeason = episode?.imdbSeason ?? episode?.season;
   const introEpisode = episode?.imdbEpisode ?? episode?.episode;
   const introDbId =
-    meta.id.startsWith("tt") || meta.id.startsWith("tmdb:")
+    isIntroDbSupportedId(meta.id)
       ? meta.id
       : episode?.imdbId && episode.imdbId.startsWith("tt")
         ? episode.imdbId
@@ -146,11 +158,15 @@ export function useSkipSegments(
   useEffect(() => {
     setIntroDb([]);
     if (durationSec <= 0) return;
-    if (!introDbId.startsWith("tmdb:") && !introDbId.startsWith("tt")) return;
+    if (!isIntroDbSupportedId(introDbId)) return;
     let cancelled = false;
     const ep =
       introSeason != null && introEpisode != null
-        ? { season: introSeason, episode: introEpisode }
+        ? {
+            season: introSeason,
+            episode: introEpisode,
+            tvdbEpisodeId: episode?.tvdbEpisodeId,
+          }
         : undefined;
     fetchIntroDbSegments(introDbId, ep, durationSec)
       .then((segs) => {
@@ -160,7 +176,7 @@ export function useSkipSegments(
     return () => {
       cancelled = true;
     };
-  }, [introDbId, introSeason, introEpisode, durationSec, theIntroDbKey]);
+  }, [introDbId, introSeason, introEpisode, durationSec, theIntroDbKey, episode?.tvdbEpisodeId]);
 
   useEffect(() => {
     setSkipDb([]);
@@ -272,18 +288,22 @@ export function prefetchSegments(meta: Meta, episode?: PlayEpisode): void {
 
   const resolvedExternalId = resolveAnimeToExternalId(meta.id);
   const introDbId =
-    meta.id.startsWith("tt") || meta.id.startsWith("tmdb:")
+    isIntroDbSupportedId(meta.id)
       ? meta.id
       : episode?.imdbId && episode.imdbId.startsWith("tt")
         ? episode.imdbId
         : resolvedExternalId || meta.id;
 
-  if (introDbId.startsWith("tmdb:") || introDbId.startsWith("tt")) {
+  if (isIntroDbSupportedId(introDbId)) {
     const introSeason = episode?.imdbSeason ?? episode?.season;
     const introEpisode = episode?.imdbEpisode ?? episode?.episode;
     const ep =
       introSeason != null && introEpisode != null
-        ? { season: introSeason, episode: introEpisode }
+        ? {
+            season: introSeason,
+            episode: introEpisode,
+            tvdbEpisodeId: episode?.tvdbEpisodeId,
+          }
         : undefined;
     fetchIntroDbSegments(introDbId, ep, 0).catch(() => {});
     const tt = meta.id.startsWith("tt")
