@@ -52,27 +52,29 @@ function captureMpvProps() {
   return props;
 }
 
-test("subAssOverride === 'yes' (Font only) applies font name override, keeps scale=1 on native ASS, and preserves layout", async () => {
+test("subAssOverride === 'yes' (Font only) applies font name override, scales by subFontSize on native ASS, and adjusts sub-pos without breaking margins", async () => {
   const props = captureMpvProps();
   const settings = createMockSettings({
     subAssOverride: "yes",
     subFontFamily: "inter",
     subFontSize: 48,
+    subMarginY: 20,
   });
 
-  // When native ASS is active: sub-scale stays 1, margins and pos untouched
+  // When native ASS is active: sub-scale scales according to subFontSize, sub-pos reflects subMarginY, ass margins stay "no"
   await applySubStyle(settings, { assNativeActive: true, imageNativeActive: false });
 
-  assert.equal(props.get("sub-ass-override"), "yes");
+  assert.equal(props.get("sub-ass-override"), "scale");
   assert.equal(props.get("sub-ass-style-overrides"), "FontName=Inter");
-  assert.equal(props.get("sub-scale"), 1);
+  assert.equal(props.get("sub-scale"), 48 / 32);
   assert.equal(props.get("sub-ass-force-margins"), "no");
-  assert.equal(props.get("sub-pos"), 100);
+  assert.equal(props.get("sub-pos"), 80);
 
   // When native ASS is false (plain text SRT): sub-scale scales according to subFontSize
   const srtProps = captureMpvProps();
   await applySubStyle(settings, { assNativeActive: false, imageNativeActive: false });
   assert.equal(srtProps.get("sub-scale"), 48 / 32);
+  assert.equal(srtProps.get("sub-pos"), 80);
 });
 
 test("subAssOverride === 'yes' with assScale applies font override AND size normalization simultaneously", async () => {
@@ -81,6 +83,7 @@ test("subAssOverride === 'yes' with assScale applies font override AND size norm
     subAssOverride: "yes",
     subFontFamily: "rounded",
     subFontSize: 32,
+    subMarginY: 20,
   });
 
   await applySubStyle(settings, {
@@ -93,7 +96,7 @@ test("subAssOverride === 'yes' with assScale applies font override AND size norm
   assert.equal(props.get("sub-scale"), 1.35);
   assert.equal(props.get("sub-ass-style-overrides"), "FontName=Fredoka");
   assert.equal(props.get("sub-ass-force-margins"), "no");
-  assert.equal(props.get("sub-pos"), 100);
+  assert.equal(props.get("sub-pos"), 80);
 });
 
 test("mpvExtraOptions sub-ass-override and sub-ass-style-overrides are preserved over defaults", async () => {

@@ -1,5 +1,7 @@
 // Newly introduced UI copy remains usable until each locale provides an override.
 const uiFallback: Record<string, string> = {
+  "Lower subtitles": "Lower subtitles",
+  "Raise subtitles": "Raise subtitles",
   "Move subtitles closer to the bottom of the video.":
     "Move subtitles closer to the bottom of the video.",
   "Move subtitles higher on the video.": "Move subtitles higher on the video.",

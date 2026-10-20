@@ -85,14 +85,17 @@ export async function applySubStyle(
   const normScale =
     typeof context.assScale === "number" && Number.isFinite(context.assScale) ? context.assScale : null;
   const chosenFont = mpvFontFor(s.subFontFamily, customFontName(s));
+  const baseFontSize = clamp(Number(s.subFontSize) || 32, 16, 120);
 
-  let effOverride: string = normScale != null && !forceAssLayout ? "scale" : override;
+  let effOverride: string = !forceAssLayout ? "scale" : override;
   if (extraMap.has("sub-ass-override")) {
     const userOverride = extraMap.get("sub-ass-override")!;
     effOverride =
-      userOverride === "yes" && (normScale != null || override === "scale") ? "scale" : userOverride;
-  } else if (extraMap.has("sub-ass-style-overrides") && effOverride === "no") {
-    effOverride = "yes";
+      userOverride === "yes" && (normScale != null || override === "scale" || baseFontSize !== 32)
+        ? "scale"
+        : userOverride === "no"
+          ? "scale"
+          : userOverride;
   }
 
   const styleOverrides =
@@ -103,15 +106,11 @@ export async function applySubStyle(
   const boxOpacity = clamp(Number(s.subBoxOpacity ?? 0.6), 0, 1);
   const isBox = s.subStyle === "box";
   const isShadow = s.subStyle === "shadow";
-  const reposition = !context.assNativeActive || forceAssLayout;
   const hideSdh = s.subHideSdh === true && context.sdhFilterAllowed !== false;
-  const baseFontSize = clamp(Number(s.subFontSize) || 32, 16, 120);
   const computedScale =
     normScale != null
       ? clamp(normScale, 0.2, 6)
-      : context.assNativeActive && (override === "no" || override === "yes")
-        ? 1
-        : Math.min(4, Math.max(0.4, baseFontSize / 32));
+      : Math.min(4, Math.max(0.4, baseFontSize / 32));
 
   const props: Array<[string, unknown]> = [
     ["sub-filter-sdh", hideSdh],
@@ -133,7 +132,7 @@ export async function applySubStyle(
     ["sub-use-margins", assMargins],
     ["sub-spacing", s.subLineSpacing],
     ["sub-bold", s.subBold ? "yes" : "no"],
-    ["sub-pos", reposition ? clamp(100 - marginY, 0, 100) : 100],
+    ["sub-pos", clamp(100 - marginY, 0, 100)],
   ];
 
   const propMap = new Map<string, unknown>(props);
