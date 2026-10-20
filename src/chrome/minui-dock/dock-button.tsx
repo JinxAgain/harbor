@@ -7,7 +7,10 @@ export function DockButton({
   baseSize,
   onClick,
   hideIndicator,
-  onHoverChange,
+  hovered = false,
+  showTooltip = false,
+  onHover,
+  onFocusChange,
   children,
 }: {
   label: string;
@@ -16,29 +19,26 @@ export function DockButton({
   baseSize: number;
   onClick: () => void;
   hideIndicator?: boolean;
-  onHoverChange?: (hovered: boolean) => void;
+  hovered?: boolean;
+  showTooltip?: boolean;
+  onHover?: (hovered: boolean) => void;
+  onFocusChange?: (focused: boolean) => void;
   children: ReactNode;
 }) {
   const [punch, setPunch] = useState(false);
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
   const handleClick = () => {
     setPunch(true);
     onClick();
     window.setTimeout(() => setPunch(false), 220);
   };
-  const setHover = (next: boolean) => {
-    setHovered(next);
-    onHoverChange?.(next);
-  };
   const lift = scale > 1 ? (scale - 1) * 14 : 0;
   const tipOffset = lift + baseSize * (scale - 1);
-  const showTip = (hovered || focused) && !hideIndicator;
+  const showTip = Boolean(showTooltip && !hideIndicator);
   const tipBg = "color-mix(in srgb, var(--color-elevated) 92%, var(--color-canvas))";
   return (
     <div
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      onPointerEnter={() => onHover?.(true)}
+      onPointerLeave={() => onHover?.(false)}
       className="relative flex shrink-0 flex-col items-center justify-end"
       style={{
         width: baseSize * scale,
@@ -80,9 +80,9 @@ export function DockButton({
         type="button"
         onClick={handleClick}
         onFocus={(e) => {
-          if (e.currentTarget.matches(":focus-visible")) setFocused(true);
+          if (e.currentTarget.matches(":focus-visible")) onFocusChange?.(true);
         }}
-        onBlur={() => setFocused(false)}
+        onBlur={() => onFocusChange?.(false)}
         aria-label={label}
         aria-current={active ? "page" : undefined}
         className="harbor-minui-button flex items-center justify-center rounded-2xl border outline-none focus-visible:ring-2 focus-visible:ring-accent"

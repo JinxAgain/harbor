@@ -6,7 +6,7 @@ import { useT } from "@/lib/i18n";
 import { useParental } from "@/lib/parental";
 import { useSettings } from "@/lib/settings";
 import { useView, type View } from "@/lib/view";
-import { useAvailableNavItems, applyNavCustomization, type NavItem } from "@/chrome/nav-items";
+import { useAvailableNavItems, applyNavCustomization, type NavItem, type NavItemId } from "@/chrome/nav-items";
 import { NavHiddenTray, NavHideBadge, useNavDrag } from "@/chrome/nav-edit";
 import { useNavEditMode } from "@/chrome/nav-edit-mode";
 import { DockButton } from "./minui-dock/dock-button";
@@ -23,6 +23,8 @@ export function MinUIDock() {
   const { settings } = useSettings();
   const [pinFor, setPinFor] = useState<View | null>(null);
   const [cursor, setCursor] = useState<number | null>(null);
+  const [hoveredId, setHoveredId] = useState<NavItemId | null>(null);
+  const [focusedId, setFocusedId] = useState<NavItemId | null>(null);
   const [mounted, setMounted] = useState(false);
   const trackRef = useRef<HTMLDivElement>(null);
   const buttonCentersRef = useRef<number[]>([]);
@@ -84,7 +86,12 @@ export function MinUIDock() {
     const rect = trackRef.current.getBoundingClientRect();
     const rtl = getComputedStyle(trackRef.current).direction === "rtl";
     setCursor(rtl ? rect.right - e.clientX : e.clientX - rect.left);
+    const navEl = (e.target as Element | null)?.closest?.("[data-harbor-nav]");
+    const nextId = (navEl?.getAttribute("data-harbor-nav") as NavItemId | null) ?? null;
+    setHoveredId((prev) => (prev === nextId ? prev : nextId));
   };
+
+  const activeTipId = editing ? null : (hoveredId ?? focusedId);
 
   return (
     <>
@@ -111,7 +118,10 @@ export function MinUIDock() {
           <div
             ref={trackRef}
             onPointerMove={onMove}
-            onPointerLeave={() => setCursor(null)}
+            onPointerLeave={() => {
+              setCursor(null);
+              setHoveredId(null);
+            }}
             onContextMenu={openEmptyMenu}
             className="flex items-end px-2 pt-3 pb-2"
             style={{ gap: `${ICON_GAP}px` }}
@@ -125,6 +135,14 @@ export function MinUIDock() {
                   item={it}
                   active={active}
                   scale={scale}
+                  hovered={hoveredId === it.id}
+                  showTooltip={activeTipId === it.id}
+                  onHover={(entered) =>
+                    setHoveredId((prev) => (entered ? it.id : prev === it.id ? null : prev))
+                  }
+                  onFocusChange={(focused) =>
+                    setFocusedId((prev) => (focused ? it.id : prev === it.id ? null : prev))
+                  }
                   navigate={navigate}
                 />
               );
@@ -159,16 +177,23 @@ function MinUIDockItem({
   item,
   active,
   scale,
+  hovered,
+  showTooltip,
+  onHover,
+  onFocusChange,
   navigate,
 }: {
   item: NavItem;
   active: boolean;
   scale: number;
+  hovered: boolean;
+  showTooltip: boolean;
+  onHover: (entered: boolean) => void;
+  onFocusChange: (focused: boolean) => void;
   navigate: (it: NavItem) => void;
 }) {
   const t = useT();
   const label = t(item.label);
-  const [hovered, setHovered] = useState(false);
   const { open: openContextMenu } = useContextMenu();
   const editing = useNavEditMode();
   const drag = useNavDrag(item.id, "horizontal");
@@ -197,11 +222,14 @@ function MinUIDockItem({
         scale={scale}
         baseSize={ICON_BASE}
         hideIndicator={editing}
-        onHoverChange={setHovered}
+        hovered={hovered}
+        showTooltip={showTooltip}
+        onHover={onHover}
+        onFocusChange={onFocusChange}
         onClick={() => navigate(item)}
       >
         <span
-          className="block"
+          className="pointer-events-none block"
           style={{
             transform: `scale(${0.92 + scale * 0.08})`,
             transition: "transform 140ms cubic-bezier(0.34, 1.56, 0.64, 1)",
