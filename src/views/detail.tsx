@@ -43,7 +43,7 @@ import { useCapstanDetail } from "@/lib/streams/plugins/extension/detail-hook";
 import { isCapstanId, titlesAgree } from "@/lib/streams/plugins/extension/detail";
 import { resolveMeta } from "@/lib/meta-resource";
 import { useMdblistScores } from "@/lib/providers/mdblist";
-import { lastPlayedEpisode, readResumeEntry, saveResumeMs } from "@/lib/resume";
+import { hasResumeProgress, lastPlayedEpisode, readResumeEntry, saveResumeMs } from "@/lib/resume";
 import { advancePastFinished } from "@/lib/detail-resume-advance";
 import { localCwEntry } from "@/lib/local-cw";
 import { omdbPrefetch, omdbScores, type OmdbScores } from "@/lib/providers/omdb";
@@ -1415,8 +1415,28 @@ export function DetailView({
     async (forcePicker = false) => {
       const isForeignHost = !!roomSnapshot.hostClientId && roomSnapshot.hostClientId !== clientId;
       if (inSession && !isForeignHost) claimHost(true);
-      const opts = { autoPlay: !forcePicker && settings.instantPlay, resume: !forcePicker };
       const launch = async (episode: PlayEpisode | undefined) => {
+        const hasCloudOffset = (libraryItem?.state?.timeOffset ?? 0) > 0;
+        const isResuming =
+          !forcePicker &&
+          (isSeries
+            ? !!episode &&
+              (hasResumeProgress(playMeta.id, episode.season, episode.episode, [
+                detail?.imdbId,
+                episode.imdbId,
+                episode.sourceMetaId,
+              ]) ||
+                (lastPlay != null &&
+                  episode.season === lastPlay.season &&
+                  episode.episode === lastPlay.episode &&
+                  hasCloudOffset))
+            : !watchedMark &&
+              (hasResumeProgress(playMeta.id, undefined, undefined, [detail?.imdbId]) ||
+                hasCloudOffset));
+        const opts = {
+          autoPlay: !forcePicker && settings.instantPlay,
+          resume: isResuming,
+        };
         const stream = () => openPicker(playMeta, episode, opts);
         if (forcePicker) {
           stream();
@@ -1554,6 +1574,8 @@ export function DetailView({
       meta.id,
       detail?.imdbId,
       episodeName,
+      libraryItem,
+      watchedMark,
     ],
   );
   const smartPlayLabel =

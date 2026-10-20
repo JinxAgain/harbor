@@ -177,3 +177,19 @@ export function lastPlayedEpisode(seriesId: string): {
   }
   return best;
 }
+
+export function hasResumeProgress(
+  id: string,
+  season?: number,
+  episode?: number,
+  altIds?: Array<string | null | undefined>,
+): boolean {
+  const ids = [id, ...(altIds ?? [])].filter(
+    (x): x is string => typeof x === "string" && x.length > 0,
+  );
+  for (const cid of ids) {
+    const e = readResumeEntry(cid, season, episode);
+    if (e && (e.ms > 0 || (typeof e.pct === "number" && e.pct > 0.01))) return true;
+  }
+  return false;
+}

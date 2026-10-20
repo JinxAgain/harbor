@@ -6,6 +6,7 @@ import { useT } from "@/lib/i18n";
 import { queueAdd } from "@/lib/queue";
 import { useSettings } from "@/lib/settings";
 import { useView } from "@/lib/view";
+import { hasResumeProgress } from "@/lib/resume";
 import {
   HarborDeviceCard,
   ListeningPulse,
@@ -202,7 +203,11 @@ function PlayOnPanel({ request, themeId }: { request: PlayOnRequest; themeId: st
     closePlayOn();
     openPicker(request.meta, request.episode, {
       autoPlay: settings.instantPlay || (!!request.episode && settings.seasonSourceLock),
-      resume: true,
+      resume: hasResumeProgress(
+        request.meta.id,
+        request.episode?.season,
+        request.episode?.episode,
+      ),
     });
   }, [closePlayOn, openPicker, request, settings.instantPlay, settings.seasonSourceLock]);
 

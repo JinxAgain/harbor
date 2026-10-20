@@ -12,6 +12,7 @@ import {
   isExplicitlyUncached,
 } from "../src/lib/streams/cached.ts";
 import { streamIsCached, needsDownload } from "../src/views/play-picker/picker-utils.ts";
+import { readPlayback, savePlayback } from "../src/lib/playback-history.ts";
 import { resolveStream } from "../src/lib/streams/resolve.ts";
 import { verifyAddonSamples } from "../src/lib/streams/__fixtures__/verify.ts";
 import type { Stream, ScoredStream } from "../src/lib/streams/types.ts";
@@ -27,6 +28,14 @@ const continueCardSource = readFileSync(
 );
 const pickCardSource = readFileSync(
   new URL("../src/components/pick-card.tsx", import.meta.url),
+  "utf8",
+);
+const hoverPreviewSource = readFileSync(
+  new URL("../src/components/hover-preview.tsx", import.meta.url),
+  "utf8",
+);
+const detailSource = readFileSync(
+  new URL("../src/views/detail.tsx", import.meta.url),
   "utf8",
 );
 const playOnModalSource = readFileSync(
@@ -50,24 +59,59 @@ const useAutoFireSource = readFileSync(
   "utf8",
 );
 
-test("1. Manual mode (instantPlay: false) does not auto-fire rememberedHandledFirst", () => {
-  // Verify rememberedHandledFirst requires autoActive and settings.instantPlay
+test("1. Manual mode (instantPlay: false) does not gate rememberedHandledFirst on instantPlay", () => {
+  // Verify rememberedEligible requires settings.rememberLastStream and !!resume without instantPlay
   assert.match(
     playPickerSource,
-    /rememberedHandledFirst\s*=\s*[\s\S]*?autoActive\s*&&[\s\S]*?settings\.instantPlay/,
+    /rememberedEligible\s*=\s*[\s\S]*?!autoCancelled\s*&&[\s\S]*?settings\.rememberLastStream\s*&&[\s\S]*?!!resume/,
   );
-  // Verify rememberedInstant does NOT include !!previousMatch.url bypass
+  assert.match(
+    playPickerSource,
+    /rememberedHandledFirst\s*=\s*[\s\S]*?rememberedEligible\s*&&[\s\S]*?rememberedInstant/,
+  );
+  // Verify rememberedHandledFirst does not require settings.instantPlay
   assert.doesNotMatch(
     playPickerSource,
-    /rememberedInstant\s*=[\s\S]*?\|\|\s*!!previousMatch\.url/,
+    /rememberedHandledFirst\s*=\s*[^;]*?settings\.instantPlay/,
+  );
+  // Verify fresh-play entry points gate resume on hasResumeProgress rather than hardcoding resume: true
+  assert.match(
+    detailSource,
+    /resume:\s*isResuming/,
+  );
+  assert.match(
+    pickCardSource,
+    /resume:\s*hasResumeProgress\(\s*meta\.id\s*\)/,
+  );
+  assert.match(
+    hoverPreviewSource,
+    /resume:\s*hasResumeProgress\(\s*payload\.meta\.id/,
+  );
+  assert.match(
+    voyageRouteSource,
+    /resume:\s*hasResumeProgress\(\s*meta\.id\s*\)/,
+  );
+  assert.match(
+    kidsDetailSource,
+    /resume:\s*hasResumeProgress\(\s*meta\.id/,
+  );
+  assert.match(
+    playOnModalSource,
+    /resume:\s*hasResumeProgress\(\s*request\.meta\.id/,
   );
 });
 
 test("2. All Play entry points respect settings.instantPlay and seasonSourceLock", () => {
-  // continue-card: openPicker uses settings.instantPlay or seasonSourceLock
+  // continue-card: openPicker uses settings.instantPlay or seasonSourceLock, and passes resume: isResuming
   assert.match(
     continueCardSource,
-    /openPicker\(meta,\s*episode,\s*\{\s*autoPlay:\s*!chooseEveryTime\s*&&\s*\(settings\.instantPlay\s*\|\|\s*\(!!episode\s*&&\s*settings\.seasonSourceLock\)\)/,
+    /openPicker\(meta,\s*episode,\s*\{\s*autoPlay:\s*!chooseEveryTime\s*&&\s*\(settings\.instantPlay\s*\|\|\s*\(!!episode\s*&&\s*settings\.seasonSourceLock\)\),\s*resume:\s*isResuming/,
+  );
+
+  // continue-card: primary card button triggers onPlay
+  assert.match(
+    continueCardSource,
+    /<button[\s\S]*?ref=\{cardRef\}[\s\S]*?onClick=\{\(e\)\s*=>\s*void onPlay\(e\)\}/,
   );
 
   // pick-card: CustomHoverOverlay and CardHoverOverlay use settings.instantPlay
@@ -77,7 +121,7 @@ test("2. All Play entry points respect settings.instantPlay and seasonSourceLock
   );
   assert.match(
     pickCardSource,
-    /openPicker\(meta,\s*undefined,\s*\{\s*autoPlay:\s*settings\.instantPlay,\s*resume:\s*true\s*\}\)/,
+    /openPicker\(meta,\s*undefined,\s*\{\s*autoPlay:\s*settings\.instantPlay,\s*resume:\s*hasResumeProgress\(meta\.id\)\s*\}\)/,
   );
 
   // play-on-modal: uses settings.instantPlay or seasonSourceLock
@@ -89,13 +133,13 @@ test("2. All Play entry points respect settings.instantPlay and seasonSourceLock
   // voyage-route: uses settings.instantPlay
   assert.match(
     voyageRouteSource,
-    /openPicker\(meta,\s*undefined,\s*\{\s*autoPlay:\s*settings\.instantPlay,\s*resume:\s*true\s*\}\)/,
+    /openPicker\(meta,\s*undefined,\s*\{\s*autoPlay:\s*settings\.instantPlay,\s*resume:\s*hasResumeProgress\(meta\.id\)\s*\}\)/,
   );
 
   // kids-detail: uses settings.instantPlay
   assert.match(
     kidsDetailSource,
-    /openPicker\(meta,\s*hint,\s*\{\s*autoPlay:\s*settings\.instantPlay,\s*resume:\s*true\s*\}\)/,
+    /openPicker\(meta,\s*hint,\s*\{\s*autoPlay:\s*settings\.instantPlay,\s*resume:\s*hasResumeProgress\(meta\.id,\s*hint\?\.season,\s*hint\?\.episode\),?\s*\}\)/,
   );
 
   // seasonSourceLock in play-picker.tsx gates autoActive on seasonLockEntry != null when !instantPlay
@@ -198,3 +242,64 @@ test("3. Uncached debrid streams with url (including [PikPak 🧲 ]) are never t
   assert.equal(resolveRes.ok, false);
   assert.equal(resolveRes.code, "uncached-not-committed");
 });
+
+test("4. Cross-ID readPlayback and addon-configured debrid cached streams", () => {
+  // Ensure mock localStorage
+  if (!globalThis.localStorage) {
+    const store = new Map<string, string>();
+    globalThis.localStorage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, val: string) => {
+        store.set(key, val);
+      },
+      removeItem: (key: string) => {
+        store.delete(key);
+      },
+      clear: () => {
+        store.clear();
+      },
+      key: (i: number) => Array.from(store.keys())[i] ?? null,
+      get length() {
+        return store.size;
+      },
+    } as unknown as Storage;
+  }
+
+  // 1. Cross-ID readPlayback: save under tmdb:tv:202250, read with tt17491088
+  savePlayback(
+    "tmdb:tv:202250",
+    {
+      infoHash: "abcd1234efgh5678",
+      addonId: "torrentio",
+      title: "The Diplomat",
+      parsedTitle: "The Diplomat S03E02",
+    },
+    3,
+    2,
+  );
+
+  // Query with altIds
+  const matchAlt = readPlayback("tt17491088", 3, 2, {
+    altIds: ["tmdb:tv:202250"],
+    title: "The Diplomat",
+  });
+  assert.ok(matchAlt);
+  assert.equal(matchAlt?.infoHash, "abcd1234efgh5678");
+
+  // Query with title fallback (no matching altIds)
+  const matchTitle = readPlayback("tt99999999", 3, 2, {
+    title: "The Diplomat",
+  });
+  assert.ok(matchTitle);
+  assert.equal(matchTitle?.infoHash, "abcd1234efgh5678");
+
+  // 2. isCached and streamIsCached return true for [RD+] stream even with empty activeDebrids
+  const rdStream = parseStream({
+    name: "[RD+] Torrentio\n1080p",
+    title: "The.Diplomat.S03E02.1080p.mkv",
+    url: "https://example.com/stream",
+  });
+  assert.equal(isCached(rdStream, []), true);
+  assert.equal(streamIsCached(rdStream as unknown as ScoredStream, []), true);
+});
+

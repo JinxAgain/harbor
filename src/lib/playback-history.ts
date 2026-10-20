@@ -164,13 +164,72 @@ export function savePlayback(
   writeAll(all);
 }
 
+export type PlaybackLookupOpts = {
+  altIds?: Array<string | null | undefined>;
+  title?: string | null;
+};
+
 export function readPlayback(
   metaId: string,
   season?: number,
   episode?: number,
+  opts?: PlaybackLookupOpts,
 ): PlaybackEntry | null {
   const all = readAll();
-  return all[entryKey(metaId, season, episode)] ?? null;
+  const ids = Array.from(
+    new Set(
+      [metaId, ...(opts?.altIds ?? [])].filter(
+        (x): x is string => typeof x === "string" && x.length > 0,
+      ),
+    ),
+  );
+
+  let bestWithIdentity: PlaybackEntry | null = null;
+  let bestAny: PlaybackEntry | null = null;
+
+  for (const cid of ids) {
+    const entry = all[entryKey(cid, season, episode)];
+    if (!entry) continue;
+    if (!bestAny || entry.savedAt > bestAny.savedAt) {
+      bestAny = entry;
+    }
+    const hasIdentity = Boolean(entry.infoHash || entry.addonId || entry.url);
+    if (hasIdentity) {
+      if (!bestWithIdentity || entry.savedAt > bestWithIdentity.savedAt) {
+        bestWithIdentity = entry;
+      }
+    }
+  }
+
+  if (bestWithIdentity) return bestWithIdentity;
+
+  const wantTitle = opts?.title ? watchTitleKey(opts.title) : "";
+  if (wantTitle) {
+    const isEpisode = typeof season === "number" && typeof episode === "number";
+    const epSuffix = isEpisode ? `|s${season}e${episode}` : "";
+    let bestTitleMatch: PlaybackEntry | null = null;
+
+    for (const [key, entry] of Object.entries(all)) {
+      if (isEpisode) {
+        if (!key.endsWith(epSuffix)) continue;
+      } else {
+        if (key.includes("|s")) continue;
+      }
+      const hasIdentity = Boolean(entry.infoHash || entry.addonId || entry.url);
+      if (!hasIdentity) continue;
+      if (
+        watchTitleKey(entry.title) === wantTitle ||
+        watchTitleKey(entry.parsedTitle) === wantTitle
+      ) {
+        if (!bestTitleMatch || entry.savedAt > bestTitleMatch.savedAt) {
+          bestTitleMatch = entry;
+        }
+      }
+    }
+    if (bestTitleMatch) return bestTitleMatch;
+  }
+
+  return bestAny;
 }
 
 export function clearPlayback(metaId: string, season?: number, episode?: number): void {
@@ -189,6 +248,7 @@ export function streamMatchesEntry(
     resolution?: string | null;
     source?: string | null;
     size?: number | null;
+    behaviorHints?: { bingeGroup?: string };
   },
   e: PlaybackEntry,
 ): boolean {
@@ -196,6 +256,16 @@ export function streamMatchesEntry(
     if (s.infoHash.toLowerCase() !== e.infoHash.toLowerCase()) return false;
     if (e.fileIdx == null || s.fileIdx == null) return true;
     return s.fileIdx === e.fileIdx;
+  }
+  if (
+    e.addonId &&
+    s.addonId === e.addonId &&
+    e.bingeGroup &&
+    s.behaviorHints?.bingeGroup === e.bingeGroup &&
+    (e.fileIdx == null || s.fileIdx == null || e.fileIdx === s.fileIdx) &&
+    (e.size == null || s.size == null || e.size === s.size)
+  ) {
+    return true;
   }
   if (
     e.addonId &&
@@ -265,15 +335,56 @@ export function playbackEntries(): Array<{
   return out;
 }
 
-export function readLastSeriesPlayback(metaId: string): PlaybackEntry | null {
+export function readLastSeriesPlayback(
+  metaId: string,
+  opts?: PlaybackLookupOpts,
+): PlaybackEntry | null {
   const all = readAll();
-  const prefix = `${metaId}|`;
-  let best: PlaybackEntry | null = null;
+  const ids = Array.from(
+    new Set(
+      [metaId, ...(opts?.altIds ?? [])].filter(
+        (x): x is string => typeof x === "string" && x.length > 0,
+      ),
+    ),
+  );
+
+  let bestWithIdentity: PlaybackEntry | null = null;
+  let bestAny: PlaybackEntry | null = null;
+
   for (const [key, entry] of Object.entries(all)) {
-    if (key !== metaId && !key.startsWith(prefix)) continue;
-    if (!best || entry.savedAt > best.savedAt) best = entry;
+    const matchesId = ids.some((cid) => key === cid || key.startsWith(`${cid}|`));
+    if (!matchesId) continue;
+    if (!bestAny || entry.savedAt > bestAny.savedAt) {
+      bestAny = entry;
+    }
+    if (Boolean(entry.infoHash || entry.addonId || entry.url)) {
+      if (!bestWithIdentity || entry.savedAt > bestWithIdentity.savedAt) {
+        bestWithIdentity = entry;
+      }
+    }
   }
-  return best;
+
+  if (bestWithIdentity) return bestWithIdentity;
+
+  const wantTitle = opts?.title ? watchTitleKey(opts.title) : "";
+  if (wantTitle) {
+    let bestTitleMatch: PlaybackEntry | null = null;
+    for (const [key, entry] of Object.entries(all)) {
+      if (!key.includes("|s")) continue;
+      if (!Boolean(entry.infoHash || entry.addonId || entry.url)) continue;
+      if (
+        watchTitleKey(entry.title) === wantTitle ||
+        watchTitleKey(entry.parsedTitle) === wantTitle
+      ) {
+        if (!bestTitleMatch || entry.savedAt > bestTitleMatch.savedAt) {
+          bestTitleMatch = entry;
+        }
+      }
+    }
+    if (bestTitleMatch) return bestTitleMatch;
+  }
+
+  return bestAny;
 }
 
 export function streamMatchesSource(

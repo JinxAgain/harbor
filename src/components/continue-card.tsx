@@ -458,10 +458,11 @@ export const ContinueCard = memo(function ContinueCard({
     episode: PlayEpisode | undefined,
     chooseEveryTime: boolean,
   ) => {
+    const isResuming = !chooseEveryTime && (!upNext || off > 0);
     const stream = () =>
       openPicker(meta, episode, {
         autoPlay: !chooseEveryTime && (settings.instantPlay || (!!episode && settings.seasonSourceLock)),
-        resume: !chooseEveryTime,
+        resume: isResuming,
       });
     const tmdbMatch = meta.id.match(/^tmdb:(?:movie|tv):(\d+)$/);
     const identity = {
@@ -535,14 +536,6 @@ export const ContinueCard = memo(function ContinueCard({
     else showChooser();
   };
 
-  const onChooseSource = async () => {
-    const episode = await resolveEpisode();
-    if (onPlayOverride) {
-      onPlayOverride(episode);
-      return;
-    }
-    await openAvailableSources(episode, true);
-  };
 
   const onPlay = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -559,10 +552,10 @@ export const ContinueCard = memo(function ContinueCard({
       <button
         ref={cardRef}
         type="button"
-        onClick={() => void onChooseSource()}
+        onClick={(e) => void onPlay(e)}
         onContextMenu={(e) => openContextMenu(e, { kind: "meta", meta })}
-        aria-label={`${t("Choose another source")}: ${displayTitle}`}
-        title={t("Choose another source")}
+        aria-label={t("Play {name}", { name: displayTitle })}
+        title={t("Play")}
         className="block w-full min-w-0 rounded-xl text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       >
         <div className="harbor-poster relative aspect-[16/9] overflow-hidden rounded-xl bg-elevated shadow-[0_2px_8px_-2px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.06)] will-change-transform [transform:translate3d(0,0,0)] transition-transform duration-[220ms] ease-[cubic-bezier(0.22,0.61,0.36,1)] group-hover:scale-[1.02]">

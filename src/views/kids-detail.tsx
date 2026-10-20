@@ -7,6 +7,7 @@ import { useT } from "@/lib/i18n";
 import { tmdbDetails, type TmdbDetail } from "@/lib/providers/tmdb";
 import { useSettings } from "@/lib/settings";
 import { useView } from "@/lib/view";
+import { hasResumeProgress } from "@/lib/resume";
 import { CollectionRow } from "./detail/collection-row";
 import { dropUnreleased, dropUnsafeGenres } from "./kids/kids-filter";
 import { KidsEpisodes } from "./kids-detail/kids-episodes";
@@ -55,7 +56,10 @@ export function KidsDetailView({
   const onPlay = () => {
     const isSeries = meta.type === "series";
     const hint = episodeHint ?? (isSeries ? { season: 1, episode: 1 } : undefined);
-    openPicker(meta, hint, { autoPlay: settings.instantPlay, resume: true });
+    openPicker(meta, hint, {
+      autoPlay: settings.instantPlay,
+      resume: hasResumeProgress(meta.id, hint?.season, hint?.episode),
+    });
   };
 
   return (

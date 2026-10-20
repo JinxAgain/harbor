@@ -36,6 +36,7 @@ import { useSearch } from "@/lib/search-context";
 import { useSettings } from "@/lib/settings";
 import { activeLayout } from "@/lib/theme";
 import { useView } from "@/lib/view";
+import { hasResumeProgress } from "@/lib/resume";
 import { PreviewBody } from "./hover-preview/marquee";
 import { useMedia, type Scene } from "./hover-preview/scene";
 import { crownHeightFor, panelWidthFor, placePanel } from "./hover-preview/use-preview-position";
@@ -293,7 +294,10 @@ export function HoverPreview() {
       resume && !resume.external && resume.season != null && resume.episode != null
         ? { season: resume.season, episode: resume.episode }
         : undefined;
-    viewRef.current.openPicker(payload.meta, episode, { autoPlay: settingsRef.current.instantPlay, resume: true });
+    viewRef.current.openPicker(payload.meta, episode, {
+      autoPlay: settingsRef.current.instantPlay,
+      resume: hasResumeProgress(payload.meta.id, episode?.season, episode?.episode),
+    });
   }, []);
 
   const onPanelPointerMove = useCallback((e: React.PointerEvent) => {
@@ -323,7 +327,10 @@ export function HoverPreview() {
         resume.season != null && resume.episode != null
           ? { season: resume.season, episode: resume.episode }
           : undefined;
-      viewRef.current.openPicker(payload.meta, episode, { autoPlay: settingsRef.current.instantPlay, resume: true });
+      viewRef.current.openPicker(payload.meta, episode, {
+        autoPlay: settingsRef.current.instantPlay,
+        resume: hasResumeProgress(payload.meta.id, episode?.season, episode?.episode),
+      });
     } else {
       viewRef.current.openMeta(payload.meta);
     }

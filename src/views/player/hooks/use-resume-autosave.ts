@@ -191,9 +191,17 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
     if (typeof cs === "number") setViewedSeason(id, cs);
     if (isExternalPlaylistId(id)) return;
     if (s.streamRef) {
-      savePlayback(id, { ...s.streamRef, url: s.historyUrl ?? s.url, title: s.meta.name }, cs, ep);
+      const entry = { ...s.streamRef, url: s.historyUrl ?? s.url, title: s.meta.name };
+      savePlayback(id, entry, cs, ep);
+      if (rid && rid !== id) {
+        savePlayback(rid, entry, cs, ep);
+      }
     } else {
-      savePlayback(id, { title: s.meta.name, parsedTitle: s.meta.name }, cs, ep);
+      const entry = { title: s.meta.name, parsedTitle: s.meta.name };
+      savePlayback(id, entry, cs, ep);
+      if (rid && rid !== id) {
+        savePlayback(rid, entry, cs, ep);
+      }
     }
     if (
       (s.meta.type === "series" || s.meta.type === "anime" || isAnimeId(id)) &&

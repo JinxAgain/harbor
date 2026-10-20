@@ -179,27 +179,36 @@ export function useStreamSwitcher(params: {
           .map(([k]) => k),
       });
       if (src.meta.id && !src.meta.id.startsWith("iptv:")) {
+        const entry = {
+          infoHash: stream.infoHash ?? null,
+          fileIdx: r.data.fileIdx ?? stream.fileIdx ?? null,
+          addonId: stream.addonId ?? null,
+          url: r.data.url,
+          title: src.meta.name,
+          parsedTitle: stream.parsedTitle ?? null,
+          resolution: stream.resolution ?? null,
+          releaseGroup: stream.releaseGroupNormalized ?? null,
+          source: stream.source ?? null,
+          size: stream.size ?? null,
+          bingeGroup: stream.behaviorHints?.bingeGroup ?? null,
+          cachedSlugs: Object.entries(stream.cached ?? {})
+            .filter(([, v]) => v === true)
+            .map(([k]) => k),
+        };
         savePlayback(
           src.meta.id,
-          {
-            infoHash: stream.infoHash ?? null,
-            fileIdx: r.data.fileIdx ?? stream.fileIdx ?? null,
-            addonId: stream.addonId ?? null,
-            url: r.data.url,
-            title: src.meta.name,
-            parsedTitle: stream.parsedTitle ?? null,
-            resolution: stream.resolution ?? null,
-            releaseGroup: stream.releaseGroupNormalized ?? null,
-            source: stream.source ?? null,
-            size: stream.size ?? null,
-            bingeGroup: stream.behaviorHints?.bingeGroup ?? null,
-            cachedSlugs: Object.entries(stream.cached ?? {})
-              .filter(([, v]) => v === true)
-              .map(([k]) => k),
-          },
+          entry,
           src.episode?.season,
           src.episode?.episode,
         );
+        if (src.imdbId && src.imdbId !== src.meta.id) {
+          savePlayback(
+            src.imdbId,
+            entry,
+            src.episode?.season,
+            src.episode?.episode,
+          );
+        }
       }
       setSwapResolvingKey(null);
       setSwitcherOpen(false);

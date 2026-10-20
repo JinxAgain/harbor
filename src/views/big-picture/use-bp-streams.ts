@@ -195,12 +195,24 @@ export function useBpStreams(params: { meta: Meta; episode?: PlayEpisode }): BpS
 
   const isAnimeMetaId = ANIME_ID_RE.test(meta.id);
 
-  // The remembered pick and the season lock are what "don't ask me again" means.
-  // Neither was read back here, so both settings silently did nothing.
   const previousPlayback = useMemo(
     () =>
-      settings.rememberLastStream ? readPlayback(meta.id, episode?.season, episode?.episode) : null,
-    [meta.id, episode?.season, episode?.episode, settings.rememberLastStream],
+      settings.rememberLastStream
+        ? readPlayback(meta.id, episode?.season, episode?.episode, {
+            altIds: [resolvedImdb.id, episode?.imdbId, episode?.sourceMetaId],
+            title: meta.name,
+          })
+        : null,
+    [
+      meta.id,
+      meta.name,
+      resolvedImdb.id,
+      episode?.season,
+      episode?.episode,
+      episode?.imdbId,
+      episode?.sourceMetaId,
+      settings.rememberLastStream,
+    ],
   );
 
   const sourceEntry = useMemo(

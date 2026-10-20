@@ -75,7 +75,11 @@ export function isCached(
   activeDebrids: DebridSlug[],
 ): boolean {
   if (isExplicitlyUncached(s, activeDebrids)) return false;
-  if (activeDebrids.some((slug) => s.cached?.[slug] === true || s.inLibrary?.[slug] === true)) {
+  if (
+    activeDebrids.some((slug) => s.cached?.[slug] === true || s.inLibrary?.[slug] === true) ||
+    Object.values(s.cached ?? {}).some((v) => v === true) ||
+    Object.values(s.inLibrary ?? {}).some((v) => v === true)
+  ) {
     return true;
   }
   if (hasCachedMarker(s)) return true;

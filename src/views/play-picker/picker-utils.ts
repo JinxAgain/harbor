@@ -446,7 +446,13 @@ export function streamIsCached(
 ): boolean {
   const activeSlugs = debrids.map((d) => d.slug);
   if (isExplicitlyUncached(s, activeSlugs)) return false;
-  if (debrids.some((d) => s.cached[d.slug] === true || s.inLibrary[d.slug] === true)) return true;
+  if (
+    debrids.some((d) => s.cached[d.slug] === true || s.inLibrary[d.slug] === true) ||
+    Object.values(s.cached ?? {}).some((v) => v === true) ||
+    Object.values(s.inLibrary ?? {}).some((v) => v === true)
+  ) {
+    return true;
+  }
   if (hasCachedMarker(s)) return true;
   if (s.url != null && !s.infoHash && !hasDebridMarker(s)) return true;
   return false;

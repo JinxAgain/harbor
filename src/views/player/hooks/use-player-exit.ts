@@ -70,12 +70,11 @@ export function usePlayerExit(params: {
       );
       if (liveStreamRef && pos >= REMEMBER_MIN_SEC) {
         const rememberedUrl = (src.historyUrl ?? liveUrl) || src.url;
-        savePlayback(
-          src.meta.id,
-          { ...liveStreamRef, url: rememberedUrl, title: src.meta.name },
-          season,
-          episode,
-        );
+        const entry = { ...liveStreamRef, url: rememberedUrl, title: src.meta.name };
+        savePlayback(src.meta.id, entry, season, episode);
+        if (src.imdbId && src.imdbId !== src.meta.id) {
+          savePlayback(src.imdbId, entry, season, episode);
+        }
       }
     }
     await exitPip();

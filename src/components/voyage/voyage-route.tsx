@@ -3,6 +3,7 @@ import type { Meta } from "@/lib/cinemeta";
 import { useT } from "@/lib/i18n";
 import { useSettings } from "@/lib/settings";
 import { useView } from "@/lib/view";
+import { hasResumeProgress } from "@/lib/resume";
 import {
   closeVoyage,
   launchVoyage,
@@ -33,7 +34,7 @@ export function VoyageRoute({ voyage, inline = false }: { voyage: Voyage; inline
 
   const play = (meta: Meta) => {
     closeVoyage();
-    if (meta.type === "movie") openPicker(meta, undefined, { autoPlay: settings.instantPlay, resume: true });
+    if (meta.type === "movie") openPicker(meta, undefined, { autoPlay: settings.instantPlay, resume: hasResumeProgress(meta.id) });
     else openMeta(meta);
   };
 

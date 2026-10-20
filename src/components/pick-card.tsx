@@ -40,6 +40,7 @@ import { simklRequest } from "@/lib/simkl/client";
 import { getLocalCache } from "@/lib/simkl/activities";
 import { aniZipByKitsu, aniZipByMal } from "@/lib/providers/anizip";
 import { useView } from "@/lib/view";
+import { hasResumeProgress } from "@/lib/resume";
 import { TvCard } from "@/components/tv-card";
 import { useTilt } from "@/lib/use-tilt";
 import { observe } from "@/lib/visibility";
@@ -649,7 +650,7 @@ const PosterCard = memo(function PosterCard({
             onPlay={() => {
               if (meta.isCollection) openMeta(meta);
               else if (meta.type === "manga") openMangaTarget(meta);
-              else if (meta.type === "movie") openPicker(meta, undefined, { autoPlay: settings.instantPlay, resume: true });
+              else if (meta.type === "movie") openPicker(meta, undefined, { autoPlay: settings.instantPlay, resume: hasResumeProgress(meta.id) });
               else openMeta(meta);
             }}
           />
@@ -660,7 +661,7 @@ const PosterCard = memo(function PosterCard({
             onPlay={() => {
               if (meta.isCollection) openMeta(meta);
               else if (meta.type === "manga") openMangaTarget(meta);
-              else if (meta.type === "movie") openPicker(meta, undefined, { autoPlay: settings.instantPlay, resume: true });
+              else if (meta.type === "movie") openPicker(meta, undefined, { autoPlay: settings.instantPlay, resume: hasResumeProgress(meta.id) });
               else openMeta(meta);
             }}
           />

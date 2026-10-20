@@ -441,6 +441,9 @@ export function usePickHandler({
             .map(([k]) => k),
         };
         savePlayback(meta.id, entry, episode?.season, episode?.episode);
+        if (imdbId && imdbId !== meta.id) {
+          savePlayback(imdbId, entry, episode?.season, episode?.episode);
+        }
         if (seasonLock && episode) {
           const animeId = /^(kitsu|mal|anilist|anidb):/.test(meta.id);
           saveSeasonLock(meta.id, entry, animeId ? null : (episode.season ?? null), animeId);

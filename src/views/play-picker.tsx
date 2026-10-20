@@ -31,6 +31,7 @@ import { peekCachedLogo, resolveLogo } from "@/lib/logo";
 import {
   readPlayback,
   readLastSeriesPlayback,
+  preferredSourceAddonPending,
   streamMatchesEntry,
   streamMatchesReleaseLineage,
   streamMatchesSource,
@@ -318,7 +319,11 @@ export function PlayPicker({
     (s: ScoredStream) => {
       const activeSlugs = debrids.map((d) => d.slug);
       if (isExplicitlyUncached(s, activeSlugs)) return false;
-      if (debrids.some((d) => s.cached[d.slug] === true || s.inLibrary[d.slug] === true)) {
+      if (
+        debrids.some((d) => s.cached[d.slug] === true || s.inLibrary[d.slug] === true) ||
+        Object.values(s.cached ?? {}).some((v) => v === true) ||
+        Object.values(s.inLibrary ?? {}).some((v) => v === true)
+      ) {
         return true;
       }
       if (hasCachedMarker(s)) return true;
@@ -462,8 +467,22 @@ export function PlayPicker({
   const isAnimeMetaId = /^(kitsu|mal|anilist|anidb):/.test(meta.id);
   const previousPlayback = useMemo(
     () =>
-      settings.rememberLastStream ? readPlayback(meta.id, episode?.season, episode?.episode) : null,
-    [meta.id, episode?.season, episode?.episode, settings.rememberLastStream],
+      settings.rememberLastStream
+        ? readPlayback(meta.id, episode?.season, episode?.episode, {
+            altIds: [imdbId, episode?.imdbId, episode?.sourceMetaId],
+            title: meta.name,
+          })
+        : null,
+    [
+      meta.id,
+      meta.name,
+      imdbId,
+      episode?.season,
+      episode?.episode,
+      episode?.imdbId,
+      episode?.sourceMetaId,
+      settings.rememberLastStream,
+    ],
   );
 
   const seasonLock = settings.seasonSourceLock && (meta.type === "series" || isAnimeMetaId);
@@ -476,9 +495,22 @@ export function PlayPicker({
     () =>
       seasonLockEntry ??
       (settings.keepSourceNextEpisode && !!autoPlay && (meta.type === "series" || isAnimeMetaId)
-        ? readLastSeriesPlayback(meta.id)
+        ? readLastSeriesPlayback(meta.id, {
+            altIds: [imdbId, episode?.sourceMetaId],
+            title: meta.name,
+          })
         : null),
-    [seasonLockEntry, meta.id, meta.type, isAnimeMetaId, settings.keepSourceNextEpisode, autoPlay],
+    [
+      seasonLockEntry,
+      meta.id,
+      meta.name,
+      meta.type,
+      imdbId,
+      episode?.sourceMetaId,
+      isAnimeMetaId,
+      settings.keepSourceNextEpisode,
+      autoPlay,
+    ],
   );
   const lastSeriesSourceIsLineage = seasonLockEntry == null;
 
@@ -642,21 +674,46 @@ export function PlayPicker({
     return () => window.clearTimeout(t);
   }, [resolving, abortResolve, setResolveError]);
 
+  const [maxWaitElapsed, setMaxWaitElapsed] = useState(false);
+  useEffect(() => {
+    setMaxWaitElapsed(false);
+    const t = window.setTimeout(() => setMaxWaitElapsed(true), 30_000);
+    return () => window.clearTimeout(t);
+  }, [streamIds]);
+  const addonsSettled = pipelineDone || maxWaitElapsed;
+
   const rememberedInstant =
-    !!previousMatch && (isCached(previousMatch) || p2pAutoConsent);
-  const rememberedFiredRef = useRef(false);
-  const rememberedHandledFirst =
     !!previousMatch &&
-    autoActive &&
-    settings.instantPlay &&
+    (isCached(previousMatch) ||
+      (!!previousMatch.url &&
+        !isExplicitlyUncached(previousMatch, debrids.map((d) => d.slug))) ||
+      p2pAutoConsent);
+  const rememberedFiredRef = useRef(false);
+  const rememberedEligible =
+    !autoCancelled &&
     settings.rememberLastStream &&
     !!resume &&
     !wasInvitedTo(inviteKey) &&
     !isDownload &&
     !roomGuestPick &&
     !inSession &&
-    rememberedInstant &&
     (attempt ?? 0) === 0;
+  const rememberedHandledFirst =
+    !!previousMatch &&
+    rememberedEligible &&
+    rememberedInstant;
+  const rememberedWaiting =
+    rememberedEligible &&
+    !!previousPlayback &&
+    !addonsSettled &&
+    (streamIds === null ||
+      loading ||
+      preferredSourceAddonPending(
+        previousPlayback,
+        previousMatch != null,
+        pipelineDone,
+        addonQuorum,
+      ));
   useEffect(() => {
     if (rememberedFiredRef.current || !rememberedHandledFirst || !previousMatch) return;
     rememberedFiredRef.current = true;
@@ -754,14 +811,6 @@ export function PlayPicker({
   }, [result, addonLogoMap]);
   const backdropSrc = episode?.still || meta.background || meta.poster;
 
-  const [maxWaitElapsed, setMaxWaitElapsed] = useState(false);
-  useEffect(() => {
-    setMaxWaitElapsed(false);
-    const t = window.setTimeout(() => setMaxWaitElapsed(true), 30_000);
-    return () => window.clearTimeout(t);
-  }, [streamIds]);
-  const addonsSettled = pipelineDone || maxWaitElapsed;
-
   const noStreamIds = addonsSettled && (!streamIds || streamIds.length === 0);
   const noDebrids = addonsSettled && !!streamIds && streamIds.length > 0 && debrids.length === 0;
   const noResults =
@@ -856,6 +905,8 @@ export function PlayPicker({
     !pickerErrorText &&
     !isDownload &&
     ((autoActive && (streamIds === null || loading || autoCandidates.length > 0)) ||
+      rememberedWaiting ||
+      rememberedHandledFirst ||
       resolving != null);
   void terminalEmpty;
 
