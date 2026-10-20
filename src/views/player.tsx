@@ -715,6 +715,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     hostSourceRef,
     guestPickRef,
     publishState,
+    sendCommand,
     onIncomingState,
     onIncomingCommand,
     markReady,

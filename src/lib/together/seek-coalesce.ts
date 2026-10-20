@@ -76,6 +76,10 @@ export function createCommandSender(raw: (command: RoomCommand) => void): RoomCo
   );
   return {
     send(command: RoomCommand) {
+      if (command.action === "report") {
+        raw(command);
+        return;
+      }
       if (command.action === "seek") {
         coalescer.push(command.positionSeconds);
         return;

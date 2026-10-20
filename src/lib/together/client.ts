@@ -578,6 +578,9 @@ export class TogetherClient {
     if (!this.haveRttOffset) {
       this.relayOffset = sample;
       this.haveRttOffset = true;
+      console.info(
+        `[together] rtt-offset calibrated: rtt=${rtt}ms offset=${Math.round(sample)}ms`,
+      );
     } else {
       this.relayOffset = this.relayOffset! * 0.7 + sample * 0.3;
     }

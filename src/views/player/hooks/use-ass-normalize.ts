@@ -10,6 +10,20 @@ function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+function isRemoteHttp(url: string): boolean {
+  if (!/^https?:\/\//i.test(url)) return false;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "0.0.0.0") {
+      return false;
+    }
+  } catch {
+    return true;
+  }
+  return true;
+}
+
 async function loadAssText(
   sourceUrl: string,
   track: TrackInfo,
@@ -45,6 +59,7 @@ async function loadAssText(
     return decodeSubtitleBytes(new Uint8Array(buf), {});
   }
   if (!isTauri()) return null;
+  if (isRemoteHttp(sourceUrl)) return null;
   const streamIndex = embeddedSubIndex(tracks, track.id);
   return invoke<string>("subtitle_extract_ass", {
     source: sourceUrl,

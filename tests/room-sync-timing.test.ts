@@ -23,7 +23,7 @@ function harness(options: { cast?: boolean; started?: boolean } = {}) {
     setHasStarted: () => {}, selfFrameReadyRef: { current: true },
     roomSnapshot: { room: "ABC123", started: true, syncState: null, hostClientId: "host" },
     clientId: "guest", src: { url: "fixture", meta: { id: "tt100" }, episode: { season: 1, episode: 1 } },
-    snap: { status: "playing", rate: 1, durationSec: 5000, videoWidth: 1280, videoHeight: 720 },
+    snap: { status: "playing", rate: 1, durationSec: 5000, videoWidth: 1280, videoHeight: 720, firstFrameReady: true },
     bridgeRef: { current: bridge }, hostSourceRef: { current: null }, guestPickRef: { current: false },
     publishState: () => {}, markReady: () => {}, suppressOutgoingFor: () => {},
     setForeignNotice: () => { calls.push(["foreign"]); },
@@ -45,9 +45,21 @@ function harness(options: { cast?: boolean; started?: boolean } = {}) {
       },
     },
     "@/lib/player/playback-clock": { getPlaybackPosition: () => position, getPlaybackBuffered: () => buffered },
-    "../player-utils": { HOST_HEARTBEAT_MS: 1000, SEEK_APPLY_DEBOUNCE_MS: 120,
-      SYNC_DRIFT_TOLERANCE_S: 0.6, SYNC_MAX_AGE_S: 30, SYNC_PLAY_LOOKAHEAD_S: 0.4,
-      SYNC_SEEK_JUMP_S: 10, SYNC_SUPPRESS_MS: 1400 },
+    "@/lib/settings": { useSettings: () => null },
+    "../player-utils": {
+      HOST_HEARTBEAT_MS: 1000,
+      SEEK_APPLY_DEBOUNCE_MS: 120,
+      SYNC_DRIFT_TOLERANCE_S: 0.6,
+      SYNC_MAX_AGE_S: 30,
+      SYNC_PLAY_LOOKAHEAD_S: 0.4,
+      SYNC_SEEK_JUMP_S: 10,
+      SYNC_SUPPRESS_MS: 1400,
+      SYNC_SLOWDOWN_RATE: 0.95,
+      SYNC_SPEEDUP_RATE: 1.05,
+      SYNC_DRIFT_CONVERGED_S: 0.15,
+      SYNC_BEHIND_SUSTAINED_MS: 2000,
+      SYNC_DEFAULT_REWIND_THRESHOLD_S: 4,
+    },
   };
   const source = readFileSync("src/views/player/hooks/use-room-sync.ts", "utf8");
   const code = ts.transpileModule(source, { compilerOptions: {

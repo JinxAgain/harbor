@@ -43,6 +43,7 @@ export type SyncState = {
   speed?: number;
   source?: SourceDescriptor;
   guestPick?: boolean;
+  doSeek?: boolean;
   updatedAt: number;
   updatedBy: string;
   hostClientId: string | null;
@@ -51,7 +52,17 @@ export type SyncState = {
 export type RoomCommand =
   | { action: "play" }
   | { action: "pause" }
-  | { action: "seek"; positionSeconds: number; seq?: number; at?: number };
+  | { action: "seek"; positionSeconds: number; seq?: number; at?: number }
+  | {
+      action: "report";
+      positionSeconds: number;
+      playing: boolean;
+      buffering?: boolean;
+      mediaId?: string | null;
+      episode?: EpisodeRef | null;
+      updatedAt?: number;
+      rtt?: number;
+    };
 
 export type PlayInvite = {
   mediaId: string;

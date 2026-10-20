@@ -1,4 +1,4 @@
-const WORKER_VERSION = 13;
+const WORKER_VERSION = 14;
 const MAX_AVATAR_LENGTH = 600_000;
 const RECONNECT_GRACE_MS = 8000;
 
@@ -641,6 +641,7 @@ export class Room {
     else delete s.source;
     if (s.guestPick !== true) delete s.guestPick;
     if (s.buffering !== true) delete s.buffering;
+    if (s.doSeek !== true) delete s.doSeek;
     const isHostWrite = this.hostClientId != null && peer.clientId === this.hostClientId;
     if (this.hostClientId != null && !isHostWrite) return;
     const now = Date.now();
@@ -661,8 +662,17 @@ export class Room {
     const peer = this.peers.get(socket);
     if (!peer || !msg.command || typeof msg.command.action !== "string") return;
     const c = msg.command;
-    if (c.action !== "play" && c.action !== "pause" && c.action !== "seek") return;
+    if (c.action !== "play" && c.action !== "pause" && c.action !== "seek" && c.action !== "report") return;
     if (c.action === "seek" && (typeof c.positionSeconds !== "number" || !isFinite(c.positionSeconds) || c.positionSeconds < 0)) return;
+    if (c.action === "report") {
+      if (typeof c.positionSeconds !== "number" || !isFinite(c.positionSeconds) || c.positionSeconds < 0) return;
+      if (typeof c.playing !== "boolean") return;
+      if (c.buffering != null && typeof c.buffering !== "boolean") delete c.buffering;
+      if (c.mediaId != null && typeof c.mediaId !== "string") delete c.mediaId;
+      if (c.episode != null && !(typeof c.episode === "object" && typeof c.episode.season === "number" && typeof c.episode.episode === "number")) delete c.episode;
+      if (c.updatedAt != null && (typeof c.updatedAt !== "number" || !isFinite(c.updatedAt))) delete c.updatedAt;
+      if (typeof peer.rtt === "number" && isFinite(peer.rtt)) c.rtt = peer.rtt;
+    }
     if (c.seq != null && (typeof c.seq !== "number" || !isFinite(c.seq))) delete c.seq;
     if (c.at != null && (typeof c.at !== "number" || !isFinite(c.at))) delete c.at;
     if (!this.hostClientId || peer.clientId === this.hostClientId) return;

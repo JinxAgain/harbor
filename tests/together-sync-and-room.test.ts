@@ -164,7 +164,7 @@ test("Syncplay-style smooth rate catch-up adjusts rate and avoids seeking for sm
     roomSnapshot: { participants: [], started: true },
     clientId: "guest",
     src: { meta: { id: "tt123" } },
-    snap: { status: "playing", durationSec: 1000, rate: 1.0, buffering: false },
+    snap: { status: "playing", durationSec: 1000, rate: 1.0, buffering: false, firstFrameReady: true },
     bridgeRef: { current: mockBridge },
     hostSourceRef: { current: null },
     guestPickRef: { current: false },
@@ -249,10 +249,9 @@ test("Syncplay-style smooth rate catch-up adjusts rate and avoids seeking for sm
     speed: 1,
   });
 
-  // Should adjust rate to 1.05x and NOT seek
+  // Lagging guest does not speed up above normal rate; lag is absorbed by host slowdown/rewind
   assert.equal(seekCalls.length, 0);
-  assert.equal(rateCalls.length, 1);
-  assert.equal(Math.round(rateCalls[0] * 100) / 100, 1.05);
+  assert.equal(rateCalls.length, 0);
 
   // State 3: drift converges to <= 0.15s (livePos = 100.05, drift = 0.05)
   livePos = 100.05;
@@ -266,10 +265,9 @@ test("Syncplay-style smooth rate catch-up adjusts rate and avoids seeking for sm
     speed: 1,
   });
 
-  // Should restore normal rate 1.0x and NOT seek
+  // Remains at normal rate 1.0x and does NOT seek
   assert.equal(seekCalls.length, 0);
-  assert.equal(rateCalls.length, 1);
-  assert.equal(rateCalls[0], 1.0);
+  assert.equal(rateCalls.length, 0);
 
   // State 4: drift exceeds togetherRewindThresholdSec (4.0s) -> guest at 104.5s
   livePos = 104.5;
@@ -327,7 +325,7 @@ test("Pause and unpause with small drift does not force seek when togetherSyncOn
     roomSnapshot: { participants: [], started: true },
     clientId: "guest",
     src: { meta: { id: "tt123" } },
-    snap: { status: "playing", durationSec: 1000, rate: 1.0, buffering: false },
+    snap: { status: "playing", durationSec: 1000, rate: 1.0, buffering: false, firstFrameReady: true },
     bridgeRef: { current: mockBridge },
     hostSourceRef: { current: null },
     guestPickRef: { current: false },
@@ -365,6 +363,572 @@ test("Pause and unpause with small drift does not force seek when togetherSyncOn
   assert.equal(seekCalls.length, 0);
 });
 
+test("Syncplay-style Host Slowdown & Rewind for Lagging Guest", () => {
+  let livePos = 100.0;
+  let intervalCb: (() => void) | null = null;
+  let incomingCmdCb: ((from: string, cmd: any) => void) | null = null;
+  const seekCalls: number[] = [];
+  const rateCalls: number[] = [];
+  let rateRefInstance: { current: any } | null = null;
+  const snapObj = { status: "playing", durationSec: 1000, rate: 1.0, buffering: false };
+  const mockBridge = {
+    seek: (p: number) => seekCalls.push(p),
+    setRate: (r: number) => {
+      rateCalls.push(r);
+      snapObj.rate = r;
+      if (rateRefInstance) {
+        rateRefInstance.current = r;
+      }
+    },
+    play: async () => {},
+    pause: () => {},
+  };
+
+  const localExports: any = {};
+  new Function("require", "exports", "window", syncCode)(
+    (name: string) => {
+      if (name.includes("player-utils")) return utilsExports;
+      if (name.includes("playback-clock")) {
+        return {
+          getPlaybackPosition: () => livePos,
+          getPlaybackBuffered: () => 10,
+        };
+      }
+      return {
+        useRef: (init: any) => {
+          const ref = { current: init };
+          if (init === 1.0 && !rateRefInstance) rateRefInstance = ref;
+          return ref;
+        },
+        useEffect: (fn: any) => fn(),
+      };
+    },
+    localExports,
+    {
+      setInterval: (cb: any) => { intervalCb = cb; return 1; },
+      clearInterval: () => {},
+      setTimeout: (cb: any) => cb(),
+      clearTimeout: () => {},
+    },
+  );
+
+  const { useRoomSync: hook } = localExports;
+  hook({
+    inRoom: true,
+    isHost: true,
+    hasStarted: true,
+    setHasStarted: () => {},
+    selfFrameReadyRef: { current: true },
+    roomSnapshot: {
+      participants: [{ id: "host", name: "Host" }, { id: "guest1", name: "Guest" }],
+      started: true,
+    },
+    clientId: "host",
+    src: { meta: { id: "tt123" } },
+    snap: snapObj,
+    bridgeRef: { current: mockBridge },
+    hostSourceRef: { current: null },
+    guestPickRef: { current: false },
+    publishState: () => {},
+    onIncomingState: () => () => {},
+    onIncomingCommand: (cb: any) => {
+      incomingCmdCb = cb;
+      return () => {};
+    },
+    markReady: () => {},
+    suppressOutgoingFor: () => {},
+    setForeignNotice: () => {},
+    syncSettings: {
+      togetherSlowOnDesync: true,
+      togetherRewindThresholdSec: 4.0,
+      togetherSyncOnPause: false,
+    },
+  });
+
+  assert.ok(incomingCmdCb, "incomingCommand callback registered");
+  assert.ok(intervalCb, "tick interval callback registered");
+
+  // Initial tick: both in sync
+  intervalCb();
+  assert.equal(rateCalls.length, 0);
+  assert.equal(seekCalls.length, 0);
+
+  // Guest reports 2.2s behind host (host at 100s, guest at 97.8s)
+  const now = Date.now();
+  incomingCmdCb("guest1", {
+    action: "report",
+    positionSeconds: 97.8,
+    playing: true,
+    buffering: false,
+    mediaId: "tt123",
+    updatedAt: now,
+  });
+
+  // Host tick: host should slow down to 0.95x
+  intervalCb();
+  assert.equal(rateCalls.length, 1);
+  assert.equal(Math.round(rateCalls[0] * 100) / 100, 0.95);
+  assert.equal(seekCalls.length, 0);
+
+  // Run subsequent ticks while still slowed down: rate should stay at 0.95 and NOT decay
+  incomingCmdCb("guest1", {
+    action: "report",
+    positionSeconds: 97.8,
+    playing: true,
+    buffering: false,
+    mediaId: "tt123",
+    updatedAt: Date.now(),
+  });
+  intervalCb();
+  assert.equal(rateCalls.length, 1, "Rate must not re-trigger or decay on subsequent slowed ticks");
+  assert.equal(rateRefInstance?.current, 0.95);
+
+  incomingCmdCb("guest1", {
+    action: "report",
+    positionSeconds: 97.8,
+    playing: true,
+    buffering: false,
+    mediaId: "tt123",
+    updatedAt: Date.now(),
+  });
+  intervalCb();
+  assert.equal(rateCalls.length, 1, "Rate must remain at 0.95 across multiple host ticks");
+  assert.equal(rateRefInstance?.current, 0.95);
+
+  // Guest converges to within 0.1s (drift = 0.1s <= 0.15s)
+  incomingCmdCb("guest1", {
+    action: "report",
+    positionSeconds: 99.9,
+    playing: true,
+    buffering: false,
+    mediaId: "tt123",
+    updatedAt: Date.now(),
+  });
+  intervalCb();
+  assert.equal(rateCalls.length, 2);
+  assert.equal(rateCalls[1], 1.0, "Rate must restore to base rate 1.0 upon convergence");
+  assert.equal(rateRefInstance?.current, 1.0);
+  assert.equal(seekCalls.length, 0);
+
+  // Guest stalls 4.5s behind (host at 100s, guest at 95.5s)
+  rateCalls.length = 0;
+  seekCalls.length = 0;
+  incomingCmdCb("guest1", {
+    action: "report",
+    positionSeconds: 95.5,
+    playing: false,
+    buffering: true,
+    mediaId: "tt123",
+    updatedAt: Date.now(),
+  });
+  // First tick: detects behind, arms timer
+  intervalCb();
+  assert.equal(seekCalls.length, 0);
+
+  // Tick after >= 2000ms: host has advanced 2.5s normally (livePos = 102.5) while guest remains stalled at 95.5
+  const origNow = Date.now;
+  try {
+    Date.now = () => origNow() + 2500;
+    livePos = 102.5;
+    intervalCb();
+    assert.equal(seekCalls.length, 1);
+    assert.equal(seekCalls[0], 95.5);
+  } finally {
+    Date.now = origNow;
+  }
+});
+
+test("Regression Test 2: Explicit Host Seek (doSeek: true) ignores lag and guest seeks immediately", () => {
+  let livePos = 100.0;
+  let intervalCb: (() => void) | null = null;
+  let incomingCmdCb: ((from: string, cmd: any) => void) | null = null;
+  let incomingStateCb: ((s: any) => void) | null = null;
+  const hostSeekCalls: number[] = [];
+  const hostRateCalls: number[] = [];
+  const guestSeekCalls: number[] = [];
+  const mockHostBridge = {
+    seek: (p: number) => hostSeekCalls.push(p),
+    setRate: (r: number) => hostRateCalls.push(r),
+    play: async () => {},
+    pause: () => {},
+  };
+  const mockGuestBridge = {
+    seek: (p: number) => guestSeekCalls.push(p),
+    setRate: () => {},
+    play: async () => {},
+    pause: () => {},
+  };
+
+  const localExports: any = {};
+  new Function("require", "exports", syncCode)(
+    (name: string) => {
+      if (name.includes("player-utils")) return utilsExports;
+      if (name.includes("playback-clock")) {
+        return {
+          getPlaybackPosition: () => livePos,
+          getPlaybackBuffered: () => 10,
+        };
+      }
+      return {
+        useRef: (init: any) => ({ current: init }),
+        useEffect: (fn: any) => fn(),
+      };
+    },
+    localExports,
+  );
+  const { useRoomSync: hook } = localExports;
+
+  globalThis.window = {
+    setInterval: (cb: any) => { intervalCb = cb; return 123; },
+    clearInterval: () => {},
+    setTimeout: () => 123,
+    clearTimeout: () => {},
+  } as any;
+
+  hook({
+    inRoom: true,
+    isHost: true,
+    hasStarted: true,
+    setHasStarted: () => {},
+    selfFrameReadyRef: { current: true },
+    roomSnapshot: {
+      participants: [{ id: "host" }, { id: "guest1" }],
+      started: true,
+      hostClientId: "host",
+    },
+    clientId: "host",
+    src: { meta: { id: "tt123" } },
+    snap: { status: "playing", durationSec: 1000, rate: 1.0, buffering: false, firstFrameReady: true },
+    bridgeRef: { current: mockHostBridge },
+    hostSourceRef: { current: null },
+    guestPickRef: { current: false },
+    publishState: () => {},
+    onIncomingState: () => () => {},
+    onIncomingCommand: (cb: any) => { incomingCmdCb = cb; return () => {}; },
+    markReady: () => {},
+    suppressOutgoingFor: () => {},
+    setForeignNotice: () => {},
+    syncSettings: { togetherSlowOnDesync: true, togetherRewindThresholdSec: 4.0 },
+  });
+
+  // Seed lastHostPosRef and lastHostTickAtRef at 100.0s
+  intervalCb!();
+
+  // Guest reports old position 95s
+  incomingCmdCb!("guest1", {
+    action: "report",
+    positionSeconds: 95.0,
+    playing: true,
+    buffering: false,
+    mediaId: "tt123",
+    updatedAt: Date.now(),
+  });
+  // Host jumps to 115.0s: hostDrift = 115 - 95 = 20s (< 30s and >= 4.0s).
+  // Because |115 - expectedHostPos| > 1.5, isHostJump is triggered and arms hostSeekGraceUntilRef
+  livePos = 115.0;
+  intervalCb!();
+  assert.equal(hostRateCalls.length, 0, "Host should NOT slow down after an explicit jump");
+  assert.equal(hostSeekCalls.length, 0, "Host should NOT rewind after an explicit jump");
+
+  // Guest side: Guest at position 100 receives host state with doSeek: true at positionSeconds: 115
+  livePos = 100.0;
+  hook({
+    inRoom: true,
+    isHost: false,
+    hasStarted: true,
+    setHasStarted: () => {},
+    selfFrameReadyRef: { current: true },
+    roomSnapshot: { participants: [{ id: "host" }, { id: "guest1" }], started: true },
+    clientId: "guest1",
+    src: { meta: { id: "tt123" } },
+    snap: { status: "playing", durationSec: 1000, rate: 1.0, buffering: false, firstFrameReady: true },
+    bridgeRef: { current: mockGuestBridge },
+    hostSourceRef: { current: null },
+    guestPickRef: { current: false },
+    publishState: () => {},
+    onIncomingState: (cb: any) => { incomingStateCb = cb; return () => {}; },
+    onIncomingCommand: () => () => {},
+    markReady: () => {},
+    suppressOutgoingFor: () => {},
+    setForeignNotice: () => {},
+    syncSettings: { togetherSlowOnDesync: true, togetherRewindThresholdSec: 4.0 },
+  });
+
+  incomingStateCb!({
+    mediaId: "tt123",
+    positionSeconds: 115,
+    playing: true,
+    updatedAt: Date.now(),
+    updatedBy: "host",
+    speed: 1,
+    doSeek: true,
+  });
+  assert.equal(guestSeekCalls.length, 1, "Guest must immediately seek on doSeek: true");
+  assert.equal(Math.round(guestSeekCalls[0]), 115);
+});
+
+test("Regression Test 3: No 4-second PPT seek loop under slow seek / unbuffered catch-up", () => {
+  let livePos = 95.8; // lagging 4.2s behind host (100.0)
+  let liveBuffered = 0.5; // slow seek / unbuffered (< 2.0s)
+  let incomingStateCb: ((s: any) => void) | null = null;
+  const seekCalls: number[] = [];
+  const mockBridge = {
+    seek: (p: number) => {
+      seekCalls.push(p);
+      livePos = p;
+    },
+    setRate: () => {},
+    play: async () => {},
+    pause: () => {},
+  };
+
+  const localExports: any = {};
+  new Function("require", "exports", syncCode)(
+    (name: string) => {
+      if (name.includes("player-utils")) return utilsExports;
+      if (name.includes("playback-clock")) {
+        return {
+          getPlaybackPosition: () => livePos,
+          getPlaybackBuffered: () => liveBuffered,
+        };
+      }
+      return {
+        useRef: (init: any) => ({ current: init }),
+        useEffect: (fn: any) => fn(),
+      };
+    },
+    localExports,
+  );
+  const { useRoomSync: hook } = localExports;
+
+  hook({
+    inRoom: true,
+    isHost: false,
+    hasStarted: true,
+    setHasStarted: () => {},
+    selfFrameReadyRef: { current: true },
+    roomSnapshot: { participants: [], started: true },
+    clientId: "guest",
+    src: { meta: { id: "tt123" } },
+    snap: { status: "playing", durationSec: 1000, rate: 1.0, buffering: false, firstFrameReady: true },
+    bridgeRef: { current: mockBridge },
+    hostSourceRef: { current: null },
+    guestPickRef: { current: false },
+    publishState: () => {},
+    onIncomingState: (cb: any) => { incomingStateCb = cb; return () => {}; },
+    onIncomingCommand: () => () => {},
+    markReady: () => {},
+    suppressOutgoingFor: () => {},
+    setForeignNotice: () => {},
+    syncSettings: { togetherSlowOnDesync: true, togetherRewindThresholdSec: 4.0 },
+  });
+
+  const now = Date.now();
+  // t = 0: Initial hard seek triggered by host doSeek (host at 100s, guest at 50s)
+  incomingStateCb!({
+    mediaId: "tt123",
+    positionSeconds: 100,
+    playing: true,
+    updatedAt: now,
+    updatedBy: "host",
+    speed: 1,
+    doSeek: true,
+  });
+  assert.equal(seekCalls.length, 1, "Initial seek triggered");
+
+  // While buffer has not settled (liveBuffered = 0.5s < 2.0s), simulate heartbeats at t = 1s, 2s, 3s, 4s, 5s
+  for (let sec = 1; sec <= 5; sec++) {
+    incomingStateCb!({
+      mediaId: "tt123",
+      positionSeconds: 100 + sec,
+      playing: true,
+      updatedAt: now + sec * 1000,
+      updatedBy: "host",
+      speed: 1,
+    });
+  }
+  assert.equal(seekCalls.length, 1, "b.seek should NOT be called again while buffer is settling (no PPT loop)");
+});
+
+test("Regression Test 4: No seek while guest is loading / durationSec === 0", () => {
+  let livePos = 0.0;
+  let incomingStateCb: ((s: any) => void) | null = null;
+  const seekCalls: number[] = [];
+  const mockBridge = {
+    seek: (p: number) => seekCalls.push(p),
+    setRate: () => {},
+    play: async () => {},
+    pause: () => {},
+  };
+
+  const localExports: any = {};
+  new Function("require", "exports", syncCode)(
+    (name: string) => {
+      if (name.includes("player-utils")) return utilsExports;
+      if (name.includes("playback-clock")) {
+        return {
+          getPlaybackPosition: () => livePos,
+          getPlaybackBuffered: () => 0,
+        };
+      }
+      return {
+        useRef: (init: any) => ({ current: init }),
+        useEffect: (fn: any) => fn(),
+      };
+    },
+    localExports,
+  );
+  const { useRoomSync: hook } = localExports;
+
+  // Guest in loading state with durationSec = 0
+  hook({
+    inRoom: true,
+    isHost: false,
+    hasStarted: true,
+    setHasStarted: () => {},
+    selfFrameReadyRef: { current: false },
+    roomSnapshot: { participants: [], started: true },
+    clientId: "guest",
+    src: { meta: { id: "tt123" } },
+    snap: { status: "loading", durationSec: 0, rate: 1.0, buffering: true, firstFrameReady: false },
+    bridgeRef: { current: mockBridge },
+    hostSourceRef: { current: null },
+    guestPickRef: { current: false },
+    publishState: () => {},
+    onIncomingState: (cb: any) => { incomingStateCb = cb; return () => {}; },
+    onIncomingCommand: () => () => {},
+    markReady: () => {},
+    suppressOutgoingFor: () => {},
+    setForeignNotice: () => {},
+    syncSettings: { togetherSlowOnDesync: true, togetherRewindThresholdSec: 4.0 },
+  });
+
+  // Emits host heartbeat at 1200s
+  incomingStateCb!({
+    mediaId: "tt123",
+    positionSeconds: 1200,
+    playing: true,
+    updatedAt: Date.now(),
+    updatedBy: "host",
+    speed: 1,
+  });
+
+  assert.equal(seekCalls.length, 0, "No seek allowed while snap.status === 'loading' or durationSec === 0");
+});
+
+test("Regression Test 5: Track switch grace window suppresses hard seeks during rebuffering", () => {
+  let livePos = 95.8; // 4.2s behind host (100.0)
+  let liveBuffered = 0;
+  let incomingStateCb: ((s: any) => void) | null = null;
+  const seekCalls: number[] = [];
+  const commandCalls: any[] = [];
+  const mockBridge = {
+    seek: (p: number) => seekCalls.push(p),
+    setRate: () => {},
+    play: async () => {},
+    pause: () => {},
+  };
+
+  let refIndex = 0;
+  const refs: any[] = [];
+  let effectIndex = 0;
+  const effects: any[] = [];
+  const localExports: any = {};
+  new Function("require", "exports", syncCode)(
+    (name: string) => {
+      if (name.includes("player-utils")) return utilsExports;
+      if (name.includes("playback-clock")) {
+        return {
+          getPlaybackPosition: () => livePos,
+          getPlaybackBuffered: () => liveBuffered,
+        };
+      }
+      return {
+        useRef: (init: any) => refs[refIndex++] ?? (refs[refIndex - 1] = { current: init }),
+        useEffect: (fn: any, deps?: any[]) => {
+          const index = effectIndex++;
+          const old = effects[index];
+          if (
+            old &&
+            deps &&
+            old.deps &&
+            deps.length === old.deps.length &&
+            deps.every((v, i) => Object.is(v, old.deps[i]))
+          ) {
+            return;
+          }
+          old?.cleanup?.();
+          effects[index] = { deps, cleanup: fn() };
+        },
+      };
+    },
+    localExports,
+  );
+  const { useRoomSync: hook } = localExports;
+
+  const render = (snapParam: any) => {
+    refIndex = 0;
+    effectIndex = 0;
+    hook({
+      inRoom: true,
+      isHost: false,
+      hasStarted: true,
+      setHasStarted: () => {},
+      selfFrameReadyRef: { current: true },
+      roomSnapshot: { participants: [], started: true },
+      clientId: "guest",
+      src: { meta: { id: "tt123" } },
+      snap: snapParam,
+      bridgeRef: { current: mockBridge },
+      hostSourceRef: { current: null },
+      guestPickRef: { current: false },
+      publishState: () => {},
+      sendCommand: (cmd: any) => commandCalls.push(cmd),
+      onIncomingState: (cb: any) => { incomingStateCb = cb; return () => {}; },
+      onIncomingCommand: () => () => {},
+      markReady: () => {},
+      suppressOutgoingFor: () => {},
+      setForeignNotice: () => {},
+      syncSettings: { togetherSlowOnDesync: true, togetherRewindThresholdSec: 4.0 },
+    });
+  };
+
+  // Initial render: audio-1 selected
+  render({
+    status: "playing",
+    durationSec: 1000,
+    rate: 1.0,
+    buffering: false,
+    firstFrameReady: true,
+    audioTracks: [{ id: "audio-1", selected: true }],
+    subtitleTracks: [],
+  });
+
+  // Track switch: audio-2 selected
+  render({
+    status: "playing",
+    durationSec: 1000,
+    rate: 1.0,
+    buffering: false,
+    firstFrameReady: true,
+    audioTracks: [{ id: "audio-2", selected: true }],
+    subtitleTracks: [],
+  });
+
+  // Incoming host state with drift 4.2s (host at 100s, guest at 95.8s) during grace window
+  incomingStateCb!({
+    mediaId: "tt123",
+    positionSeconds: 100,
+    playing: true,
+    updatedAt: Date.now(),
+    updatedBy: "host",
+    speed: 1,
+  });
+
+  assert.equal(seekCalls.length, 0, "Hard seek must be suppressed during track switch grace window");
+  assert.ok(commandCalls.some((c) => c.action === "report" && c.buffering === true), "Reported buffering to host");
+});
+
 // Transpile relay-version.ts
 const relayVerSource = readFileSync(new URL("../src/lib/together/relay-version.ts", import.meta.url), "utf8");
 const relayVerCode = ts.transpileModule(relayVerSource, {
@@ -390,11 +954,11 @@ new Function("module", "exports", "fetch", "Response", "WebSocketPair", workerSo
 );
 const { Room, WORKER_VERSION, sanitizeLocation } = workerModule.exports;
 
-test("REQUIRED_RELAY_VERSION is 13 and matches WORKER_VERSION", () => {
-  assert.equal(REQUIRED_RELAY_VERSION, 13);
-  assert.equal(WORKER_VERSION, 13);
-  assert.equal(relayOutdated(12), true);
-  assert.equal(relayOutdated(13), false);
+test("REQUIRED_RELAY_VERSION is 14 and matches WORKER_VERSION", () => {
+  assert.equal(REQUIRED_RELAY_VERSION, 14);
+  assert.equal(WORKER_VERSION, 14);
+  assert.equal(relayOutdated(13), true);
+  assert.equal(relayOutdated(14), false);
 });
 
 test("worker Room handleClaimHost guards against hijacking by peer2 even with fresh: true", () => {

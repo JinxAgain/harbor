@@ -172,6 +172,10 @@ export function useAutoRetry(params: {
         console.warn(`[player] live channel: skipping auto-retry (${reason})`);
         return;
       }
+      if (startedPlaying || selfFrameReadyRef.current) {
+        console.warn(`[player] playback already started: skipping auto-retry/picker exit (${reason})`);
+        return;
+      }
       // An explicitly selected source must not be killed by a short startup
       // timer. Signed playback URLs often reject browser probes (CORS) even
       // though mpv can read them, which previously produced a false
@@ -220,6 +224,8 @@ export function useAutoRetry(params: {
       src.subtitles,
       src.notWebReady,
       bridgeRef,
+      startedPlaying,
+      selfFrameReadyRef,
     ],
   );
 
@@ -404,6 +410,7 @@ export function useAutoRetry(params: {
         url: src.url,
         subtitles: src.subtitles,
         notWebReady: src.notWebReady,
+        startAtSec: pos > 5 ? pos : undefined,
         isLive,
         headers: src.headers,
       });
