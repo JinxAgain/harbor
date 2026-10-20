@@ -2,6 +2,7 @@ import type { TrackInfo } from "./bridge";
 
 export function isAssTrack(track: TrackInfo | null | undefined): boolean {
   if (!track) return false;
+  if (track.format === "ass" || track.format === "ssa") return true;
   const codec = (track.codec ?? "").toUpperCase();
   if (
     codec.includes("ASS") ||
@@ -11,8 +12,10 @@ export function isAssTrack(track: TrackInfo | null | undefined): boolean {
   ) {
     return true;
   }
-  const title = (track.title ?? "").toLowerCase();
-  return /\.(ass|ssa)$/.test(title);
+  const source = [track.externalFilename, track.url, track.title]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  return /\.(?:ass|ssa)(?:$|[?#\s])/i.test(source);
 }
 
 /** The second subtitle is drawn from mpv's `secondary-sub-text`, which only ever

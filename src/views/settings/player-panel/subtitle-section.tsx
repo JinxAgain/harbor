@@ -101,12 +101,19 @@ export function SubtitleStylePanel() {
     },
   ];
 
-  const assModes: Array<{ id: "no" | "scale" | "force"; label: string; sub: string }> = [
+  const assModes: Array<{ id: "no" | "yes" | "scale" | "force"; label: string; sub: string }> = [
     {
       id: "no",
       label: t("Keep original"),
       sub: t(
         "Styled (ASS) subs keep their own font, color, and size. Truest to the release, but the size can vary a lot between files.",
+      ),
+    },
+    {
+      id: "yes",
+      label: t("Font only"),
+      sub: t(
+        "Use your chosen font on styled (ASS) subs while keeping their original size, colors, effects, and sign placement.",
       ),
     },
     {
@@ -385,7 +392,9 @@ export function SubtitleStylePanel() {
             "Embedded subtitles changing size between titles, or showing empty boxes? Switch to Use my style for a consistent size. For boxes, also choose Arabic under Font.",
           )}
         </p>
-        {(settings.subAssOverride === "no" || settings.subAssOverride === "scale") && (
+        {(settings.subAssOverride === "no" ||
+          settings.subAssOverride === "yes" ||
+          settings.subAssOverride === "scale") && (
           <ToggleRow
             label={t("Normalize embedded subtitle size")}
             sub={t(

@@ -217,7 +217,8 @@ export function usePlayerMedia(params: {
     (settings.playerHdrOpaqueWindow ||
       (settings.playerMpvEmbed && settings.playerHdrStage !== "off"));
   const selectedSubTrack = snap.subtitleTracks.find((t) => t.selected) ?? null;
-  const subAssOverridden = settings.subAssOverride !== "no" && settings.subAssOverride !== "scale";
+  const subAssOverridden =
+    settings.subAssOverride === "force" || settings.subAssOverride === "strip";
   const selectedAssSub = isAssTrack(selectedSubTrack);
   const selectedImageSub = isImageSubTrack(selectedSubTrack);
   const subAssNative =
@@ -228,7 +229,10 @@ export function usePlayerMedia(params: {
   const imageNativeActive = selectedImageSub && (subNativeRender || !subEmbed);
   const assNormalizeScale = useAssNormalize({
     enabled:
-      engine === "mpv" && settings.subAssNormalizeSize && assNativeActive && !subAssOverridden,
+      engine === "mpv" &&
+      (settings.subAssNormalizeSize || settings.subAssOverride === "scale") &&
+      assNativeActive &&
+      !subAssOverridden,
     sourceUrl: src.url ?? null,
     headers: src.headers,
     track: selectedSubTrack,

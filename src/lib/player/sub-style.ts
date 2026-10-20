@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Settings } from "@/lib/settings";
+import { parseMpvExtraOptions } from "./mpv-tuning";
+
+const EXTRA_SUB_KEY_RE =
+  /^(?:sub-[a-z0-9-]+|secondary-sub-[a-z0-9-]+|embeddedfonts|blend-subtitles)$/i;
 
 function clamp(n: number, lo: number, hi: number): number {
   if (!Number.isFinite(n)) return lo;
@@ -75,24 +79,46 @@ export async function applySubStyle(
   s: Settings,
   context: SubRenderContext = { assNativeActive: false, imageNativeActive: false },
 ): Promise<void> {
+  const extraMap = parseMpvExtraOptions(s.mpvExtraOptions);
   const override = s.subAssOverride;
+  const forceAssLayout = override === "force" || override === "strip";
   const normScale =
     typeof context.assScale === "number" && Number.isFinite(context.assScale) ? context.assScale : null;
-  const effOverride = normScale != null ? "scale" : override;
-  const assMargins = context.assNativeActive && override !== "no" ? "yes" : "no";
+  const chosenFont = mpvFontFor(s.subFontFamily, customFontName(s));
+
+  let effOverride: string = normScale != null && !forceAssLayout ? "scale" : override;
+  if (extraMap.has("sub-ass-override")) {
+    const userOverride = extraMap.get("sub-ass-override")!;
+    effOverride =
+      userOverride === "yes" && (normScale != null || override === "scale") ? "scale" : userOverride;
+  } else if (extraMap.has("sub-ass-style-overrides") && effOverride === "no") {
+    effOverride = "yes";
+  }
+
+  const styleOverrides =
+    extraMap.get("sub-ass-style-overrides") ?? (override === "yes" ? `FontName=${chosenFont}` : "");
+  const assMargins = context.assNativeActive && forceAssLayout ? "yes" : "no";
   const marginY = clamp(Number(s.subMarginY) || 0, 0, 100);
   const opacity = clamp(Number(s.subOpacity ?? 1), 0.1, 1);
   const boxOpacity = clamp(Number(s.subBoxOpacity ?? 0.6), 0, 1);
   const isBox = s.subStyle === "box";
   const isShadow = s.subStyle === "shadow";
-  const reposition = !context.assNativeActive || override !== "no";
+  const reposition = !context.assNativeActive || forceAssLayout;
   const hideSdh = s.subHideSdh === true && context.sdhFilterAllowed !== false;
+  const baseFontSize = clamp(Number(s.subFontSize) || 32, 16, 120);
+  const computedScale =
+    normScale != null
+      ? clamp(normScale, 0.2, 6)
+      : context.assNativeActive && (override === "no" || override === "yes")
+        ? 1
+        : Math.min(4, Math.max(0.4, baseFontSize / 32));
+
   const props: Array<[string, unknown]> = [
     ["sub-filter-sdh", hideSdh],
     ["sub-filter-sdh-harder", false],
     ["sub-font-size", 32],
-    ["sub-font", mpvFontFor(s.subFontFamily, customFontName(s))],
-    ["sub-scale", normScale != null ? clamp(normScale, 0.2, 6) : Math.min(4, Math.max(0.4, (Number(s.subFontSize) || 32) / 32))],
+    ["sub-font", chosenFont],
+    ["sub-scale", computedScale],
     ["sub-color", mpvColor(s.subFontColor, opacity)],
     ["sub-border-color", mpvColor(s.subBorderColor, opacity)],
     ["sub-border-size", s.subBorderSize],
@@ -102,14 +128,26 @@ export async function applySubStyle(
     ["sub-margin-y", marginY],
     ["sub-align-x", s.subAlignX],
     ["sub-ass-override", effOverride],
+    ["sub-ass-style-overrides", styleOverrides],
     ["sub-ass-force-margins", assMargins],
     ["sub-use-margins", assMargins],
     ["sub-spacing", s.subLineSpacing],
     ["sub-bold", s.subBold ? "yes" : "no"],
     ["sub-pos", reposition ? clamp(100 - marginY, 0, 100) : 100],
   ];
+
+  const propMap = new Map<string, unknown>(props);
+  for (const [key, val] of extraMap) {
+    if (EXTRA_SUB_KEY_RE.test(key)) {
+      if (key === "sub-ass-override" || key === "sub-ass-style-overrides") {
+        continue;
+      }
+      propMap.set(key, val);
+    }
+  }
+
   await Promise.all(
-    props.map(([name, value]) =>
+    Array.from(propMap.entries()).map(([name, value]) =>
       invoke("mpv_set_property", { name, value }).catch(() => {}),
     ),
   );

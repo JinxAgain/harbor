@@ -1,8 +1,8 @@
 const REF_H = 720;
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 6;
-const MIN_FRAC = 0.02;
-const MAX_FRAC = 0.22;
+const MIN_FRAC = 0.008;
+const MAX_FRAC = 0.35;
 const SIGN_TAGS = /\\(?:pos|move|i?clip|p[1-9])/i;
 const DIALOGUE_NAME = /^(?:default|dialogue|dialog|main|regular)$/i;
 
@@ -89,7 +89,8 @@ export function parseAssStyles(text: string): Map<string, AssStyle> {
     const st = /^Style:\s*(.*)$/i.exec(line);
     if (!st || nameCol < 0 || sizeCol < 0) continue;
     const fields = st[1].split(",");
-    const name = (fields[nameCol] ?? "").trim();
+    const rawName = (fields[nameCol] ?? "").trim();
+    const name = rawName.replace(/^\*/, "");
     const size = parseFloat((fields[sizeCol] ?? "").trim());
     if (!name || !Number.isFinite(size)) continue;
     const prev = styles.get(name);
@@ -130,7 +131,8 @@ export function dominantDialogueStyle(text: string, styles: Map<string, AssStyle
       const ev = /^Dialogue:\s*(.*)$/i.exec(line);
       if (!ev || styleCol < 0 || textCol < 0) continue;
       const fields = splitFields(ev[1], colCount);
-      const name = (fields[styleCol] ?? "").trim();
+      const rawName = (fields[styleCol] ?? "").trim();
+      const name = rawName.replace(/^\*/, "");
       const body = fields[textCol] ?? "";
       if (SIGN_TAGS.test(body)) continue;
       if (!styles.has(name)) continue;

@@ -70,6 +70,7 @@ export function useSubStyleApply(params: {
     settings.subBoxOpacity,
     settings.subBoxColor,
     settings.subBold,
+    settings.mpvExtraOptions,
   ]);
 
   useEffect(() => () => resetRtxVideoState(), [bridgeKey]);

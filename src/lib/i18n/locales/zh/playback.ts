@@ -1091,6 +1091,9 @@ const playback: Record<string, string> = {
   "Paste your TheIntroDB API key": "粘贴你的 TheIntroDB API 密钥",
   "Optional. TheIntroDB answers without a key, but a key raises your rate limit so timing keeps arriving when you binge. Get one at":
     "可选。不填密钥 TheIntroDB 也能响应，但填入密钥可提高速率上限，连续追剧时也能持续获取时间点。可在此获取",
+  "Font only": "仅替换字体",
+  "Use your chosen font on styled (ASS) subs while keeping their original size, colors, effects, and sign placement.":
+    "将你选择的字体应用到特效（ASS）字幕，同时保留原有的字号、颜色、特效和招牌位置。",
 };
 
 export default playback;

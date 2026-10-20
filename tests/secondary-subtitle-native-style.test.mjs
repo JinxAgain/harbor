@@ -41,6 +41,11 @@ function nativeStyle(handler = async () => {}) {
         return handler(args);
       },
     },
+    "./mpv-tuning": {
+      parseMpvExtraOptions() {
+        return new Map();
+      },
+    },
   });
   return { apply: style.applySecondarySubNative, calls };
 }

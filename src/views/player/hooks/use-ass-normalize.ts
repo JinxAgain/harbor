@@ -17,11 +17,29 @@ async function loadAssText(
   headers?: Record<string, string>,
 ): Promise<string | null> {
   if (track.external === true || track.url) {
-    const raw = track.url ?? track.externalFilename;
+    const raw = track.externalFilename ?? track.url;
     if (!raw) return null;
+    const isLocalPath = /^(?:[a-zA-Z]:[/\\]|\/|file:\/\/)/i.test(raw);
+    if (isTauri() && isLocalPath) {
+      try {
+        const text = await invoke<string>("subtitle_extract_ass", {
+          source: raw,
+          streamIndex: 0,
+          headers: null,
+        });
+        if (text) return text;
+      } catch {
+        // Fall back to resolving readable url
+      }
+    }
     const readable = await resolveReadableUrl(raw);
     if (!readable) return null;
-    const res = await safeFetch(readable, { method: "GET" });
+    let res: Response;
+    if (/^(?:asset\.localhost|https?:\/\/asset\.localhost|asset:|blob:|data:)/i.test(readable)) {
+      res = await fetch(readable);
+    } else {
+      res = await safeFetch(readable, { method: "GET", headers });
+    }
     if (!res.ok) return null;
     const buf = await res.arrayBuffer();
     return decodeSubtitleBytes(new Uint8Array(buf), {});

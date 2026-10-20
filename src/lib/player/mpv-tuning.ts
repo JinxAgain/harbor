@@ -78,3 +78,21 @@ export function validateMpvOptions(raw: string): MpvLineCheck {
   }
   return { valid, skipped, risky };
 }
+
+export function parseMpvExtraOptions(raw: string | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!raw) return out;
+  for (const line of raw.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const body = t.replace(/^--/, "");
+    const eq = body.indexOf("=");
+    if (eq <= 0) continue;
+    const key = body.slice(0, eq).trim().toLowerCase();
+    const value = body.slice(eq + 1).trim();
+    if (/^[a-z0-9-]+$/i.test(key) && value !== "") {
+      out.set(key, value);
+    }
+  }
+  return out;
+}
