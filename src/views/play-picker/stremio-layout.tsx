@@ -5,7 +5,7 @@ import type { Addon } from "@/lib/addons";
 import type { ScoredStream } from "@/lib/streams/types";
 import { StremioRow } from "./stremio-row";
 import { FACET_DIMS, facetOptions, matchesFacets, type FacetState } from "./stream-facets";
-import { addonInstanceKey, buildAddonOptions } from "./picker-utils";
+import { addonInstanceKey, buildAddonOptions, hasUncachedMarker } from "./picker-utils";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
 import type { CustomStreamFilter } from "@/lib/streams/custom-filters";
@@ -122,6 +122,7 @@ export function StremioLayout({
       if (filter !== "all" || preserveOrder) return list;
       const downloadRx = /[⏳⌛⬇⏬🔽📥]|\bdownload(ing)?\b|\bqueued?\b|\bnot[\s_-]?cached\b/iu;
       const isDownload = (s: ScoredStream) => {
+        if (hasUncachedMarker(s)) return true;
         const haystack = `${s.name ?? ""} ${s.title ?? ""} ${s.description ?? ""}`;
         return downloadRx.test(haystack);
       };

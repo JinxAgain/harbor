@@ -459,7 +459,10 @@ export const ContinueCard = memo(function ContinueCard({
     chooseEveryTime: boolean,
   ) => {
     const stream = () =>
-      openPicker(meta, episode, { autoPlay: !chooseEveryTime, resume: !chooseEveryTime });
+      openPicker(meta, episode, {
+        autoPlay: !chooseEveryTime && (settings.instantPlay || (!!episode && settings.seasonSourceLock)),
+        resume: !chooseEveryTime,
+      });
     const tmdbMatch = meta.id.match(/^tmdb:(?:movie|tv):(\d+)$/);
     const identity = {
       tmdbId: tmdbMatch ? Number(tmdbMatch[1]) : undefined,

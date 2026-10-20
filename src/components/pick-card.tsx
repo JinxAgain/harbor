@@ -649,7 +649,7 @@ const PosterCard = memo(function PosterCard({
             onPlay={() => {
               if (meta.isCollection) openMeta(meta);
               else if (meta.type === "manga") openMangaTarget(meta);
-              else if (meta.type === "movie") openPicker(meta, undefined, { autoPlay: true, resume: true });
+              else if (meta.type === "movie") openPicker(meta, undefined, { autoPlay: settings.instantPlay, resume: true });
               else openMeta(meta);
             }}
           />
@@ -660,7 +660,7 @@ const PosterCard = memo(function PosterCard({
             onPlay={() => {
               if (meta.isCollection) openMeta(meta);
               else if (meta.type === "manga") openMangaTarget(meta);
-              else if (meta.type === "movie") openPicker(meta, undefined, { autoPlay: true, resume: true });
+              else if (meta.type === "movie") openPicker(meta, undefined, { autoPlay: settings.instantPlay, resume: true });
               else openMeta(meta);
             }}
           />

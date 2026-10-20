@@ -36,12 +36,18 @@ export async function resolve(specifier, context, nextResolve) {
   if (sourcePath && !path.extname(sourcePath)) {
     const url = await existingModuleUrl(sourcePath);
     if (url) return { url, shortCircuit: true };
+  } else if (sourcePath && /\.(png|webp|svg|jpg|jpeg|gif)$/i.test(sourcePath)) {
+    return { url: pathToFileURL(sourcePath).href, shortCircuit: true };
   }
 
   return nextResolve(specifier, context);
 }
 
 export async function load(url, context, nextLoad) {
+  if (/\.(png|webp|svg|jpg|jpeg|gif)$/i.test(url)) {
+    return { format: "module", source: 'export default "";', shortCircuit: true };
+  }
+
   if (url.endsWith(".tsx")) {
     const source = await readFile(fileURLToPath(url), "utf8");
     const output = ts.transpileModule(source, {

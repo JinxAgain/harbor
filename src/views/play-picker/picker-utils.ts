@@ -10,7 +10,12 @@ import type { Meta } from "@/lib/cinemeta";
 import type { Rejection } from "@/lib/streams/trust";
 import type { Addon } from "@/lib/addons";
 import type { DebridSlug, ScoredStream, Stream, Tier } from "@/lib/streams/types";
-import { hasCachedMarker, hasUncachedMarker } from "@/lib/streams/cached";
+import {
+  hasCachedMarker,
+  hasUncachedMarker,
+  hasDebridMarker,
+  isExplicitlyUncached,
+} from "@/lib/streams/cached";
 import type { PlayEpisode } from "@/lib/view";
 import { parseKitsuId } from "@/lib/providers/kitsu";
 import { splitFranchiseDisplaySeason } from "@/lib/streams/anime-identity-core";
@@ -429,7 +434,7 @@ export function hasInstantMarker(s: ScoredStream): boolean {
   return /\binstant\b/.test(haystack) || haystack.includes("⚡");
 }
 
-export { hasCachedMarker, hasUncachedMarker };
+export { hasCachedMarker, hasUncachedMarker, hasDebridMarker, isExplicitlyUncached };
 
 export function anyStreamCached(s: ScoredStream): boolean {
   return Object.values(s.cached).some((v) => v === true) || hasCachedMarker(s);
@@ -439,9 +444,12 @@ export function streamIsCached(
   s: ScoredStream,
   debrids: ReadonlyArray<{ slug: DebridSlug }>,
 ): boolean {
-  if (s.url != null && !s.infoHash && !hasUncachedMarker(s)) return true;
+  const activeSlugs = debrids.map((d) => d.slug);
+  if (isExplicitlyUncached(s, activeSlugs)) return false;
   if (debrids.some((d) => s.cached[d.slug] === true || s.inLibrary[d.slug] === true)) return true;
-  return hasCachedMarker(s);
+  if (hasCachedMarker(s)) return true;
+  if (s.url != null && !s.infoHash && !hasDebridMarker(s)) return true;
+  return false;
 }
 
 const DEBRID_FAIL_CODES = new Set([
@@ -471,6 +479,7 @@ export function isWatchHub(s: ScoredStream): boolean {
 
 const NEEDS_DOWNLOAD_RX = /[⏳⌛⬇⏬🔽📥]|\bdownload(ing)?\b|\bqueued?\b|\bnot[\s_-]?cached\b/iu;
 export function needsDownload(s: ScoredStream): boolean {
+  if (hasUncachedMarker(s)) return true;
   const haystack = `${s.name ?? ""} ${s.title ?? ""} ${s.description ?? ""}`;
   return NEEDS_DOWNLOAD_RX.test(haystack);
 }

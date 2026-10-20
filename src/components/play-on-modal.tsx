@@ -81,6 +81,7 @@ function QueueButton({ onClick, disabled, label }: { onClick: () => void; disabl
 function PlayOnPanel({ request, themeId }: { request: PlayOnRequest; themeId: string }) {
   const t = useT();
   const { openPicker } = useView();
+  const { settings } = useSettings();
   const [identity, setIdentity] = useState<HarborIdentity | null>(null);
   const [peers, setPeers] = useState<HarborInstance[]>([]);
   const [settled, setSettled] = useState(false);
@@ -199,8 +200,11 @@ function PlayOnPanel({ request, themeId }: { request: PlayOnRequest; themeId: st
 
   const playHere = useCallback(() => {
     closePlayOn();
-    openPicker(request.meta, request.episode, { autoPlay: true, resume: true });
-  }, [openPicker, request]);
+    openPicker(request.meta, request.episode, {
+      autoPlay: settings.instantPlay || (!!request.episode && settings.seasonSourceLock),
+      resume: true,
+    });
+  }, [closePlayOn, openPicker, request, settings.instantPlay, settings.seasonSourceLock]);
 
   const queueHere = useCallback(() => {
     queueAdd(request.meta, request.episode);

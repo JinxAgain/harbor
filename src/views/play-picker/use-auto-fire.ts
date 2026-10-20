@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import type { ScoredStream } from "@/lib/streams/types";
 import type { SourceDescriptor } from "@/lib/together/protocol";
 import { engineP2pEligible } from "@/lib/torrent/stremio-stream";
-import { hasInstantMarker, streamMatchesLangs, torrentFilename } from "./picker-utils";
+import {
+  hasInstantMarker,
+  isExplicitlyUncached,
+  streamMatchesLangs,
+  torrentFilename,
+} from "./picker-utils";
 import { episodeVariantMatch } from "@/lib/streams/episode-file";
 import { episodeSpanContains } from "@/lib/episode-span";
 import type { AddonProgress } from "@/lib/streams/addons";
@@ -35,6 +40,7 @@ export function useAutoFire(args: {
   hostSource?: SourceDescriptor | null;
   preferredSourceEntry?: PlaybackEntry | null;
   preferredSourceMatched?: boolean;
+  seasonLockOnly?: boolean;
   season?: number | null;
   episode?: number | null;
   addonQuorum: AddonProgress;
@@ -63,6 +69,7 @@ export function useAutoFire(args: {
     hostSource,
     preferredSourceEntry,
     preferredSourceMatched,
+    seasonLockOnly,
     season,
     episode,
     addonQuorum,
@@ -82,7 +89,7 @@ export function useAutoFire(args: {
   };
   const nameAbsent = (s: ScoredStream) => s.nameAbsent === true;
   const topInstantPlayable = (s: ScoredStream) =>
-    isCached(s) || !!s.url || (p2pAutoConsent && engineP2pEligible(s));
+    isCached(s) || (p2pAutoConsent && !isExplicitlyUncached(s) && engineP2pEligible(s));
   const isHighConfidence = (s: ScoredStream, langOk: boolean) =>
     hasInstantMarker(s) &&
     isCached(s) &&
@@ -219,6 +226,12 @@ export function useAutoFire(args: {
     if (!autoActive || autoFiredRef.current) return;
     if (rememberedHandledFirst) return;
     if (waitingForHostSource || waitingForPreferredSource) return;
+    if (seasonLockOnly && protectingPreferredSource) {
+      if (pipelineDone || preferredWaitElapsed) {
+        setAutoCancelled(true);
+      }
+      return;
+    }
     const top = autoCandidates[0];
     const isFirstAttempt = (attempt ?? 0) === 0 && autoAttemptIdx === 0;
     const langOk =
@@ -239,7 +252,8 @@ export function useAutoFire(args: {
     const idx = Math.min((attempt ?? 0) + autoAttemptIdx, autoCandidates.length - 1);
     const pick = autoCandidates[idx];
     if (!pick) return;
-    const pickInstant = isCached(pick) || !!pick.url || (p2pAutoConsent && engineP2pEligible(pick));
+    const pickInstant =
+      isCached(pick) || (p2pAutoConsent && !isExplicitlyUncached(pick) && engineP2pEligible(pick));
     if (!pickInstant) {
       if (pipelineDone) setAutoCancelled(true);
       return;
@@ -267,5 +281,8 @@ export function useAutoFire(args: {
     highConfidenceTick,
     waitingForHostSource,
     waitingForPreferredSource,
+    seasonLockOnly,
+    protectingPreferredSource,
+    preferredWaitElapsed,
   ]);
 }

@@ -166,7 +166,7 @@ export function useAutoCandidates(args: {
       if (isStreamDead(s)) return;
       if (isWatchHub(s)) return;
       if (episodeConflict(s)) return;
-      if (!isCached(s) && !s.url && !engineP2pEligible(s)) return;
+      if (!isCached(s) && !engineP2pEligible(s)) return;
       const k = key(s);
       if (seen.has(k)) return;
       seen.add(k);
@@ -176,7 +176,7 @@ export function useAutoCandidates(args: {
     const sourceMatch = sourceEntry
       ? (filteredPicker.allRaw.find((s) => matchSource(s, sourceEntry)) ?? null)
       : null;
-    const instantPlayable = (s: ScoredStream | null) => !!s && (isCached(s) || !!s.url);
+    const instantPlayable = (s: ScoredStream | null) => !!s && isCached(s);
     if (!matchScores) {
       if (instantPlayable(sourceMatch)) push(sourceMatch);
       if (instantPlayable(previousMatch)) push(previousMatch);

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import type { Meta } from "@/lib/cinemeta";
 import { useT } from "@/lib/i18n";
+import { useSettings } from "@/lib/settings";
 import { useView } from "@/lib/view";
 import {
   closeVoyage,
@@ -21,6 +22,7 @@ import { VoyageSailing } from "./voyage-sailing";
 export function VoyageRoute({ voyage, inline = false }: { voyage: Voyage; inline?: boolean }) {
   const t = useT();
   const { openMeta, openPicker } = useView();
+  const { settings } = useSettings();
   const root = useRef<HTMLDivElement>(null);
   const launching = useRef(false);
   const sailing = voyage.phase === "sailing";
@@ -31,7 +33,7 @@ export function VoyageRoute({ voyage, inline = false }: { voyage: Voyage; inline
 
   const play = (meta: Meta) => {
     closeVoyage();
-    if (meta.type === "movie") openPicker(meta, undefined, { autoPlay: true, resume: true });
+    if (meta.type === "movie") openPicker(meta, undefined, { autoPlay: settings.instantPlay, resume: true });
     else openMeta(meta);
   };
 

@@ -55,7 +55,7 @@ export function KidsDetailView({
   const onPlay = () => {
     const isSeries = meta.type === "series";
     const hint = episodeHint ?? (isSeries ? { season: 1, episode: 1 } : undefined);
-    openPicker(meta, hint, { autoPlay: true, resume: true });
+    openPicker(meta, hint, { autoPlay: settings.instantPlay, resume: true });
   };
 
   return (

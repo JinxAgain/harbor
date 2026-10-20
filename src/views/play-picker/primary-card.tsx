@@ -17,7 +17,9 @@ import {
   anyStreamCached,
   confirmationLabel,
   displayTitle,
-  hasUncachedMarker,
+  hasCachedMarker,
+  hasDebridMarker,
+  isExplicitlyUncached,
   streamSummaryParts,
   torrentFilename,
 } from "./picker-utils";
@@ -59,12 +61,16 @@ export function PrimaryCard({
   const cachedDebrid = cachedDebrids[0] ?? null;
   const externalOnly = !stream.url && !stream.infoHash && !!(stream.externalUrl || stream.ytId);
   const link = resolveStreamLink(stream);
-  const addonCached = anyStreamCached(stream);
+  const activeSlugs = debrids.map((d) => d.slug);
+  const explicitlyUncached = isExplicitlyUncached(stream, activeSlugs);
+  const addonCached = !explicitlyUncached && anyStreamCached(stream);
   const isCached =
-    (stream.url != null && !stream.infoHash && !hasUncachedMarker(stream)) ||
-    cachedDebrid != null ||
-    addonCached ||
-    isPreviouslyPlayed;
+    !explicitlyUncached &&
+    (cachedDebrid != null ||
+      addonCached ||
+      isPreviouslyPlayed ||
+      hasCachedMarker(stream) ||
+      (stream.url != null && !stream.infoHash && !hasDebridMarker(stream)));
   const queueTarget = debrids.find((d) => d.queueCache);
   const canStream = !isCached && directStreamAvailable(stream);
   const summary = streamSummaryParts(stream).map((part) =>

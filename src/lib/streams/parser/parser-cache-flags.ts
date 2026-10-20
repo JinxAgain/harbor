@@ -1,15 +1,16 @@
 import type { DebridSlug } from "../types";
+import { hasUncachedMarker } from "../cached";
 
 const RD_CACHE_RX = /\[RD[+⚡]\]/i;
 const TB_CACHE_RX = /\[TB[+⚡]\]/i;
 const AD_CACHE_RX = /\[AD[+⚡]\]/i;
 const PM_CACHE_RX = /\[PM[+⚡]\]/i;
 const DL_CACHE_RX = /\[DL[+⚡]\]/i;
-const RD_UNCACHED_RX = /\[RD(?:[\s\-]?download|⬇️?|⏳)\]/i;
-const TB_UNCACHED_RX = /\[TB(?:[\s\-]?download|⬇️?|⏳)\]/i;
-const AD_UNCACHED_RX = /\[AD(?:[\s\-]?download|⬇️?|⏳)\]/i;
-const PM_UNCACHED_RX = /\[PM(?:[\s\-]?download|⬇️?|⏳)\]/i;
-const DL_UNCACHED_RX = /\[DL(?:[\s\-]?download|⬇️?|⏳)\]/i;
+const RD_UNCACHED_RX = /\[RD[\s\-]*(?:download|⬇️?|⏳|🧲)\s*\]/i;
+const TB_UNCACHED_RX = /\[TB[\s\-]*(?:download|⬇️?|⏳|🧲)\s*\]/i;
+const AD_UNCACHED_RX = /\[AD[\s\-]*(?:download|⬇️?|⏳|🧲)\s*\]/i;
+const PM_UNCACHED_RX = /\[PM[\s\-]*(?:download|⬇️?|⏳|🧲)\s*\]/i;
+const DL_UNCACHED_RX = /\[DL[\s\-]*(?:download|⬇️?|⏳|🧲)\s*\]/i;
 const JACKETTIO_BARE_UNCACHED_RX = /\[(RD|TB|AD|PM|DL|OC|ED|Putio)\]\s+(?:Jackettio|jackettio)\b/i;
 const STREAMFUSION_CACHED_RX = /^⚡instant/im;
 const STREAMFUSION_SERVICE_RX = /^⚡instant\s*\n([^\n]+)/im;
@@ -23,9 +24,9 @@ const AIOSTREAMS_GENERIC_CACHED_RX = /[🚀🌩📫]|\bcached\b/iu;
 const AIOSTREAMS_GENERIC_UNCACHED_RX = /☁️?|\bUNCACHED\b/iu;
 const MEDIAFUSION_SERVICE = "RD|TB|TRB|AD|PM|DL|OC|ED|ST|DBD|DB|PKP|PP|SDR|SAB|NZB|DAV|EN|NNTP|QB-WD|Putio|Offcloud|EasyDebrid";
 const MEDIAFUSION_CACHED_RX = new RegExp(`\\b(?:${MEDIAFUSION_SERVICE})\\s*[+⚡✅]`, "iu");
-const MEDIAFUSION_UNCACHED_RX = new RegExp(`\\b(?:${MEDIAFUSION_SERVICE})\\s*[⏳⬇🔻❌]`, "iu");
+const MEDIAFUSION_UNCACHED_RX = new RegExp(`\\b(?:${MEDIAFUSION_SERVICE})\\s*[⏳⬇🔻❌🧲]`, "iu");
 const SERVICE_CACHED_RX = /(?:⚡️?|✅)\s*(?:cached(?:\s+on)?|instant(?:\s+on)?|ready(?:\s+on)?)?\s*(real[\s\-_]?debrid|realdebrid|rd|torbox|tb|all[\s\-_]?debrid|alldebrid|ad|premiumize|pm|debrid[\s\-_]?link|debridlink|dl)/i;
-const SERVICE_UNCACHED_RX = /(?:⏳|⬇️?|🔻|❌)\s*(?:need[\s_-]?cache|need[\s_-]?to[\s_-]?cache|download(?:\s+via)?|not\s+ready|uncached(?:\s+on)?)?\s*(real[\s\-_]?debrid|realdebrid|rd|torbox|tb|all[\s\-_]?debrid|alldebrid|ad|premiumize|pm|debrid[\s\-_]?link|debridlink|dl)/i;
+const SERVICE_UNCACHED_RX = /(?:⏳|⬇️?|🔻|❌|🧲)\s*(?:need[\s_-]?cache|need[\s_-]?to[\s_-]?cache|download(?:\s+via)?|not\s+ready|uncached(?:\s+on)?)?\s*(real[\s\-_]?debrid|realdebrid|rd|torbox|tb|all[\s\-_]?debrid|alldebrid|ad|premiumize|pm|debrid[\s\-_]?link|debridlink|dl)/i;
 
 const COMET_BINGE_RX = /^comet\|([a-z\-]+)\|/i;
 const ELFHOSTED_CACHE_RX = /\belf[\s\-_]?cache\b|cached\s+on\s+elfhosted/i;
@@ -83,11 +84,13 @@ export function parseCacheFlags(
     if (slug) markUncached(slug);
   }
   const isAioStreams = !!addonName && /aiostreams/i.test(addonName);
+  const genericUncached = hasUncachedMarker({ title: text });
   if (
     AIOSTREAMS_PRISM_UNCACHED_RX.test(text) ||
     AIOSTREAMS_GDRIVE_UNCACHED_RX.test(text) ||
     MEDIAFUSION_UNCACHED_RX.test(text) ||
-    (isAioStreams && AIOSTREAMS_GENERIC_UNCACHED_RX.test(text))
+    (isAioStreams && AIOSTREAMS_GENERIC_UNCACHED_RX.test(text)) ||
+    genericUncached
   ) {
     const slug =
       (bingeGroup ? cometServiceFrom(bingeGroup) : null) ??
@@ -131,7 +134,7 @@ export function parseCacheFlags(
 
   if (url && addonName) {
     const slug = addonNameSlug(addonName);
-    if (slug && !denied[slug] && !out[slug]) {
+    if (slug && !denied[slug] && !out[slug] && !hasUncachedMarker({ title: text })) {
       const isHttp = /^https?:\/\//i.test(url);
       const looksDebrid = /(?:realdebrid|real-debrid|torbox|alldebrid|premiumize|debridlink|debrid-link|elfhosted)/i.test(url);
       if (isHttp && (looksDebrid || isDebridAwareAddon(addonName))) {

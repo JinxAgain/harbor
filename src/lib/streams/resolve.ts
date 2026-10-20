@@ -1,7 +1,7 @@
 import { safeFetch as fetch } from "@/lib/safe-fetch";
 import { dwarn } from "@/lib/debug";
 import { completedTorrentDownloadFor } from "@/lib/download/downloads-store";
-import { hasUncachedMarker, isP2pStream } from "./cached";
+import { hasUncachedMarker, isExplicitlyUncached, isP2pStream } from "./cached";
 import {
   magnetFromHash,
   type DebridResult,
@@ -130,6 +130,9 @@ export async function resolveStream(
   }
 
   if (stream.url && stream.url !== "#") {
+    if (!userCommitted && isExplicitlyUncached(stream, debrids.map((d) => d.slug))) {
+      return { ok: false, code: "uncached-not-committed", tried };
+    }
     const headers = stream.behaviorHints?.proxyHeaders?.request ?? stream.behaviorHints?.headers;
     const filename = stream.behaviorHints?.filename ?? stream.behaviorHints?.fileName;
     // A manual source selection is already an explicit playback commitment.

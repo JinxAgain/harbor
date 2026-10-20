@@ -57,7 +57,8 @@ import {
   addonFailureLabel,
   debridBanner,
   hasCachedMarker,
-  hasUncachedMarker,
+  hasDebridMarker,
+  isExplicitlyUncached,
   isEngineWarmingError,
   normalizeLangCode,
   orderByAddonNative,
@@ -314,10 +315,16 @@ export function PlayPicker({
   );
 
   const isCached = useCallback(
-    (s: ScoredStream) =>
-      (s.url != null && !s.infoHash && !hasUncachedMarker(s)) ||
-      debrids.some((d) => s.cached[d.slug] === true || s.inLibrary[d.slug] === true) ||
-      hasCachedMarker(s),
+    (s: ScoredStream) => {
+      const activeSlugs = debrids.map((d) => d.slug);
+      if (isExplicitlyUncached(s, activeSlugs)) return false;
+      if (debrids.some((d) => s.cached[d.slug] === true || s.inLibrary[d.slug] === true)) {
+        return true;
+      }
+      if (hasCachedMarker(s)) return true;
+      if (s.url != null && !s.infoHash && !hasDebridMarker(s)) return true;
+      return false;
+    },
     [debrids],
   );
   const hasStrongAddon = useMemo(
@@ -504,8 +511,9 @@ export function PlayPicker({
   const [autoExhausted, setAutoExhausted] = useState(false);
   const [autoCancelled, setAutoCancelled] = useState(false);
   const isLiveLikeContent = isLivePlaybackSrc({ meta });
+  const seasonLockAutoEligible = settings.instantPlay || !seasonLock || seasonLockEntry != null;
   const autoActive =
-    !!((autoPlay && !isLiveLikeContent) || wasInvitedTo(inviteKey)) &&
+    !!((autoPlay && !isLiveLikeContent && seasonLockAutoEligible) || wasInvitedTo(inviteKey)) &&
     !autoCancelled &&
     !autoExhausted &&
     !isDownload &&
@@ -635,10 +643,12 @@ export function PlayPicker({
   }, [resolving, abortResolve, setResolveError]);
 
   const rememberedInstant =
-    !!previousMatch && (isCached(previousMatch) || !!previousMatch.url || p2pAutoConsent);
+    !!previousMatch && (isCached(previousMatch) || p2pAutoConsent);
   const rememberedFiredRef = useRef(false);
   const rememberedHandledFirst =
     !!previousMatch &&
+    autoActive &&
+    settings.instantPlay &&
     settings.rememberLastStream &&
     !!resume &&
     !wasInvitedTo(inviteKey) &&
@@ -705,6 +715,7 @@ export function PlayPicker({
     hostSource: hostSourceForMedia,
     preferredSourceEntry: lastSeriesSource,
     preferredSourceMatched: sameSourceMatch != null || previousMatch != null,
+    seasonLockOnly: !settings.instantPlay && seasonLock,
     season: !isAnimeMetaId ? (episode?.season ?? null) : null,
     episode: !isAnimeMetaId ? (episode?.episode ?? null) : null,
     addonQuorum,
