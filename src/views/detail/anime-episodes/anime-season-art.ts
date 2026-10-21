@@ -2,7 +2,7 @@ import type { FranchiseEntry } from "@/lib/providers/anime-detail";
 
 export type SeasonArt = { background?: string; logo?: string; description?: string };
 
-const SIDE_FORMATS = new Set(["ova", "ona", "special", "music", "movie"]);
+const SIDE_FORMATS = new Set(["ova", "special", "music", "movie"]);
 const DAY = 86_400_000;
 const MATCH_WINDOW = 150 * DAY;
 

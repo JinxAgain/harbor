@@ -13,8 +13,7 @@ import {
   kitsuToImdb,
   externalToKitsu,
   kitsuToAnilist,
-  kitsuToAnidb,
-  loadAnidbMaps,
+  resolveAnidbSeasonWindow,
 } from "@/lib/providers/anime-mapping";
 import { anilistFranchise, type AnilistFranchiseNode } from "@/lib/anilist/relations";
 import { anilistArtById, anilistRecommendations } from "@/lib/anilist/browse";
@@ -48,6 +47,7 @@ export type FranchiseEntry = {
   subtype?: string;
   isCurrent: boolean;
   isUpcoming: boolean;
+  isSideStory?: boolean;
 };
 
 export type AnimeDetailExtras = Partial<TmdbDetail> & {
@@ -127,7 +127,7 @@ const STUDIO_ROLE_RANK: Record<string, number> = {
 
 const FRANCHISE_ROLES = new Set(["sequel", "prequel", "parent_story"]);
 const FRANCHISE_MAX_DEPTH = 3;
-const SIDE_ENTRY_SUBTYPES = new Set(["ova", "ona", "special", "music"]);
+const SIDE_ENTRY_SUBTYPES = new Set(["ova", "special", "music"]);
 
 function makeFranchiseMeta(id: number, anime: import("./kitsu").KitsuAnimeDetail): Meta {
   return {
@@ -243,6 +243,7 @@ async function buildFranchise(
     subtype: n.format,
     isCurrent: false,
     isUpcoming: n.upcoming,
+    isSideStory: n.sideStory,
   }));
 
   const score = (e: FranchiseEntry) =>
@@ -260,11 +261,23 @@ async function buildFranchise(
     seventh: "7",
     eighth: "8",
   };
+  const ROMAN_TRAIL: Record<string, string> = {
+    ii: "2",
+    iii: "3",
+    iv: "4",
+    v: "5",
+    vi: "6",
+    vii: "7",
+    viii: "8",
+    ix: "9",
+    x: "10",
+  };
   const norm = (s: string) => {
     let x = s
       .trim()
       .replace(/^[A-Z][A-Z0-9]{1,5}:\s*/, "")
-      .toLowerCase();
+      .toLowerCase()
+      .replace(/\s+(ii|iii|iv|v|vi|vii|viii|ix|x)\s*$/, (_, r: string) => ` ${ROMAN_TRAIL[r] ?? r}`);
     for (const w in ORD) x = x.replace(new RegExp(`\\b${w}\\b`, "g"), ORD[w]);
     const seasonM = x.match(/(\d+)\s*(?:st|nd|rd|th)?\s*season|season\s*(\d+)/);
     const partM = x.match(/(\d+)\s*(?:st|nd|rd|th)?\s*(?:part|cour)|(?:part|cour)\s*(\d+)/);
@@ -314,23 +327,25 @@ async function buildFranchise(
   });
 }
 
+import { isFranchiseExtra } from "./anime-format";
+export { isFranchiseExtra };
+
 export type FranchiseTag = { kind: "season" | "movie"; seasonNum: number; short: string };
-
-const SHORT_SUBTYPES = new Set(["ona", "ova", "special", "music", "one_shot"]);
-
-export function isFranchiseExtra(f: FranchiseEntry): boolean {
-  if (f.meta.type === "movie") return true;
-  const sub = (f.subtype ?? "").toLowerCase();
-  if (SHORT_SUBTYPES.has(sub)) return true;
-  const airingSeason = f.meta.type === "series" && (f.isCurrent || f.isUpcoming);
-  return (f.episodeCount ?? 0) === 1 && !airingSeason;
-}
 
 export function franchiseTags(franchise: FranchiseEntry[]): FranchiseTag[] {
   let s = 0;
   return franchise.map((f) => {
     if (isFranchiseExtra(f)) {
-      return { kind: "movie", seasonNum: 0, short: "MOV" };
+      const sub = (f.subtype ?? "").toLowerCase();
+      const short =
+        f.meta.type === "movie" || sub === "movie"
+          ? "MOV"
+          : sub === "ova" || /\b(ova|oad)\b/i.test(f.meta.name)
+            ? "OVA"
+            : sub === "ona"
+              ? "ONA"
+              : "SP";
+      return { kind: "movie", seasonNum: 0, short };
     }
     s += 1;
     return { kind: "season", seasonNum: s, short: `S${s}` };
@@ -437,7 +452,7 @@ export async function animeDetails(
       .catch(() => null),
   ]);
 
-  const episodes = buildKitsuEpisodes(addonMeta, kitsuRawEpisodes);
+  const episodes = buildKitsuEpisodes(addonMeta, kitsuRawEpisodes, kitsuId);
   let tmdbEpsRaw: TmdbEpisode[] | null = null;
   let tmdbEnRaw: TmdbEpisode[] | null = null;
   if (localized && settings.tmdbKey && kind === "tv") {
@@ -484,23 +499,14 @@ export async function animeDetails(
   // AniZip has no mapping for not-yet-indexed cours (e.g. Bleach TYBW cour 4).
   // Fall back to the AniDB id (ARM) plus the anime-lists season window to
   // attach provider season/episode coords, so stream queries carry the season.
-  if (!aniZip) {
-    const anidb = await kitsuToAnidb(kitsuId).catch(() => null);
-    if (anidb != null) {
-      const maps = await loadAnidbMaps().catch(() => null);
-      const tvdbId = maps?.tvdb[String(anidb)];
-      const win =
-        tvdbId != null
-          ? maps?.byTvdb?.[String(tvdbId)]?.find((w) => w.anidbId === anidb)
-          : undefined;
-      if (win && typeof win.season === "number") {
-        const imdbId = maps?.imdb[String(anidb)] ?? null;
-        for (const ep of episodes) {
-          if (ep.number == null) continue;
-          if (ep.imdbSeason == null) ep.imdbSeason = win.season;
-          if (ep.imdbEpisode == null) ep.imdbEpisode = ep.number + win.offset;
-          if (imdbId && !ep.imdbId) ep.imdbId = imdbId;
-        }
+  if (episodes.every((ep) => ep.imdbSeason == null)) {
+    const win = await resolveAnidbSeasonWindow(kitsuId).catch(() => null);
+    if (win) {
+      for (const ep of episodes) {
+        if (ep.number == null) continue;
+        if (ep.imdbSeason == null) ep.imdbSeason = win.season;
+        if (ep.imdbEpisode == null) ep.imdbEpisode = ep.number + win.offset;
+        if (win.imdbId && !ep.imdbId) ep.imdbId = win.imdbId;
       }
     }
   }

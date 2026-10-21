@@ -120,8 +120,14 @@ export function isGenericEpisodeName(text: string | null | undefined): boolean {
 export function buildKitsuEpisodes(
   addonMeta: AnimeKitsuMeta | null,
   kitsuRawEpisodes: KitsuEpisode[],
+  kitsuId?: number | null,
 ): KitsuEpisode[] {
-  if (!addonMeta?.videos || addonMeta.videos.length === 0) return kitsuRawEpisodes;
+  if (!addonMeta?.videos || addonMeta.videos.length === 0) {
+    if (kitsuId == null) return kitsuRawEpisodes;
+    return kitsuRawEpisodes.map((ep) =>
+      ep.streamId || ep.number <= 0 ? ep : { ...ep, streamId: `kitsu:${kitsuId}:${ep.number}` },
+    );
+  }
   const kitsuById = new Map<number, KitsuEpisode>();
   for (const ep of kitsuRawEpisodes) kitsuById.set(ep.number, ep);
   return addonMeta.videos.map((v): KitsuEpisode => {
@@ -135,7 +141,8 @@ export function buildKitsuEpisodes(
       thumbnail: v.thumbnail ?? k?.thumbnail ?? null,
       airdate: v.released ?? k?.airdate ?? null,
       length: k?.length ?? null,
-      streamId: v.id,
+      streamId:
+        v.id || k?.streamId || (kitsuId != null && v.episode > 0 ? `kitsu:${kitsuId}:${v.episode}` : undefined),
       imdbId: v.imdb_id,
       imdbSeason: v.imdbSeason,
       imdbEpisode: v.imdbEpisode,

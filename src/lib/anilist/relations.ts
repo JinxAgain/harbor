@@ -3,11 +3,15 @@ import { kitsuToAnilist } from "@/lib/providers/anime-mapping";
 
 const RELATIONS_QUERY = `query ($id: Int) {
   Media(id: $id, type: ANIME) {
+    seasonYear
+    startDate { year }
+    title { english romaji userPreferred }
     relations {
       edges {
         relationType(version: 2)
         node {
           id
+          type
           format
           episodes
           status
@@ -25,11 +29,13 @@ const RELATIONS_QUERY = `query ($id: Int) {
 }`;
 
 const FRANCHISE_RELATIONS = new Set(["SEQUEL", "PREQUEL", "PARENT", "SIDE_STORY"]);
+const ANIME_FORMATS = new Set(["TV", "TV_SHORT", "ONA", "OVA", "MOVIE", "SPECIAL"]);
 const MAX_DEPTH = 6;
 const MAX_NODES = 40;
 
 type RawNode = {
   id: number;
+  type?: string | null;
   format: string | null;
   episodes: number | null;
   status: string | null;
@@ -41,8 +47,53 @@ type RawNode = {
   description: string | null;
   startDate: { year: number | null; month: number | null; day: number | null } | null;
 };
-type RawEdge = { relationType: string | null; node: RawNode | null };
-type RelationsResponse = { Media: { relations: { edges: RawEdge[] } | null } | null };
+type RawEdge = {
+  relationType: string | null;
+  node: RawNode | null;
+  parentTitles?: string[];
+  parentYear?: number;
+};
+type RelationsResponse = {
+  Media: {
+    seasonYear?: number | null;
+    startDate?: { year: number | null } | null;
+    title?: { english: string | null; romaji: string | null; userPreferred: string | null } | null;
+    relations: { edges: RawEdge[] } | null;
+  } | null;
+};
+
+function normBaseTitle(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/\b(season|cour|part)\b.*$/i, " ")
+    .replace(/\b\d+(st|nd|rd|th)\b.*$/i, " ")
+    .replace(/\bfinal(\s+season)?\b.*$/i, " ")
+    .replace(/\b(the\s+)?movie\b.*$/i, " ")
+    .replace(/\s+(ii|iii|iv|v|vi|vii|viii|ix|x|[2-9])\s*$/i, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isSameFranchiseOther(edge: RawEdge): boolean {
+  if (edge.relationType !== "OTHER" || !edge.node || !edge.parentTitles?.length) return false;
+  if (edge.node.type && edge.node.type !== "ANIME") return false;
+  if (edge.node.format && !ANIME_FORMATS.has(edge.node.format)) return false;
+  const nodeTitles = [
+    edge.node.title.english,
+    edge.node.title.romaji,
+    edge.node.title.userPreferred,
+  ]
+    .filter((t): t is string => !!t && t.trim().length > 0)
+    .map(normBaseTitle)
+    .filter((t) => t.length >= 3);
+  if (nodeTitles.length === 0) return false;
+  for (const pt of edge.parentTitles) {
+    const p = normBaseTitle(pt);
+    if (p.length >= 3 && nodeTitles.includes(p)) return true;
+  }
+  return false;
+}
 
 export type AnilistFranchiseNode = {
   id: number;
@@ -57,6 +108,7 @@ export type AnilistFranchiseNode = {
   startDate?: string;
   rating?: string;
   upcoming: boolean;
+  sideStory?: boolean;
 };
 
 const edgeCache = new Map<number, RawEdge[]>();
@@ -71,7 +123,19 @@ async function fetchEdges(anilistId: number): Promise<RawEdge[]> {
       undefined,
       true,
     );
-    const edges = data?.Media?.relations?.edges ?? [];
+    const parentTitles = [
+      data?.Media?.title?.english,
+      data?.Media?.title?.romaji,
+      data?.Media?.title?.userPreferred,
+    ]
+      .filter((t): t is string => !!t && t.trim().length > 0)
+      .map((t) => t.trim());
+    const parentYear = data?.Media?.seasonYear ?? data?.Media?.startDate?.year ?? undefined;
+    const edges = (data?.Media?.relations?.edges ?? []).map((e) => ({
+      ...e,
+      parentTitles,
+      parentYear,
+    }));
     edgeCache.set(anilistId, edges);
     return edges;
   } catch {
@@ -111,21 +175,40 @@ export async function anilistFranchise(kitsuId: number): Promise<AnilistFranchis
   const root = await kitsuToAnilist(kitsuId).catch(() => null);
   if (!root) return [];
   const out = new Map<number, AnilistFranchiseNode>();
-  const visited = new Set<number>([root]);
-  let frontier: number[] = [root];
+  const visited = new Map<number, boolean>([[root, false]]);
+  let frontier: Array<{ id: number; sideStory: boolean }> = [{ id: root, sideStory: false }];
   let depth = 0;
   while (frontier.length > 0 && depth < MAX_DEPTH && out.size < MAX_NODES) {
-    const batches = await Promise.all(frontier.map((id) => fetchEdges(id)));
-    const next: number[] = [];
-    for (const edges of batches) {
-      for (const e of edges) {
-        if (!e.relationType || !FRANCHISE_RELATIONS.has(e.relationType)) continue;
+    const batches = await Promise.all(frontier.map((f) => fetchEdges(f.id)));
+    const next: Array<{ id: number; sideStory: boolean }> = [];
+    for (let i = 0; i < frontier.length; i++) {
+      const parentSide = frontier[i].sideStory;
+      for (const e of batches[i]) {
+        if (
+          !e.relationType ||
+          (!FRANCHISE_RELATIONS.has(e.relationType) && !isSameFranchiseOther(e))
+        ) {
+          continue;
+        }
         const n = e.node;
-        if (!n || n.id == null || visited.has(n.id)) continue;
-        visited.add(n.id);
-        const node = toNode(n);
+        if (!n || n.id == null) continue;
+        if (n.type && n.type !== "ANIME") continue;
+        if (n.format && !ANIME_FORMATS.has(n.format)) continue;
+        const edgeSide = parentSide || e.relationType === "SIDE_STORY";
+        const prevSide = visited.get(n.id);
+        if (prevSide !== undefined) {
+          if (prevSide && !edgeSide) {
+            visited.set(n.id, false);
+            const existing = out.get(n.id);
+            if (existing) out.set(n.id, { ...existing, sideStory: false });
+            next.push({ id: n.id, sideStory: false });
+          }
+          continue;
+        }
+        visited.set(n.id, edgeSide);
+        const node = { ...toNode(n), ...(edgeSide ? { sideStory: true } : {}) };
         if (node.name) out.set(n.id, node);
-        next.push(n.id);
+        if (!edgeSide) next.push({ id: n.id, sideStory: false });
       }
     }
     frontier = next;
@@ -157,12 +240,24 @@ export async function animeRelations(anilistId: number): Promise<AnimeRelation[]
     for (let i = 0; i < frontier.length; i++) {
       const dir = frontier[i].dir;
       for (const e of batches[i]) {
-        if (e.relationType !== "PREQUEL" && e.relationType !== "SEQUEL") continue;
+        const sameOther = isSameFranchiseOther(e);
+        if (e.relationType !== "PREQUEL" && e.relationType !== "SEQUEL" && !sameOther) continue;
         const n = e.node;
         if (!n || n.id == null) continue;
+        if (n.type && n.type !== "ANIME") continue;
+        if (n.format && !ANIME_FORMATS.has(n.format)) continue;
         if (n.format === "MOVIE") continue;
         if (seen.has(n.id)) continue;
-        const nextDir = dir + (e.relationType === "SEQUEL" ? 1 : -1);
+        const nodeYear = n.seasonYear ?? n.startDate?.year ?? undefined;
+        const step =
+          e.relationType === "PREQUEL"
+            ? -1
+            : e.relationType === "SEQUEL"
+              ? 1
+              : e.parentYear != null && nodeYear != null && nodeYear < e.parentYear
+                ? -1
+                : 1;
+        const nextDir = dir + step;
         seen.set(n.id, nextDir);
         const node = toNode(n);
         if (!node.name) continue;

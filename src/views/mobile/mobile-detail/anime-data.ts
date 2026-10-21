@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import type { Meta } from "@/lib/cinemeta";
 import { useSettings } from "@/lib/settings";
 import { animeDetails } from "@/lib/providers/anime-detail";
+import type { KitsuEpisode } from "@/lib/providers/kitsu";
 import type { CastEntry, TmdbDetail } from "@/lib/providers/tmdb";
 import type { AnimeCharacter } from "@/lib/providers/anime-characters";
 import type { AnilistRelatedNode } from "@/lib/anilist/media-details";
+
+const EMPTY_EPISODES: KitsuEpisode[] = [];
 
 export const ANIME_ID = /^(kitsu|mal|anilist|anidb):/;
 
@@ -20,14 +23,21 @@ function syncCanonical(id: string): string | null {
 export function useAnimeDetail(
   meta: Meta,
   isAnime: boolean,
-): { detail: TmdbDetail | null; canonicalId: string | null; loading: boolean } {
+): {
+  detail: TmdbDetail | null;
+  canonicalId: string | null;
+  episodes: KitsuEpisode[];
+  loading: boolean;
+} {
   const { settings } = useSettings();
   const [detail, setDetail] = useState<TmdbDetail | null>(null);
+  const [episodes, setEpisodes] = useState<KitsuEpisode[]>(EMPTY_EPISODES);
   const [resolvedKitsu, setResolvedKitsu] = useState<string | null>(null);
   const [loading, setLoading] = useState(isAnime);
 
   useEffect(() => {
     setDetail(null);
+    setEpisodes(EMPTY_EPISODES);
     setResolvedKitsu(null);
     if (!isAnime) {
       setLoading(false);
@@ -43,7 +53,13 @@ export function useAnimeDetail(
         }
         setResolvedKitsu(`kitsu:${res.kitsuId}`);
         setDetail(res.detail);
+        setEpisodes(res.episodes);
         setLoading(false);
+        void res.enrichPromise
+          .then((eps) => {
+            if (alive) setEpisodes([...eps]);
+          })
+          .catch(() => {});
         const extras = await res.extrasPromise.catch(() => null);
         if (!alive || !extras) return;
         setDetail((prev) => (prev ? mergeExtras(prev, extras) : prev));
@@ -61,7 +77,7 @@ export function useAnimeDetail(
     [meta.id, resolvedKitsu],
   );
 
-  return { detail, canonicalId, loading };
+  return { detail, canonicalId, episodes, loading };
 }
 
 type ExtrasPatch = {

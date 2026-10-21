@@ -42,10 +42,16 @@ function displayEpLabel(ep: PlayEpisode, metaId?: string): string {
 
 function sameEpisode(a: PlayEpisode, b: PlayEpisode): boolean {
   if (a.kitsuStreamId && b.kitsuStreamId) return a.kitsuStreamId === b.kitsuStreamId;
-  return (
+  if (
     (a.imdbSeason ?? a.season) === (b.imdbSeason ?? b.season) &&
     (a.imdbEpisode ?? a.episode) === (b.imdbEpisode ?? b.episode)
-  );
+  ) {
+    return true;
+  }
+  if ((a.imdbSeason == null) !== (b.imdbSeason == null)) {
+    return a.season === b.season && a.episode === b.episode;
+  }
+  return false;
 }
 
 export function EpisodePanel({
@@ -339,9 +345,10 @@ export function EpisodePanel({
                 {currentEpisode ? (
                   <p className="min-w-0 truncate text-[12.5px] text-ink-subtle">
                     {t("Now playing: {label}", {
-                      label: `${displayEpLabel(currentEpisode, meta.id)}${
-                        currentEpisode.name ? ` · ${currentEpisode.name}` : ""
-                      }`,
+                      label: `${displayEpLabel(
+                        episodes.find((ep) => sameEpisode(ep, currentEpisode)) ?? currentEpisode,
+                        meta.id,
+                      )}${currentEpisode.name ? ` · ${currentEpisode.name}` : ""}`,
                     })}
                   </p>
                 ) : (

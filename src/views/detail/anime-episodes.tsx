@@ -327,7 +327,7 @@ export function AnimeEpisodes({
   );
   const { pickerItems, selectPickerItem, franchiseActiveKey } = useAnimeFranchiseNav(
     effectiveOrder,
-    franchise,
+    pickerFranchise,
     currentId,
     activeEntryId,
     onSelectEntry,
@@ -540,8 +540,15 @@ export function AnimeEpisodes({
             ) : tvdbPanel.panel ? (
               <TvdbOrderPanel
                 items={tvdbPanel.panel.items}
-                activeKey={tvdbPanel.panel.activeKey}
-                onSelect={tvdbPanel.panel.onSelect}
+                activeKey={franchiseActiveKey ?? tvdbPanel.panel.activeKey}
+                onSelect={(key) => {
+                  if (key.startsWith("nav:")) {
+                    onSelectEntry(key.slice(4));
+                    return;
+                  }
+                  onSelectEntry(currentId);
+                  tvdbPanel.panel!.onSelect(key);
+                }}
                 orderTypes={tvdbPanel.panel.orderTypes}
                 activeType={tvdbPanel.panel.activeType}
                 onSelectType={(v) =>

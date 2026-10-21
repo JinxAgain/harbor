@@ -11,7 +11,7 @@ import { kitsuAnime, kitsuMainTvSeries } from "@/lib/providers/kitsu";
 import { selectSiblingWindows, type AnimeListWindow } from "@/lib/streams/anime-identity-core";
 import { mappingStore } from "./mapping-store";
 
-const SIDE_ENTRY_TYPES = new Set(["ova", "ona", "special", "music"]);
+const SIDE_ENTRY_TYPES = new Set(["ova", "special", "music"]);
 
 async function preferMainTv(kitsuId: number, type?: string): Promise<number> {
   if (type && SIDE_ENTRY_TYPES.has(type.toLowerCase())) {
@@ -215,6 +215,35 @@ export async function kitsuToImdb(kitsuId: number): Promise<string | null> {
   if (!arm?.anidb) return null;
   const maps = await loadAnidbMaps();
   return maps.imdb[String(arm.anidb)] ?? null;
+}
+
+export type AnidbSeasonWindow = {
+  season: number;
+  offset: number;
+  imdbId: string | null;
+  tvdbId: number | null;
+};
+
+export async function resolveAnidbSeasonWindow(kitsuId: number): Promise<AnidbSeasonWindow | null> {
+  const anidb = await kitsuToAnidb(kitsuId).catch(() => null);
+  if (anidb == null) return null;
+  const maps = await loadAnidbMaps().catch(() => null);
+  if (!maps) return null;
+  const tvdbId = maps.tvdb[String(anidb)] ?? null;
+  const imdbId = maps.imdb[String(anidb)] ?? null;
+  const win =
+    tvdbId != null
+      ? maps.byTvdb?.[String(tvdbId)]?.find((w) => w.anidbId === anidb)
+      : imdbId != null
+        ? maps.byImdb?.[imdbId]?.find((w) => w.anidbId === anidb)
+        : undefined;
+  if (!win || typeof win.season !== "number") return null;
+  return {
+    season: win.season,
+    offset: win.offset,
+    imdbId,
+    tvdbId,
+  };
 }
 
 export async function kitsuToAnidb(kitsuId: number): Promise<number | null> {

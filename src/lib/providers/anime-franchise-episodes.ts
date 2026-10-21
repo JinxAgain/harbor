@@ -8,7 +8,7 @@ import {
 import { enrichEpisodes } from "@/lib/providers/anime-episode-enrich";
 import { animeKitsuMeta } from "@/lib/providers/anime-kitsu-addon";
 import { kitsuEpisodes, type KitsuEpisode } from "@/lib/providers/kitsu";
-import { kitsuToTvdb } from "@/lib/providers/anime-mapping";
+import { kitsuToTvdb, resolveAnidbSeasonWindow } from "@/lib/providers/anime-mapping";
 import { tvdbEpisodesByType, tvdbEpisodesAbsolute, tvdbLangFromIso1 } from "@/lib/providers/tvdb";
 import { tmdbSeasonEpisodes } from "@/lib/providers/tmdb/tmdb-details";
 import type { Episode as TmdbEpisode } from "@/lib/providers/tmdb/tmdb-details";
@@ -84,7 +84,7 @@ export function fetchEntryEpisodes(kitsuId: number, settings: Settings): Promise
         tmdbEnRaw = en;
       }
     }
-    const eps = buildKitsuEpisodes(addonMeta, raw);
+    const eps = buildKitsuEpisodes(addonMeta, raw, kitsuId);
     mergeAniZipEpisodes(eps, aniZip, { lang: localized ? iso1 : undefined });
     mergeTvdbEpisodes(eps, tvdbRaw?.loc ?? null, { lang: localized ? iso1 : undefined });
     mergeTmdbEpisodes(eps, tmdbEpsRaw, { lang: localized ? iso1 : undefined });
@@ -93,6 +93,17 @@ export function fetchEntryEpisodes(kitsuId: number, settings: Settings): Promise
     if (localized) {
       if (tvdbRaw?.en) mergeTvdbEpisodes(eps, tvdbRaw.en);
       if (tmdbEnRaw) mergeTmdbEpisodes(eps, tmdbEnRaw);
+    }
+    if (eps.every((ep) => ep.imdbSeason == null)) {
+      const win = await resolveAnidbSeasonWindow(kitsuId).catch(() => null);
+      if (win) {
+        for (const ep of eps) {
+          if (ep.number == null) continue;
+          if (ep.imdbSeason == null) ep.imdbSeason = win.season;
+          if (ep.imdbEpisode == null) ep.imdbEpisode = ep.number + win.offset;
+          if (win.imdbId && !ep.imdbId) ep.imdbId = win.imdbId;
+        }
+      }
     }
     const imdbId = aniZip?.mappings?.imdb_id ?? eps.find((ep) => ep.imdbId)?.imdbId ?? null;
     await enrichEpisodes(eps, settings, kitsuId, imdbId).catch(() => {});

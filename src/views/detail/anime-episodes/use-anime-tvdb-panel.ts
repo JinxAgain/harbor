@@ -349,6 +349,30 @@ export function useAnimeTvdbPanel(
       items.push({ key: "specials", name: extrasLabel, count: leftovers.length, extra: true });
       subset.set("specials", leftovers);
     }
+    if (franchise && franchise.length > 1) {
+      const anchorKitsu = kitsuId != null ? `kitsu:${kitsuId}` : null;
+      for (const f of franchise) {
+        if (f.isCurrent || f.meta.id === metaId || f.meta.id === anchorKitsu) continue;
+        if (!isFranchiseExtra(f) || claimedExtras.has(f.meta.id)) continue;
+        const sub = (f.subtype ?? "").toLowerCase();
+        const badge =
+          f.meta.type === "movie" || sub === "movie"
+            ? "Movie"
+            : sub === "ova" || /\b(ova|oad)\b/i.test(f.meta.name)
+              ? "OVA"
+              : sub === "ona"
+                ? "ONA"
+                : "Special";
+        items.push({
+          key: `nav:${f.meta.id}`,
+          name: f.meta.name,
+          count: f.episodeCount ?? 1,
+          year: f.startDate?.slice(0, 4),
+          extra: true,
+          badge,
+        });
+      }
+    }
     if (items.length === 0) return null;
     return { items, subset, pool };
   }, [ordering, episodes, franchiseEpisodes, extrasLabel, franchise, foreignSeasons, imdbId]);

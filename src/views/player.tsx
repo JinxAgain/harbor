@@ -676,6 +676,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     meta: src.meta,
     authKey,
     imdbId: resolvedImdbId,
+    kitsuStreamId: src.episode?.kitsuStreamId,
     enabled: !!src.episode && (episodePanelOpen || !!adjacent.next),
   });
   const nextEpMask = spoilerMaskFor(settings, {

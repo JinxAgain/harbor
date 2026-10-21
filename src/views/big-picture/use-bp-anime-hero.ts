@@ -140,22 +140,25 @@ export function useBpAnimeHero(
 
   const buildHosted = useCallback(
     (at: number): boolean => {
-      if (!hosted || hosted.length < 3) return false;
-      const built = buildHostedHero(hosted, at, filterOpts);
+      void poolVersion;
+      const liveHosted = !!hosted && hosted.length >= 3;
+      const pool = liveHosted ? hosted : staticHeroPool();
+      if (!pool || pool.length < 3) return false;
+      const built = buildHostedHero(pool, at, filterOpts);
       if (built.metas.length < 3) return false;
-      resolvedRef.current = true;
+      if (liveHosted) resolvedRef.current = true;
       const buildId = ++buildRef.current;
       setHero(built);
-      cacheHero(built, filterSig);
+      if (liveHosted) cacheHero(built, filterSig);
       void upgradeHeroArtFromStatic(built).then((up) => {
         if (buildRef.current === buildId) {
           setHero(up);
-          cacheHero(up, filterSig);
+          if (liveHosted) cacheHero(up, filterSig);
         }
       });
-      return true;
+      return liveHosted;
     },
-    [hosted, filterOpts, filterSig],
+    [hosted, poolVersion, filterOpts, filterSig],
   );
 
   useEffect(() => {

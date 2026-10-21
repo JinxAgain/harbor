@@ -279,28 +279,38 @@ export function AnimeView({ active = true }: { active?: boolean }) {
     setHeroSeed(Math.floor(Math.random() * 0x7fffffff));
     setHero({ metas: [], trending: {} });
   }, [filterSig]);
+  const [staticPoolReady, setStaticPoolReady] = useState(0);
   const buildHostedSelection = useCallback(
     (seed: number): boolean => {
-      if (!hostedHero || hostedHero.length < 3) return false;
+      void staticPoolReady;
+      const liveHosted = !!hostedHero && hostedHero.length >= 3;
+      const pool = liveHosted ? hostedHero : staticHeroPool();
+      if (!pool || pool.length < 3) return false;
       const filterOpts: AnimeFilterOpts = {
         excludeOrigins: settings.animeExcludeOrigins,
         hideWatched: settings.animeHideWatchedPicks,
       };
-      const hosted = buildHostedHero(hostedHero, seed, filterOpts);
+      const hosted = buildHostedHero(pool, seed, filterOpts);
       if (hosted.metas.length < 3) return false;
-      heroResolvedRef.current = true;
+      if (liveHosted) heroResolvedRef.current = true;
       const buildId = ++heroBuildRef.current;
       setHero(hosted);
-      cacheHero(hosted, filterSig);
+      if (liveHosted) cacheHero(hosted, filterSig);
       void upgradeHeroArtFromStatic(hosted).then((up) => {
         if (heroBuildRef.current === buildId) {
           setHero(up);
-          cacheHero(up, filterSig);
+          if (liveHosted) cacheHero(up, filterSig);
         }
       });
-      return true;
+      return liveHosted;
     },
-    [hostedHero, settings.animeExcludeOrigins, settings.animeHideWatchedPicks, filterSig],
+    [
+      hostedHero,
+      staticPoolReady,
+      settings.animeExcludeOrigins,
+      settings.animeHideWatchedPicks,
+      filterSig,
+    ],
   );
   useEffect(() => {
     if (hero.metas.length === 0 && buildHostedSelection(heroSeed)) return;
@@ -616,9 +626,26 @@ export function AnimeView({ active = true }: { active?: boolean }) {
     const base = picksEnriched.length > 0 ? picksEnriched : topPicksRaw;
     const filtered = base.filter((m) => !animeFiltered(m, opts));
     if (filtered.length > 0) return filtered;
+    const heroIds = new Set(heroMetas.map((m) => m.id));
     if (hostedHero && hostedHero.length > 0) {
-      const heroIds = new Set(heroMetas.map((m) => m.id));
       return hostedHero.filter((m) => !heroIds.has(m.id) && !animeFiltered(m, opts)).slice(0, 20);
+    }
+    const fallbackPool = [
+      ...anilistTrending,
+      ...(rowsByKey[TOP_PICKS_KEY]?.metas ?? []),
+      ...(rowsByKey["airing"]?.metas ?? []),
+      ...(rowsByKey["popular"]?.metas ?? []),
+    ];
+    if (fallbackPool.length > 0) {
+      const seen = new Set<string>(heroIds);
+      const out: Meta[] = [];
+      for (const m of fallbackPool) {
+        if (seen.has(m.id) || animeFiltered(m, opts)) continue;
+        seen.add(m.id);
+        out.push(cleanMeta(m));
+        if (out.length >= 20) break;
+      }
+      if (out.length > 0) return out;
     }
     return filtered;
   }, [
@@ -627,6 +654,8 @@ export function AnimeView({ active = true }: { active?: boolean }) {
     settings.animeExcludeOrigins,
     settings.animeHideWatchedPicks,
     hostedHero,
+    anilistTrending,
+    rowsByKey,
     heroMetas,
     isAnimeWatched,
   ]);
@@ -635,7 +664,6 @@ export function AnimeView({ active = true }: { active?: boolean }) {
     const timer = window.setTimeout(preloadAnimeGenreArt, 1500);
     return () => window.clearTimeout(timer);
   }, [active]);
-  const [staticPoolReady, setStaticPoolReady] = useState(0);
   useEffect(() => {
     if (!active) return;
     void ensureStaticHeroArt().then(() => setStaticPoolReady((n) => n + 1));
@@ -643,11 +671,14 @@ export function AnimeView({ active = true }: { active?: boolean }) {
   useEffect(() => {
     if (!active || malExtra.length > 0) return;
     let cancelled = false;
-    void fetchMalHeroList().then((items) => {
-      if (!cancelled && items.length > 0) setMalExtra(items);
-    });
+    const timer = window.setTimeout(() => {
+      void fetchMalHeroList().then((items) => {
+        if (!cancelled && items.length > 0) setMalExtra(items);
+      });
+    }, 10000);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [active, malExtra.length]);
   const heroSlides = useMemo(() => {

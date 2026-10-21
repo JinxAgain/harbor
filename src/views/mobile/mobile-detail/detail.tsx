@@ -126,7 +126,23 @@ function DetailBody({
     [openOnHost],
   );
 
-  const isSeries = !isAnime && (detail?.kind === "tv" || meta.type === "series");
+  const isSeries =
+    detail?.kind != null ? detail.kind === "tv" : meta.type === "series";
+  const effectiveFull = useMemo<Meta | null>(() => {
+    if (!isAnime || anime.episodes.length === 0) return full;
+    return {
+      ...(full ?? meta),
+      videos: anime.episodes.map((e) => ({
+        id: e.streamId ?? `${anime.canonicalId ?? meta.id}:${e.number}`,
+        season: e.imdbSeason != null && e.imdbSeason >= 0 ? e.imdbSeason : (e.seasonNumber || 1),
+        episode: e.number,
+        title: e.title,
+        thumbnail: e.thumbnail ?? e.thumbnailFallback ?? undefined,
+        overview: e.synopsis || undefined,
+        released: e.airdate ?? undefined,
+      })),
+    };
+  }, [isAnime, anime.episodes, anime.canonicalId, full, meta]);
   const title = detail?.title || meta.name;
   const logo = detail?.logo || meta.logo;
   const backdrop = detail?.backdrop || full?.background || meta.background || meta.poster;
@@ -175,8 +191,8 @@ function DetailBody({
   const awardGroups = useMemo(() => awardSummary(awards), [awards]);
   const heroAwardSummary = useMemo(() => pickHeroAwards(awardGroups), [awardGroups]);
 
-  const seasons = useMemo(() => seasonList(full, detail), [full, detail]);
-  const first = useMemo(() => firstEpisode(full, seasons), [full, seasons]);
+  const seasons = useMemo(() => seasonList(effectiveFull, detail), [effectiveFull, detail]);
+  const first = useMemo(() => firstEpisode(effectiveFull, seasons), [effectiveFull, seasons]);
   const trailerId = detail?.trailerCandidates?.[0] ?? meta.trailerStreams?.[0]?.ytId ?? null;
 
   const { recItems, simItems } = useMemo(() => {
@@ -192,8 +208,18 @@ function DetailBody({
   const shownRecItems = useHideAnimeMetas(recItems);
   const shownSimItems = useHideAnimeMetas(simItems);
 
+  const resolvePlayCoords = (s: number, e: number): { season: number; episode: number } => {
+    if (!isAnime || anime.episodes.length === 0) return { season: s, episode: e };
+    const matched =
+      anime.episodes.find(
+        (ep) => (ep.imdbSeason ?? ep.seasonNumber ?? 1) === s && ep.number === e,
+      ) ?? anime.episodes.find((ep) => ep.imdbSeason === s && ep.imdbEpisode === e);
+    if (matched) return { season: matched.seasonNumber || 1, episode: matched.number };
+    return { season: s, episode: e };
+  };
+
   const onPlay = () => {
-    if (isSeries && first) playOnHost(meta, { season: first.season, episode: first.episode });
+    if (isSeries && first) playOnHost(meta, resolvePlayCoords(first.season, first.episode));
     else playOnHost(meta);
   };
 
@@ -240,11 +266,11 @@ function DetailBody({
         {isSeries && (
           <EpisodeSection
             meta={meta}
-            full={full}
+            full={effectiveFull}
             detail={detail}
             tmdbKey={key}
             seasons={seasons}
-            onPlay={(ep) => playOnHost(meta, { season: ep.season, episode: ep.episode })}
+            onPlay={(ep) => playOnHost(meta, resolvePlayCoords(ep.season, ep.episode))}
           />
         )}
 

@@ -60,7 +60,11 @@ export function useSeasonBrowser(
     let cancelled = false;
     fetchSeasonList(effMeta, { tmdbKey: settings.tmdbKey })
       .then((s) => {
-        if (!cancelled) setSeasons(s);
+        if (cancelled) return;
+        setSeasons(s);
+        if (s.length > 0) {
+          setSeason((cur) => (s.includes(cur) ? cur : s[0]));
+        }
       })
       .catch(() => {
         if (!cancelled) setSeasons([]);

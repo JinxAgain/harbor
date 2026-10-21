@@ -96,8 +96,7 @@ async function get(query: string): Promise<AniZipMapping | null> {
     try {
       const res = await throttled(`${ENDPOINT}?${query}`, ac);
       if (!res.ok) {
-        if (res.status === 404) cache.set(query, null);
-        else negCache.set(query, Date.now());
+        negCache.set(query, Date.now());
         return null;
       }
       const json = (await res.json()) as AniZipMapping;

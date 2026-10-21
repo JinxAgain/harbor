@@ -108,17 +108,24 @@ export function EpisodeSection({
     return seasons.map((n) => ({ number: n, label: translate("Season {number}", { number: n }) }));
   }, [ordering, seasons, language]);
 
-  const [season, setSeason] = useState<number>(() => {
+  const intentSeason = seasons.length === 1 && seasons[0] >= 2 ? seasons[0] : null;
+  const defaultSeason = () => {
     const v = getViewedSeason(meta.id);
-    return v != null && seasonOptions.some((o) => o.number === v)
-      ? v
-      : (seasonOptions[0]?.number ?? 1);
-  });
+    if (v != null && seasonOptions.some((o) => o.number === v)) return v;
+    if (intentSeason != null && seasonOptions.some((o) => o.number === intentSeason)) {
+      return intentSeason;
+    }
+    return seasonOptions[0]?.number ?? 1;
+  };
+  const [season, setSeason] = useState<number>(defaultSeason);
   useEffect(() => {
-    setSeason((s) =>
-      seasonOptions.some((o) => o.number === s) ? s : (seasonOptions[0]?.number ?? 1),
-    );
-  }, [seasonOptions]);
+    setSeason((s) => {
+      if (getViewedSeason(meta.id) == null && intentSeason != null) {
+        if (seasonOptions.some((o) => o.number === intentSeason)) return intentSeason;
+      }
+      return seasonOptions.some((o) => o.number === s) ? s : defaultSeason();
+    });
+  }, [seasonOptions, intentSeason, meta.id]);
   const pickSeason = (n: number) => {
     setViewedSeason(meta.id, n);
     setSeason(n);

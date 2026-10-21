@@ -23,8 +23,8 @@ import {
   resolveMeta,
 } from "./meta-resource";
 import { animeKitsuMeta } from "./providers/anime-kitsu-addon";
-import { externalToKitsu, kitsuToAnilist } from "./providers/anime-mapping";
-import { parseKitsuId } from "./providers/kitsu";
+import { externalToKitsu, kitsuToAnilist, resolveAnidbSeasonWindow } from "./providers/anime-mapping";
+import { kitsuEpisodes, parseKitsuId } from "./providers/kitsu";
 import { aniZipByAnilist, aniZipByKitsu, pickEpisodeTitle } from "./providers/anizip";
 import { fetchTvdbProxyImages, pickTvdbImage } from "./providers/tvdb-proxy";
 import { franchiseRoot } from "./providers/anime-franchise-root";
@@ -82,25 +82,49 @@ async function getAnimeEpisodes(id: string): Promise<PlayEpisode[] | null> {
   if (addonEpsCache.has(cacheKey)) return addonEpsCache.get(cacheKey)!;
   const kitsuId = await resolveAnimeKitsuId(id).catch(() => null);
   if (kitsuId == null) return null;
-  const addonMeta = await animeKitsuMeta(`kitsu:${kitsuId}`).catch(() => null);
+  const [addonMeta, kitsuRaw] = await Promise.all([
+    animeKitsuMeta(`kitsu:${kitsuId}`).catch(() => null),
+    kitsuEpisodes(kitsuId, 100).catch(() => []),
+  ]);
   const raw = addonMeta?.videos ?? [];
+  const kitsuByNum = new Map<number, (typeof kitsuRaw)[number]>();
+  for (const k of kitsuRaw) kitsuByNum.set(k.number, k);
   const eps: PlayEpisode[] = [];
-  for (const v of raw) {
-    if (!Number.isFinite(v.episode)) continue;
-    const season = v.season >= 0 ? v.season : 1;
-    const ep: PlayEpisode = {
-      season,
-      episode: v.episode,
-      name: v.title || undefined,
-      still: v.thumbnail ?? undefined,
-      overview: v.overview ?? undefined,
-      airDate: v.released,
-    };
-    if (v.id) ep.kitsuStreamId = v.id;
-    if (v.imdb_id ?? addonMeta?.imdb_id) ep.imdbId = v.imdb_id ?? addonMeta?.imdb_id;
-    if (v.imdbSeason != null) ep.imdbSeason = v.imdbSeason;
-    if (v.imdbEpisode != null) ep.imdbEpisode = v.imdbEpisode;
-    eps.push(ep);
+  if (raw.length > 0) {
+    for (const v of raw) {
+      if (!Number.isFinite(v.episode)) continue;
+      const k = kitsuByNum.get(v.episode);
+      const season = v.season >= 0 ? v.season : 1;
+      const ep: PlayEpisode = {
+        season,
+        episode: v.episode,
+        name: v.title || (k?.title && k.title !== `Episode ${v.episode}` ? k.title : undefined),
+        still: v.thumbnail ?? k?.thumbnail ?? undefined,
+        overview: v.overview ?? (k?.synopsis || undefined),
+        airDate: v.released ?? k?.airdate ?? undefined,
+        runtime: k?.length && k.length > 0 ? k.length : undefined,
+      };
+      ep.kitsuStreamId = v.id || k?.streamId || `kitsu:${kitsuId}:${v.episode}`;
+      if (v.imdb_id ?? addonMeta?.imdb_id) ep.imdbId = v.imdb_id ?? addonMeta?.imdb_id;
+      if (v.imdbSeason != null) ep.imdbSeason = v.imdbSeason;
+      if (v.imdbEpisode != null) ep.imdbEpisode = v.imdbEpisode;
+      eps.push(ep);
+    }
+  } else {
+    for (const k of kitsuRaw) {
+      if (!Number.isFinite(k.number) || k.number <= 0) continue;
+      const season = k.seasonNumber >= 0 ? k.seasonNumber : 1;
+      eps.push({
+        season,
+        episode: k.number,
+        name: k.title && k.title !== `Episode ${k.number}` ? k.title : undefined,
+        still: k.thumbnail ?? undefined,
+        overview: k.synopsis || undefined,
+        airDate: k.airdate ?? undefined,
+        runtime: k.length && k.length > 0 ? k.length : undefined,
+        kitsuStreamId: k.streamId || `kitsu:${kitsuId}:${k.number}`,
+      });
+    }
   }
   if (eps.length === 0) return null;
 
@@ -119,16 +143,13 @@ async function getAnimeEpisodes(id: string): Promise<PlayEpisode[] | null> {
       if (alt?.mappings?.thetvdb_id || (alt?.episodes && !az?.episodes)) az = alt;
     }
   }
-  const tvdbImages = await fetchTvdbProxyImages({
-    series: az?.mappings?.thetvdb_id,
-    kitsuId: rootKitsu,
-    imdb: seriesImdb ?? az?.mappings?.imdb_id,
-  }).catch(() => ({}) as Record<string, string>);
+  const azImdb = az?.mappings?.imdb_id;
   if (az?.episodes) {
     for (const ep of eps) {
+      if (!ep.imdbId && azImdb) ep.imdbId = azImdb;
       const m = az.episodes[String(ep.episode)];
       if (!m) continue;
-      if (ep.imdbSeason == null && m.seasonNumber != null && m.seasonNumber >= 1) {
+      if (ep.imdbSeason == null && m.seasonNumber != null && m.seasonNumber >= 0) {
         ep.imdbSeason = m.seasonNumber;
       }
       if (ep.imdbEpisode == null && m.episodeNumber != null) ep.imdbEpisode = m.episodeNumber;
@@ -147,6 +168,25 @@ async function getAnimeEpisodes(id: string): Promise<PlayEpisode[] | null> {
       }
     }
   }
+  let fallbackTvdbId: number | undefined;
+  let fallbackImdbId: string | undefined;
+  if (eps.every((ep) => ep.imdbSeason == null)) {
+    const win = await resolveAnidbSeasonWindow(kitsuId).catch(() => null);
+    if (win) {
+      fallbackTvdbId = win.tvdbId ?? undefined;
+      fallbackImdbId = win.imdbId ?? undefined;
+      for (const ep of eps) {
+        if (ep.imdbSeason == null) ep.imdbSeason = win.season;
+        if (ep.imdbEpisode == null) ep.imdbEpisode = ep.episode + win.offset;
+        if (win.imdbId && !ep.imdbId) ep.imdbId = win.imdbId;
+      }
+    }
+  }
+  const tvdbImages = await fetchTvdbProxyImages({
+    series: az?.mappings?.thetvdb_id ?? fallbackTvdbId,
+    kitsuId: rootKitsu,
+    imdb: seriesImdb ?? azImdb ?? fallbackImdbId,
+  }).catch(() => ({}) as Record<string, string>);
   if (Object.keys(tvdbImages).length > 0) {
     for (const ep of eps) {
       const img = pickTvdbImage(tvdbImages, {
@@ -260,6 +300,19 @@ export async function fetchAdjacentEpisodes(
   return computeAdjacent(eps, current, opts.skip);
 }
 
+function findEpisodeIndex(
+  eps: PlayEpisode[],
+  current: { season: number; episode: number },
+): number {
+  const idx = eps.findIndex((v) => v.season === current.season && v.episode === current.episode);
+  if (idx !== -1) return idx;
+  return eps.findIndex(
+    (v) =>
+      (v.imdbSeason ?? v.season) === current.season &&
+      (v.imdbEpisode ?? v.episode) === current.episode,
+  );
+}
+
 export async function fetchUpcomingEpisodes(
   meta: Meta,
   current: { season: number; episode: number },
@@ -292,7 +345,7 @@ export async function fetchUpcomingEpisodes(
   }
   const eps = await getNonStandardEpisodes(meta);
   if (!eps) return [];
-  const idx = eps.findIndex((v) => v.season === current.season && v.episode === current.episode);
+  const idx = findEpisodeIndex(eps, current);
   if (idx === -1) return eps.slice(0, count);
   return eps.slice(idx + 1, idx + 1 + count);
 }
@@ -449,7 +502,9 @@ export async function fetchSeasonEpisodes(
     return tmdbSeason(opts.tmdbKey, tvId, season);
   }
   const eps = await getNonStandardEpisodes(meta);
-  return (eps ?? []).filter((e) => animeSeasonKey(e) === season);
+  const byKey = (eps ?? []).filter((e) => animeSeasonKey(e) === season);
+  if (byKey.length > 0) return byKey;
+  return (eps ?? []).filter((e) => e.season === season);
 }
 
 export async function fetchEpisodeList(
@@ -478,10 +533,27 @@ export function nextUnwatchedAfter(
     .slice()
     .sort((a, b) => a.season - b.season || a.episode - b.episode);
   let idx = sorted.findIndex((e) => e.season === from.season && e.episode === from.episode);
+  if (idx < 0) {
+    idx = sorted.findIndex(
+      (e) =>
+        (e.imdbSeason ?? e.season) === from.season &&
+        (e.imdbEpisode ?? e.episode) === from.episode,
+    );
+  }
   if (idx < 0) idx = 0;
   for (let i = idx; i < sorted.length; i++) {
-    if (skip?.(sorted[i].season, sorted[i].episode)) continue;
-    if (!isWatched(sorted[i].season, sorted[i].episode)) return sorted[i];
+    const ep = sorted[i];
+    const hasProviderCoords = ep.imdbSeason != null && ep.imdbEpisode != null;
+    if (
+      skip?.(ep.season, ep.episode) ||
+      (hasProviderCoords && skip?.(ep.imdbSeason!, ep.imdbEpisode!))
+    ) {
+      continue;
+    }
+    const watched =
+      isWatched(ep.season, ep.episode) ||
+      (hasProviderCoords && isWatched(ep.imdbSeason!, ep.imdbEpisode!));
+    if (!watched) return ep;
   }
   return null;
 }
@@ -491,7 +563,7 @@ function computeAdjacent(
   current: { season: number; episode: number },
   skip?: (season: number, episode: number) => boolean,
 ): Adjacent {
-  const idx = eps.findIndex((v) => v.season === current.season && v.episode === current.episode);
+  const idx = findEpisodeIndex(eps, current);
   if (idx === -1) return { prev: null, next: null };
   let prev: PlayEpisode | null = null;
   let next: PlayEpisode | null = null;

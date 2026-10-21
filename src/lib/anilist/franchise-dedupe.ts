@@ -17,7 +17,7 @@ function baseTitle(raw: string): string {
     .replace(/\b\d+(st|nd|rd|th)\b.*$/i, " ")
     .replace(/\bfinal(\s+season)?\b.*$/i, " ")
     .replace(/\b(the\s+)?movie\b.*$/i, " ")
-    .replace(/\s+(ii|iii|iv|v|vi|vii)\s*$/i, " ")
+    .replace(/\s+(ii|iii|iv|v|vi|vii|viii|ix|x|[2-9])\s*$/i, " ")
     .replace(/[°'.]+/g, " ")
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")

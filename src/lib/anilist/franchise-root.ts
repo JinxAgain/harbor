@@ -1,6 +1,6 @@
 import type { Meta } from "@/lib/cinemeta";
 import { anilistRequest } from "./client";
-import { cleanShowName, dedupeAnimeFranchises } from "./franchise-dedupe";
+import { cleanShowName, dedupeAnimeFranchises, franchiseKey } from "./franchise-dedupe";
 import { anilistMediaToMeta } from "./to-meta";
 import type { AnilistMedia } from "./types";
 
@@ -13,13 +13,14 @@ const REL_QUERY = `query ($ids: [Int]) {
       seasonYear
       title { english romaji userPreferred }
       coverImage { extraLarge large }
-      relations { edges { relationType node { id type format } } }
+      relations { edges { relationType node { id type format seasonYear title { english romaji userPreferred } } } }
     }
   }
 }`;
 
 const MAIN_FORMATS = new Set(["TV", "TV_SHORT", "ONA"]);
-const SEQUEL_MARK = /\b(season|cour|part)\b|\b\d+(st|nd|rd|th)\b|\bfinal\b/i;
+const SEQUEL_MARK =
+  /\b(season|cour|part)\b|\b\d+(st|nd|rd|th)\b|\bfinal\b|\s+(?:ii|iii|iv|v|vi|vii|viii|ix|x|[2-9])\s*$/i;
 
 function needsRoot(m: AnilistMedia): boolean {
   if (m.format != null && !MAIN_FORMATS.has(m.format)) return true;
@@ -36,7 +37,13 @@ type RelNode = {
   relations: {
     edges: Array<{
       relationType: string | null;
-      node: { id: number; type: string | null; format: string | null } | null;
+      node: {
+        id: number;
+        type: string | null;
+        format: string | null;
+        seasonYear?: number | null;
+        title?: { english: string | null; romaji: string | null; userPreferred: string | null } | null;
+      } | null;
     }>;
   };
 };
@@ -84,7 +91,8 @@ export async function resolveFranchiseRoots(seeds: AnilistMedia[]): Promise<Map<
     const next: number[] = [];
     for (const m of media) {
       nodes.set(m.id, m);
-      const pre = (m.relations?.edges ?? [])
+      const edges = m.relations?.edges ?? [];
+      let pre = edges
         .filter(
           (e) =>
             e.relationType === "PREQUEL" &&
@@ -93,6 +101,23 @@ export async function resolveFranchiseRoots(seeds: AnilistMedia[]): Promise<Map<
             MAIN_FORMATS.has(e.node.format),
         )
         .map((e) => e.node!.id);
+      if (pre.length === 0) {
+        const myKey = franchiseKey({ title: m.title } as AnilistMedia);
+        pre = edges
+          .filter(
+            (e) =>
+              e.relationType === "OTHER" &&
+              e.node?.type === "ANIME" &&
+              e.node.format != null &&
+              MAIN_FORMATS.has(e.node.format) &&
+              e.node.title &&
+              franchiseKey({ title: e.node.title } as AnilistMedia) === myKey &&
+              (e.node.seasonYear != null &&
+                m.seasonYear != null &&
+                e.node.seasonYear < m.seasonYear),
+          )
+          .map((e) => e.node!.id);
+      }
       if (pre.length > 0) {
         prequel.set(m.id, pre[0]);
         next.push(...pre);

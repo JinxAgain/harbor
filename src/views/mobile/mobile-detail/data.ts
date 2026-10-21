@@ -112,9 +112,11 @@ export function firstEpisode(
 }
 
 export function tmdbTvId(meta: Meta, detail: TmdbDetail | null): number | null {
-  if (detail?.kind === "tv" && Number.isFinite(detail.id)) return detail.id;
   const m = meta.id.match(/^tmdb:tv:(\d+)$/);
-  return m ? Number(m[1]) : null;
+  if (m) return Number(m[1]);
+  if (/^(kitsu|mal|anilist|anidb):/.test(meta.id)) return null;
+  if (detail?.kind === "tv" && Number.isFinite(detail.id) && detail.id > 0) return detail.id;
+  return null;
 }
 
 export function stillFrom(path: string | null, url?: string): string | undefined {

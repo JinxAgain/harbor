@@ -4,7 +4,11 @@ import { useAnilistWatched } from "@/lib/anilist/use-anilist-watched";
 import type { EpisodeProgress } from "@/lib/episode-progress";
 import { useMalWatched } from "@/lib/mal/use-mal-watched";
 import { manualWatchedVersion, subscribeManualWatched } from "@/lib/manual-watched";
-import { animeDetails, type AnimeDetailExtras } from "@/lib/providers/anime-detail";
+import {
+  animeDetails,
+  type AnimeDetailExtras,
+  type FranchiseEntry,
+} from "@/lib/providers/anime-detail";
 import { parseKitsuId, type KitsuEpisode, type KitsuStreamer } from "@/lib/providers/kitsu";
 import type { TmdbDetail } from "@/lib/providers/tmdb";
 import type { TvdbOrderType, TvdbSeasonTypeOption } from "@/lib/providers/tvdb";
@@ -18,12 +22,14 @@ import { useAnimeOrder } from "@/views/detail/anime-episodes/use-anime-order";
 import { useAnimePreferredSeason } from "@/views/detail/anime-episodes/use-anime-preferred-season";
 import { useAnimeProgressMap } from "@/views/detail/anime-episodes/use-anime-progress-map";
 import { useAnimeTvdbPanel } from "@/views/detail/anime-episodes/use-anime-tvdb-panel";
+import { useFranchiseEpisodes } from "@/views/detail/anime-episodes/use-franchise-episodes";
 import { useTvdbProxyImages } from "@/views/detail/anime-episodes/use-tvdb-proxy-images";
 import type { PickerItem } from "@/views/detail/series-episodes/season-arc-picker";
 import { isAnimeId } from "@/views/mobile/mobile-detail/anime-data";
 
 const EMPTY_EPISODES: KitsuEpisode[] = [];
 const EMPTY_STREAMERS: KitsuStreamer[] = [];
+const EMPTY_FRANCHISE: FranchiseEntry[] = [];
 
 // Anime progress lives in Simkl and AniList, never Trakt, so the Trakt set the
 // desktop hooks expect stays empty on this path.
@@ -92,6 +98,7 @@ type Loaded = {
   key: string;
   detail: TmdbDetail;
   episodes: KitsuEpisode[];
+  franchise: FranchiseEntry[];
   streamers: KitsuStreamer[];
   kitsuId: number;
   imdbId: string | null;
@@ -140,10 +147,17 @@ export function useBpAnimeDetail(meta: Meta | null, opts?: BpAnimeDetailOptions)
           key: metaId,
           detail: res.detail,
           episodes: res.episodes,
+          franchise: EMPTY_FRANCHISE,
           streamers: res.streamers,
           kitsuId: res.kitsuId,
           imdbId: res.imdbId ?? res.detail.imdbId ?? null,
         });
+        void res.franchisePromise
+          .then((fr) => {
+            if (!alive) return;
+            patch((prev) => ({ ...prev, franchise: fr }));
+          })
+          .catch(NOOP);
         void res.extrasPromise
           .then((extras) => {
             if (!alive) return;
@@ -174,6 +188,7 @@ export function useBpAnimeDetail(meta: Meta | null, opts?: BpAnimeDetailOptions)
   const loading = isAnime && settled !== metaId;
 
   const episodes = loaded?.episodes ?? EMPTY_EPISODES;
+  const franchise = loaded?.franchise ?? EMPTY_FRANCHISE;
   const kitsuId = loaded?.kitsuId ?? (isAnime ? parseKitsuId(metaId) : null);
   // animeDetails remaps an ova or side entry onto its main TV series, so the
   // canonical id is the tracker key only. Local resume and manual watched are
@@ -182,12 +197,19 @@ export function useBpAnimeDetail(meta: Meta | null, opts?: BpAnimeDetailOptions)
   const canonicalId = loaded ? `kitsu:${loaded.kitsuId}` : metaId;
   const trackId = canonicalId === metaId ? undefined : canonicalId;
   const imdbId = loaded?.imdbId ?? null;
+  const franchiseEpisodes = useFranchiseEpisodes(
+    franchise,
+    canonicalId,
+    episodes,
+    isAnime && franchise.length > 1,
+  );
+  const panelPool = franchiseEpisodes !== episodes ? franchiseEpisodes : undefined;
   const mwVersion = useSyncExternalStore(subscribeManualWatched, manualWatchedVersion);
   const { watchedKeys: anilistWatched } = useAnilistWatched(isAnime ? canonicalId : "", episodes);
   const { watchedKeys: malWatched } = useMalWatched(isAnime ? canonicalId : "", episodes);
 
   const preferredSeasonKey = useAnimePreferredSeason({
-    episodes,
+    episodes: panelPool ?? episodes,
     metaId,
     trackId,
     traktWatched: NO_TRAKT,
@@ -224,9 +246,11 @@ export function useBpAnimeDetail(meta: Meta | null, opts?: BpAnimeDetailOptions)
     settings.tvdbSeasonType,
     settings.tvdbKey,
     panelOn,
-    undefined,
+    panelPool,
     preferredSeasonKey ?? undefined,
     intentSeasonKey ?? undefined,
+    franchise,
+    metaId,
   );
   // buildAnimeOrder discards the fetch outright when there are no episodes to
   // group, so an ungated call bills every tmdb:tv detail open a TVDB round trip
@@ -253,6 +277,22 @@ export function useBpAnimeDetail(meta: Meta | null, opts?: BpAnimeDetailOptions)
     });
   }, [visible, proxyImages]);
 
+  const displaySourceId = useMemo(() => {
+    const ids = new Set<string>();
+    for (const e of shown) if (e.sourceMetaId != null) ids.add(e.sourceMetaId);
+    return ids.size === 1 ? [...ids][0] : null;
+  }, [shown]);
+  const entryPoolEpisodes = useMemo(
+    () =>
+      displaySourceId ? franchiseEpisodes.filter((e) => e.sourceMetaId === displaySourceId) : EMPTY_EPISODES,
+    [displaySourceId, franchiseEpisodes],
+  );
+  const { watchedKeys: entryAnilistWatched } = useAnilistWatched(
+    displaySourceId ?? "",
+    entryPoolEpisodes,
+  );
+  const { watchedKeys: entryMalWatched } = useMalWatched(displaySourceId ?? "", entryPoolEpisodes);
+
   const progress = useAnimeProgressMap({
     episodes,
     displayEpisodes: shown,
@@ -261,6 +301,9 @@ export function useBpAnimeDetail(meta: Meta | null, opts?: BpAnimeDetailOptions)
     traktWatched: NO_TRAKT,
     anilistWatched,
     malWatched,
+    entrySourceId: displaySourceId,
+    entryAnilistWatched,
+    entryMalWatched,
     mwVersion,
     settings,
   });

@@ -27,6 +27,11 @@ export function AnimeSeasonPicker({
   const matchIdx = franchise.findIndex((f) => f.meta.id === activeEntryId);
   const currentIdx = matchIdx >= 0 ? matchIdx : franchise.findIndex((f) => f.isCurrent);
   const current = franchise[currentIdx];
+  const activeIsExtra = current ? isFranchiseExtra(current) : false;
+  const [showExtras, setShowExtras] = useState(activeIsExtra);
+  useEffect(() => {
+    if (activeIsExtra) setShowExtras(true);
+  }, [activeIsExtra]);
 
   useEffect(() => {
     if (!menu) return;
@@ -69,9 +74,11 @@ export function AnimeSeasonPicker({
   if (!current) return null;
   const tags = franchiseTags(franchise);
   const positionLabel = tags[currentIdx]?.short ?? `S${currentIdx + 1}`;
-  // Extras never belong here; they render under Movies & Specials buckets.
   const seasonIdxs = tags
     .map((tg, i) => (tg?.kind === "season" && !isFranchiseExtra(franchise[i]) ? i : -1))
+    .filter((i) => i >= 0);
+  const extraIdxs = tags
+    .map((tg, i) => (tg?.kind !== "season" || isFranchiseExtra(franchise[i]) ? i : -1))
     .filter((i) => i >= 0);
 
   const renderEntry = (i: number) => {
@@ -140,6 +147,20 @@ export function AnimeSeasonPicker({
           >
             <div className="overflow-y-auto" style={{ maxHeight: menu.maxH }}>
               {seasonIdxs.map(renderEntry)}
+              {extraIdxs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowExtras((v) => !v)}
+                  className="mt-1 flex w-full items-center justify-between border-t border-edge-soft/60 px-4 pb-1.5 pt-2.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-subtle transition-colors hover:text-ink"
+                >
+                  <span>{t("Movies & Specials")}</span>
+                  <ChevronDown
+                    size={13}
+                    className={`transition-transform duration-200 ${showExtras ? "rotate-180" : ""}`}
+                  />
+                </button>
+              )}
+              {showExtras && extraIdxs.map(renderEntry)}
             </div>
           </div>,
           document.body,

@@ -349,6 +349,7 @@ export async function kitsuEpisodes(id: number, limit = 60): Promise<KitsuEpisod
         thumbnail: pickImg(a.thumbnail) ?? null,
         airdate: a.airdate ?? null,
         length: a.length ?? null,
+        ...(a.number != null && a.number > 0 ? { streamId: `kitsu:${id}:${a.number}` } : {}),
       });
     }
     if (j.data.length < size) break;
@@ -478,7 +479,7 @@ export async function kitsuMainTvSeries(id: number): Promise<number | null> {
     const destId = destRef && !Array.isArray(destRef) ? destRef.id : undefined;
     if (!destId) continue;
     const a = animeById.get(destId);
-    if (a?.subtype !== "TV") continue;
+    if (a?.subtype !== "TV" && a?.subtype !== "ONA") continue;
     const nid = Number(destId);
     const eps = Number(a?.episodeCount ?? 0);
     if (Number.isFinite(nid) && nid !== id && eps > bestEps) {
