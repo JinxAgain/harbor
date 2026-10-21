@@ -458,6 +458,8 @@ const sweepC: Record<string, string> = {
   "Guest Stars": "客串演员",
   "Guest Stars · {n}": "客串演员 · {n}",
   "Guests pick their own source": "访客自行选择片源",
+  "Guests can play & pause": "允许非房主开始与暂停",
+  "Allow everyone in the room to start, pause, and seek": "允许房间内所有成员控制开始、暂停与跳转进度",
   Guide: "节目指南",
   "Guide address": "节目指南地址",
   "Guide data only": "仅节目指南数据",

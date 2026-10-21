@@ -18,6 +18,8 @@ export function useRemotePlaybackBinding(params: {
   seekCast: (sec: number) => Promise<void>;
   stopCast: () => Promise<void>;
   onPickDevice: (device: CastDeviceInfo) => Promise<void>;
+  onPlayPause?: () => void;
+  onSeek?: (sec: number) => void;
   onPrevEpisode?: () => void;
   onNextEpisode?: () => void;
   hasPrevEpisode?: boolean;
@@ -37,6 +39,8 @@ export function useRemotePlaybackBinding(params: {
     seekCast,
     stopCast,
     onPickDevice,
+    onPlayPause,
+    onSeek,
     onPrevEpisode,
     onNextEpisode,
     hasPrevEpisode,
@@ -52,6 +56,8 @@ export function useRemotePlaybackBinding(params: {
     seekCast,
     stopCast,
     onPickDevice,
+    onPlayPause,
+    onSeek,
     onPrevEpisode,
     onNextEpisode,
     onVolumeFeedback,
@@ -62,6 +68,8 @@ export function useRemotePlaybackBinding(params: {
     seekCast,
     stopCast,
     onPickDevice,
+    onPlayPause,
+    onSeek,
     onPrevEpisode,
     onNextEpisode,
     onVolumeFeedback,
@@ -81,6 +89,8 @@ export function useRemotePlaybackBinding(params: {
       seekCast: (...args) => cbs.seekCast(...args),
       stopCast: (...args) => cbs.stopCast(...args),
       onPickDevice: (...args) => cbs.onPickDevice(...args),
+      onPlayPause: cbs.onPlayPause ? () => cbs.onPlayPause?.() : undefined,
+      onSeek: cbs.onSeek ? (sec) => cbs.onSeek?.(sec) : undefined,
       onPrevEpisode: () => cbs.onPrevEpisode?.(),
       onNextEpisode: () => cbs.onNextEpisode?.(),
       hasPrevEpisode,

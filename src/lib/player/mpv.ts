@@ -1069,9 +1069,11 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       }
     },
     async play() {
+      observedPaused = false;
       await invoke("mpv_set_property", { name: "pause", value: false }).catch(() => {});
     },
     pause() {
+      observedPaused = true;
       invoke("mpv_set_property", { name: "pause", value: true }).catch(() => {});
     },
     seek(sec, precision: PlayerSeekPrecision = "exact") {

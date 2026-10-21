@@ -229,6 +229,11 @@ export class TogetherClient {
   notifyHostLeaving(): void {
     if (!this.room) return;
     this.send({ t: "host-leaving", room: this.room, clientId: this.clientId });
+    this.update({
+      started: false,
+      syncState: null,
+      participants: this.snapshot.participants.map((p) => ({ ...p, ready: false })),
+    });
   }
 
   sendSummon(target: SummonTarget): void {
@@ -377,6 +382,8 @@ export class TogetherClient {
                 episode: msg.state.episode ?? undefined,
                 proto: msg.state.source ? WT_PROTO : undefined,
                 guestPick: msg.state.guestPick === true ? true : undefined,
+                guestControl:
+                  typeof msg.state.guestControl === "boolean" ? msg.state.guestControl : undefined,
               },
               at: msg.state.updatedAt ?? Date.now(),
             });
@@ -455,6 +462,11 @@ export class TogetherClient {
         this.emit({ kind: "invite", from: msg.from, name: msg.name, invite: msg.invite, at: msg.at });
         return;
       case "host-leaving":
+        this.update({
+          started: false,
+          syncState: null,
+          participants: this.snapshot.participants.map((p) => ({ ...p, ready: false })),
+        });
         this.emit({ kind: "host-leaving", from: msg.from, name: msg.name, at: msg.at });
         return;
       case "summon":

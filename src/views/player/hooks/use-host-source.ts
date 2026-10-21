@@ -17,9 +17,21 @@ export function useHostSource(params: {
   liveStreamRef: PlayerStreamRef | undefined;
   snap: PlayerSnapshot;
   guestPickRef: RefObject<boolean>;
+  guestControlRef?: RefObject<boolean>;
   publishState: (state: PartialSyncState) => void;
 }): { hostSourceRef: RefObject<SourceDescriptor | null> } {
-  const { inRoom, isHost, hasStarted, src, liveUrl, liveStreamRef, snap, guestPickRef, publishState } = params;
+  const {
+    inRoom,
+    isHost,
+    hasStarted,
+    src,
+    liveUrl,
+    liveStreamRef,
+    snap,
+    guestPickRef,
+    guestControlRef,
+    publishState,
+  } = params;
 
   const [validDurationSec, setValidDurationSec] = useState(0);
   const urlChangedAtRef = useRef(0);
@@ -59,6 +71,9 @@ export function useHostSource(params: {
     if (!descriptor) return;
     if (descriptorsEqual(lastSeedRef.current, descriptor)) return;
     lastSeedRef.current = descriptor;
+    const rawPos = Math.max(0, getPlaybackPosition());
+    const safePos =
+      snap.durationSec > 0 && rawPos >= Math.max(0, snap.durationSec - 20) ? 0 : rawPos;
     publishState({
       mediaId: src.meta.id,
       mediaTitle: src.meta.name ?? null,
@@ -66,11 +81,12 @@ export function useHostSource(params: {
         ? { season: src.episode.season, episode: src.episode.episode, name: src.episode.name }
         : null,
       posterUrl: src.meta.poster ?? null,
-      positionSeconds: Math.max(0, getPlaybackPosition()),
+      positionSeconds: safePos,
       playing: snap.status === "playing",
       speed: snap.rate,
       source: descriptor,
       guestPick: guestPickRef.current || undefined,
+      guestControl: guestControlRef ? guestControlRef.current : undefined,
     });
   }, [inRoom, isHost, hasStarted, descriptor, publishState, src.meta.id, src.meta.name, src.meta.poster, src.episode]);
 

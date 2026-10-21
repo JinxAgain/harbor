@@ -209,6 +209,7 @@ export const DEFAULT: Settings = {
   togetherCfDeployed: false,
   togetherShareCursors: true,
   togetherGuestsPick: false,
+  togetherGuestsControl: true,
   togetherSlowOnDesync: true,
   togetherRewindThresholdSec: 4,
   togetherSyncOnPause: false,

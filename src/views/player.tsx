@@ -185,6 +185,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     participantLocations,
     startRoom,
     hostSource,
+    roomGuestControl,
   } = useTogether();
   const stageRef = useRef<HTMLDivElement>(null);
   const refreshDockGeometry = useCallback(() => window.dispatchEvent(new Event("harbor:mpv-refresh-geom")), []);
@@ -289,8 +290,10 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   const canControl = !inRoom || hasStarted;
   const guestPickRef = useRef(settings.togetherGuestsPick);
   guestPickRef.current = settings.togetherGuestsPick;
+  const guestControlRef = useRef(settings.togetherGuestsControl);
+  guestControlRef.current = settings.togetherGuestsControl;
 
-  usePauseOnInactive({ bridgeRef, snapRef });
+  usePauseOnInactive({ bridgeRef, snapRef, disabled: inRoom });
 
   const showWaiting = inRoom && !hasStarted;
   const selfName = useMemo(
@@ -504,6 +507,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     liveStreamRef,
     snap,
     guestPickRef,
+    guestControlRef,
     publishState,
   });
   const guestHostSource =
@@ -702,7 +706,15 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     !liveOverlay.isLive &&
     settings.playerEngine !== "auto";
 
-  const { inRoomRef, isHostRef, initialSyncDoneRef } = useRoomSync({
+  const {
+    inRoomRef,
+    isHostRef,
+    initialSyncDoneRef,
+    notifyHostPlayPause,
+    notifyHostSeek,
+    notifyGuestPlayPause,
+    notifyGuestSeek,
+  } = useRoomSync({
     inRoom,
     isHost,
     hasStarted,
@@ -710,11 +722,13 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     selfFrameReadyRef,
     roomSnapshot,
     clientId,
-    src,
+    src: activeMediaSrc,
     snap,
     bridgeRef,
     hostSourceRef,
     guestPickRef,
+    guestControlRef,
+    startRoom,
     publishState,
     sendCommand,
     onIncomingState,
@@ -736,6 +750,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     bridgeRef,
     initialSyncDoneRef,
     mediaKey: `${src.meta.id}|${src.episode?.season ?? ""}|${src.episode?.episode ?? ""}`,
+    sendCommand,
+    notifyHostPlayPause,
   });
 
   const { rememberSubChoice, cycleSubtitles, playPauseToggle, seekStep, seekTo } =
@@ -749,11 +765,16 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
       isHost,
       hasStarted,
       canControl,
+      roomGuestControl,
       castDevice: cast.castDevice,
       startHost: lobby.startHost,
       togglePlayCast: cast.togglePlayCast,
       seekCast: cast.seekCast,
       sendCommand,
+      notifyHostPlayPause,
+      notifyHostSeek,
+      notifyGuestPlayPause,
+      notifyGuestSeek,
     });
 
   const textSync = useTextSync(bridgeRef.current, src.meta.id, rememberSubChoice);
@@ -1085,6 +1106,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     seekCast: cast.seekCast,
     stopCast: cast.stopCast,
     onPickDevice: cast.onPickDevice,
+    onPlayPause: playPauseToggle,
+    onSeek: seekTo,
     onPrevEpisode,
     onNextEpisode,
     hasPrevEpisode: hasPrevEpisodeNow,

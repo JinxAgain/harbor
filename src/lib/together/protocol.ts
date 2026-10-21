@@ -43,6 +43,7 @@ export type SyncState = {
   speed?: number;
   source?: SourceDescriptor;
   guestPick?: boolean;
+  guestControl?: boolean;
   doSeek?: boolean;
   updatedAt: number;
   updatedBy: string;
@@ -75,6 +76,7 @@ export type PlayInvite = {
   episode?: EpisodeRef;
   proto?: number;
   guestPick?: boolean;
+  guestControl?: boolean;
   source?: SourceDescriptor;
 };
 

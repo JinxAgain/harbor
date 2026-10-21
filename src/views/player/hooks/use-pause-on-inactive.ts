@@ -7,14 +7,18 @@ const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 export function usePauseOnInactive({
   bridgeRef,
   snapRef,
+  disabled = false,
 }: {
   bridgeRef: React.RefObject<PlayerBridge | null>;
   snapRef: React.RefObject<PlayerSnapshot>;
+  disabled?: boolean;
 }) {
   const { settings } = useSettings();
   const pauseMinimized = settings.pauseMinimized;
   const pauseUnfocused = settings.pauseUnfocused;
   const autoPausedRef = useRef(false);
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
 
   useEffect(() => {
     if (!isTauri) return;
@@ -42,7 +46,7 @@ export function usePauseOnInactive({
     void import("@tauri-apps/api/event").then(({ listen }) =>
       listen<{ focused: boolean; minimized: boolean }>("harbor://window-activity", (e) => {
         const bridge = bridgeRef.current;
-        if (!bridge) return;
+        if (!bridge || disabledRef.current) return;
         const { focused, minimized } = e.payload;
         if (!focused) {
           const shouldPause = minimized ? pauseMinimized : pauseUnfocused;

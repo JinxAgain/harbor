@@ -476,6 +476,14 @@ export class Room {
     this.saveStarted();
     this.syncState = null;
     this.saveSync();
+    this.broadcast({ t: "started", started: false }, socket);
+    for (const [s, p] of this.peers) {
+      if (p.ready) {
+        p.ready = false;
+        this.attach(s, p);
+        this.broadcast({ t: "participant-ready", clientId: p.clientId, ready: false });
+      }
+    }
   }
 
   reassignHost(excludeClientId) {
@@ -640,6 +648,7 @@ export class Room {
     if (cleanSource) s.source = cleanSource;
     else delete s.source;
     if (s.guestPick !== true) delete s.guestPick;
+    if (typeof s.guestControl !== "boolean") delete s.guestControl;
     if (s.buffering !== true) delete s.buffering;
     if (s.doSeek !== true) delete s.doSeek;
     const isHostWrite = this.hostClientId != null && peer.clientId === this.hostClientId;
@@ -663,6 +672,13 @@ export class Room {
     if (!peer || !msg.command || typeof msg.command.action !== "string") return;
     const c = msg.command;
     if (c.action !== "play" && c.action !== "pause" && c.action !== "seek" && c.action !== "report") return;
+    if (
+      (c.action === "play" || c.action === "pause" || c.action === "seek") &&
+      this.syncState &&
+      this.syncState.guestControl === false
+    ) {
+      return;
+    }
     if (c.action === "seek" && (typeof c.positionSeconds !== "number" || !isFinite(c.positionSeconds) || c.positionSeconds < 0)) return;
     if (c.action === "report") {
       if (typeof c.positionSeconds !== "number" || !isFinite(c.positionSeconds) || c.positionSeconds < 0) return;
@@ -705,6 +721,7 @@ export class Room {
     if (cleanSource) inv.source = cleanSource;
     else delete inv.source;
     if (inv.guestPick !== true) delete inv.guestPick;
+    if (typeof inv.guestControl !== "boolean") delete inv.guestControl;
     if (!Number.isInteger(inv.proto) || inv.proto < 0 || inv.proto > 99) delete inv.proto;
     this.broadcast(
       { t: "invite", from: peer.clientId, name: peer.name, invite: inv, at: Date.now() },

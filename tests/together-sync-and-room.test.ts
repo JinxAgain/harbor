@@ -1266,3 +1266,289 @@ test("SeekBar container disables pointer events when drawMode is true", () => {
   assert.ok(stremioSource.includes('drawMode ? "pointer-events-none" : "pointer-events-auto"'));
 });
 
+test("Regression Test 6: Guest does not deadlock when firstFrameReady transitions false -> true after pause", () => {
+  let livePos = 16.308;
+  let incomingStateCb: ((s: any) => void) | null = null;
+  const playCalls: number[] = [];
+  const seekCalls: number[] = [];
+  const mockBridge = {
+    seek: (p: number) => seekCalls.push(p),
+    setRate: () => {},
+    play: async () => { playCalls.push(Date.now()); },
+    pause: () => {},
+  };
+
+  let refIndex = 0;
+  const refs: any[] = [];
+  let effectIndex = 0;
+  const effects: any[] = [];
+  const localExports: any = {};
+  new Function("require", "exports", syncCode)(
+    (name: string) => {
+      if (name.includes("player-utils")) return utilsExports;
+      if (name.includes("playback-clock")) {
+        return {
+          getPlaybackPosition: () => livePos,
+          getPlaybackBuffered: () => 5,
+        };
+      }
+      return {
+        useRef: (init: any) => refs[refIndex++] ?? (refs[refIndex - 1] = { current: init }),
+        useEffect: (fn: any, deps?: any[]) => {
+          const index = effectIndex++;
+          const old = effects[index];
+          if (
+            old &&
+            deps &&
+            old.deps &&
+            deps.length === old.deps.length &&
+            deps.every((v, i) => Object.is(v, old.deps[i]))
+          ) {
+            return;
+          }
+          old?.cleanup?.();
+          effects[index] = { deps, cleanup: fn() };
+        },
+      };
+    },
+    localExports,
+  );
+  const { useRoomSync: hook } = localExports;
+
+  const selfFrameReadyRef = { current: false };
+  const render = (snapParam: any) => {
+    refIndex = 0;
+    effectIndex = 0;
+    hook({
+      inRoom: true,
+      isHost: false,
+      hasStarted: true,
+      setHasStarted: () => {},
+      selfFrameReadyRef,
+      roomSnapshot: { participants: [], started: true },
+      clientId: "guest",
+      src: { url: "http://127.0.0.1:7000/play/test", meta: { id: "tt123" } },
+      snap: snapParam,
+      bridgeRef: { current: mockBridge },
+      hostSourceRef: { current: null },
+      guestPickRef: { current: false },
+      publishState: () => {},
+      onIncomingState: (cb: any) => { incomingStateCb = cb; return () => {}; },
+      onIncomingCommand: () => () => {},
+      markReady: () => {},
+      suppressOutgoingFor: () => {},
+      setForeignNotice: () => {},
+      syncSettings: { togetherSlowOnDesync: true, togetherRewindThresholdSec: 4.0 },
+    });
+  };
+
+  // 1. file-loaded arrives: status is "paused", durationSec > 0, but firstFrameReady is still false
+  render({
+    status: "paused",
+    durationSec: 7533,
+    rate: 1.0,
+    buffering: false,
+    firstFrameReady: false,
+    videoWidth: 1920,
+    videoHeight: 804,
+  });
+
+  // 2. playback-restart arrives: status and durationSec unchanged, firstFrameReady becomes true
+  render({
+    status: "paused",
+    durationSec: 7533,
+    rate: 1.0,
+    buffering: false,
+    firstFrameReady: true,
+    videoWidth: 1920,
+    videoHeight: 804,
+  });
+
+  // 3. Host sends playing: true at 16.308s -> Guest MUST call bridge.play() and NOT drop the state!
+  incomingStateCb!({
+    mediaId: "tt123",
+    positionSeconds: 16.308,
+    playing: true,
+    updatedAt: Date.now(),
+    updatedBy: "host",
+    speed: 1,
+  });
+  assert.equal(playCalls.length, 1, "Guest must unpause when host starts playing after firstFrameReady");
+});
+
+test("Regression Test 7: Host immediate seek broadcast, pending seek guard, and no rewind to 0s or paused guest", () => {
+  let livePos = 23.5;
+  let intervalCb: (() => void) | null = null;
+  let incomingCmdCb: ((from: string, cmd: any) => void) | null = null;
+  const hostSeekCalls: number[] = [];
+  const publishedStates: any[] = [];
+  const mockHostBridge = {
+    seek: (p: number) => hostSeekCalls.push(p),
+    setRate: () => {},
+    play: async () => {},
+    pause: () => {},
+  };
+
+  const localExports: any = {};
+  new Function("require", "exports", "window", syncCode)(
+    (name: string) => {
+      if (name.includes("player-utils")) return utilsExports;
+      if (name.includes("playback-clock")) {
+        return {
+          getPlaybackPosition: () => livePos,
+          getPlaybackBuffered: () => 10,
+        };
+      }
+      return {
+        useRef: (init: any) => ({ current: init }),
+        useEffect: (fn: any) => fn(),
+      };
+    },
+    localExports,
+    {
+      setInterval: (cb: any) => { intervalCb = cb; return 1; },
+      clearInterval: () => {},
+      setTimeout: (cb: any) => cb(),
+      clearTimeout: () => {},
+    },
+  );
+  const { useRoomSync: hook } = localExports;
+
+  const guestControlRef = { current: true };
+  const api = hook({
+    inRoom: true,
+    isHost: true,
+    hasStarted: true,
+    setHasStarted: () => {},
+    selfFrameReadyRef: { current: true },
+    roomSnapshot: {
+      participants: [{ id: "host" }, { id: "guest1" }],
+      started: true,
+      hostClientId: "host",
+    },
+    clientId: "host",
+    src: { url: "http://127.0.0.1:7000/play/test", meta: { id: "tt123" } },
+    snap: { status: "playing", durationSec: 1000, rate: 1.0, buffering: false, firstFrameReady: true },
+    bridgeRef: { current: mockHostBridge },
+    hostSourceRef: { current: null },
+    guestPickRef: { current: false },
+    guestControlRef,
+    publishState: (s: any) => publishedStates.push(s),
+    onIncomingState: () => () => {},
+    onIncomingCommand: (cb: any) => { incomingCmdCb = cb; return () => {}; },
+    markReady: () => {},
+    suppressOutgoingFor: () => {},
+    setForeignNotice: () => {},
+    syncSettings: { togetherSlowOnDesync: true, togetherRewindThresholdSec: 4.0 },
+  });
+
+  // 1. Guest reports reloading at 0.0s (buffering: true, positionSeconds: 0)
+  incomingCmdCb!("guest1", {
+    action: "report",
+    positionSeconds: 0,
+    playing: false,
+    buffering: true,
+    mediaId: "tt123",
+    updatedAt: Date.now(),
+  });
+  intervalCb!();
+  const origNow = Date.now;
+  try {
+    Date.now = () => origNow() + 3000;
+    intervalCb!();
+    assert.equal(hostSeekCalls.length, 0, "Host must NEVER rewind to 0.0s when guest is reloading");
+  } finally {
+    Date.now = origNow;
+  }
+
+  // 2. Host explicitly seeks to 300s while mpv getPlaybackPosition() is still at 23.5s
+  publishedStates.length = 0;
+  api.notifyHostSeek(300);
+  assert.equal(publishedStates.length, 1, "notifyHostSeek immediately publishes state");
+  assert.equal(publishedStates[0].positionSeconds, 300);
+  assert.equal(publishedStates[0].doSeek, true);
+
+  // Next tick runs 500ms later while mpv time-pos is STILL 23.5s (seek in flight)
+  intervalCb!();
+  const lastPub = publishedStates[publishedStates.length - 1];
+  assert.ok(
+    lastPub.positionSeconds >= 300,
+    `Host tick during in-flight seek must not snap back to 23.5s (got ${lastPub.positionSeconds})`,
+  );
+
+  // 3. When guestControlRef is false, incoming guest play/pause/seek commands are ignored
+  guestControlRef.current = false;
+  const prevSeekLen = hostSeekCalls.length;
+  incomingCmdCb!("guest1", { action: "seek", positionSeconds: 500, seq: 1 });
+  assert.equal(hostSeekCalls.length, prevSeekLen, "Guest seek ignored when guestControl is false");
+});
+
+test("worker Room enforces guestControl on commands and resets started/ready on host-leaving", () => {
+  const storageMap = new Map();
+  const mockStorage = {
+    get: async () => new Map(),
+    put: (k: string, v: any) => storageMap.set(k, v),
+    delete: (k: string) => storageMap.delete(k),
+  };
+  const mockState = {
+    storage: mockStorage,
+    getWebSockets: () => [],
+    blockConcurrencyWhile: (fn: any) => fn(),
+    acceptWebSocket: () => {},
+  };
+
+  const room = new Room(mockState);
+  const hostMsgs: any[] = [];
+  const guestMsgs: any[] = [];
+  const sHost: any = {
+    send: (raw: string) => hostMsgs.push(JSON.parse(raw)),
+    close: () => {},
+    serializeAttachment: () => {},
+  };
+  const sGuest: any = {
+    send: (raw: string) => guestMsgs.push(JSON.parse(raw)),
+    close: () => {},
+    serializeAttachment: () => {},
+  };
+
+  room.handleHello(sHost, { clientId: "host1", name: "Host" });
+  room.handleHello(sGuest, { clientId: "guest1", name: "Guest" });
+  room.handleReady(sHost, { ready: true });
+  room.handleReady(sGuest, { ready: true });
+  room.handleStart(sHost);
+  assert.equal(room.started, true);
+
+  // Host publishes state with guestControl: false
+  room.handleState(sHost, {
+    t: "state",
+    state: {
+      mediaId: "tt123",
+      positionSeconds: 50,
+      playing: true,
+      guestControl: false,
+      updatedAt: Date.now(),
+      updatedBy: "host1",
+    },
+  });
+
+  hostMsgs.length = 0;
+  // Guest tries to pause while guestControl is false -> blocked by relay
+  room.handleCommand(sGuest, { t: "cmd", command: { action: "pause" } });
+  assert.equal(hostMsgs.length, 0, "Relay blocks guest pause when guestControl is false");
+
+  // Guest report is still allowed even when guestControl is false
+  room.handleCommand(sGuest, {
+    t: "cmd",
+    command: { action: "report", positionSeconds: 49, playing: true },
+  });
+  assert.equal(hostMsgs.length, 1, "Relay still forwards guest report when guestControl is false");
+
+  // Host leaves video -> broadcasts started: false and resets ready: false
+  guestMsgs.length = 0;
+  room.handleHostLeaving(sHost);
+  assert.equal(room.started, false);
+  assert.ok(guestMsgs.some((m) => m.t === "started" && m.started === false));
+  assert.ok(guestMsgs.some((m) => m.t === "participant-ready" && m.clientId === "guest1" && m.ready === false));
+});
+
+

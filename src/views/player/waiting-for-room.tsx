@@ -18,6 +18,7 @@ function readyDotClass(ready: boolean, stale: boolean): string {
 
 export function WaitingForRoom(props: {
   isHost: boolean;
+  canGuestStart?: boolean;
   notReady: RoomSnapshot["participants"];
   participants: RoomSnapshot["participants"];
   clientId: string;
@@ -30,6 +31,7 @@ export function WaitingForRoom(props: {
 }) {
   const {
     isHost,
+    canGuestStart = false,
     notReady,
     participants,
     clientId,
@@ -42,23 +44,24 @@ export function WaitingForRoom(props: {
   } = props;
   const t = useT();
   const stillLoading = notReady.length;
+  const canStart = isHost || canGuestStart;
   return (
     <div className="pointer-events-auto absolute inset-0 z-30 flex items-center justify-center bg-black/72 backdrop-blur-md">
       <div className="flex max-w-sm flex-col items-center gap-5 px-8 text-center">
         <LottiePlayer data={waitingAnim} className="h-28 w-28" />
         <div className="flex flex-col gap-1.5">
           <h2 className="text-[18px] font-semibold text-white">
-            {isHost ? t("Ready when you are") : t("Waiting for the host to start")}
+            {canStart ? t("Ready when you are") : t("Waiting for the host to start")}
           </h2>
           <p className="text-[13px] text-white/60">
-            {isHost
+            {canStart
               ? stillLoading > 0
                 ? t("Loading on {names}…", { names: formatNames(notReady.map((p) => p.name)) })
                 : t("Everyone is loaded in. Press play to start watching.")
               : t("The host starts playback for the whole room.")}
           </p>
         </div>
-        {isHost && participants.length > 0 && (
+        {canStart && participants.length > 0 && (
           <div className="flex flex-wrap justify-center gap-1.5">
             {participants.map((p) => {
               const stale = staleIds.has(p.id);
@@ -77,7 +80,7 @@ export function WaitingForRoom(props: {
           </div>
         )}
         <div className="mt-1 flex items-center gap-2.5">
-          {isHost && (
+          {canStart && (
             <button
               type="button"
               onClick={onStart}

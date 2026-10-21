@@ -4,7 +4,13 @@ import { randomUuid } from "@/lib/uuid";
 import { TogetherClient, type RoomEvent, type RoomSnapshot } from "./client";
 import { useSelfIdentity } from "./use-self-identity";
 import { isPublicRelay, relayOutdated } from "./relay-version";
-import { deriveHostSource, deriveRoomGuestPick, type HostSourceInfo, type LastInviteMeta } from "./room-derive";
+import {
+  deriveHostSource,
+  deriveRoomGuestControl,
+  deriveRoomGuestPick,
+  type HostSourceInfo,
+  type LastInviteMeta,
+} from "./room-derive";
 import { applyRoomEvent } from "./provider-events";
 import type {
   ChatMessage,
@@ -91,6 +97,7 @@ type TogetherValue = {
   relayOutdated: boolean;
   hostSource: HostSourceInfo | null;
   roomGuestPick: boolean;
+  roomGuestControl: boolean;
   lastInviteProto: number;
 };
 
@@ -151,6 +158,8 @@ export function TogetherProvider({ children }: { children: ReactNode }) {
   const lastInviteRef = useRef<LastInviteMeta | null>(null);
   const guestPickSettingRef = useRef(settings.togetherGuestsPick);
   guestPickSettingRef.current = settings.togetherGuestsPick;
+  const guestControlSettingRef = useRef(settings.togetherGuestsControl);
+  guestControlSettingRef.current = settings.togetherGuestsControl;
   const commandSenderRef = useRef(createCommandSender((c) => clientRef.current?.sendCommand(c)));
   useEffect(() => () => commandSenderRef.current.dispose(), []);
 
@@ -330,6 +339,7 @@ export function TogetherProvider({ children }: { children: ReactNode }) {
       ...invite,
       proto: WT_PROTO,
       guestPick: guestPickSettingRef.current || undefined,
+      guestControl: guestControlSettingRef.current,
     });
   }, []);
 
@@ -438,8 +448,40 @@ export function TogetherProvider({ children }: { children: ReactNode }) {
     return !!r && r.key === key && Date.now() - r.at < 30 * 60_000;
   }, []);
 
+  useEffect(() => {
+    if (snapshot.state !== "joined" || snapshot.hostClientId !== clientIdRef.current) return;
+    const cur = snapshot.syncState;
+    if (!cur?.mediaId) return;
+    if (
+      Boolean(cur.guestPick) === Boolean(settings.togetherGuestsPick) &&
+      (cur.guestControl ?? true) === Boolean(settings.togetherGuestsControl)
+    ) {
+      return;
+    }
+    clientRef.current?.publishState({
+      ...cur,
+      guestPick: settings.togetherGuestsPick || undefined,
+      guestControl: settings.togetherGuestsControl,
+      doSeek: undefined,
+      updatedAt: Date.now(),
+      updatedBy: clientIdRef.current,
+      hostClientId: snapshot.hostClientId,
+    });
+  }, [
+    settings.togetherGuestsPick,
+    settings.togetherGuestsControl,
+    snapshot.state,
+    snapshot.hostClientId,
+    snapshot.syncState,
+  ]);
+
   const hostSource = useMemo(() => deriveHostSource(snapshot), [snapshot]);
   const roomGuestPick = deriveRoomGuestPick(snapshot, clientIdRef.current, lastInviteRef.current);
+  const roomGuestControl = deriveRoomGuestControl(
+    snapshot,
+    clientIdRef.current,
+    lastInviteRef.current,
+  );
   const lastInviteProto = lastInviteRef.current?.proto ?? 0;
   const isRelayOutdated =
     snapshot.state === "joined" &&
@@ -496,6 +538,7 @@ export function TogetherProvider({ children }: { children: ReactNode }) {
       relayOutdated: isRelayOutdated,
       hostSource,
       roomGuestPick,
+      roomGuestControl,
       lastInviteProto,
     }),
     [
@@ -545,6 +588,7 @@ export function TogetherProvider({ children }: { children: ReactNode }) {
       isRelayOutdated,
       hostSource,
       roomGuestPick,
+      roomGuestControl,
       lastInviteProto,
     ],
   );

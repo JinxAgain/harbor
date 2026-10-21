@@ -274,6 +274,7 @@ export type Settings = {
   togetherCfDeployed: boolean;
   togetherShareCursors: boolean;
   togetherGuestsPick: boolean;
+  togetherGuestsControl: boolean;
   togetherSlowOnDesync: boolean;
   togetherRewindThresholdSec: number;
   togetherSyncOnPause: boolean;

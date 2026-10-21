@@ -84,6 +84,8 @@ export function applyRoomEvent(e: RoomEvent, sinks: RoomEventSinks): void {
       at: Date.now(),
       proto: typeof e.invite.proto === "number" ? e.invite.proto : 0,
       guestPick: e.invite.guestPick === true,
+      guestControl:
+        typeof e.invite.guestControl === "boolean" ? e.invite.guestControl : undefined,
     };
     setIncomingSummon(null);
     setIncomingInvite({ from: e.from, name: e.name, invite: e.invite, at: e.at });

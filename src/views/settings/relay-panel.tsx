@@ -170,6 +170,12 @@ function PlaybackSyncGroup() {
   return (
     <SettingGroup label={t("Playback Sync")}>
       <ToggleRow
+        label={t("Guests can play & pause")}
+        sub={t("Allow everyone in the room to start, pause, and seek")}
+        value={settings.togetherGuestsControl}
+        onChange={(togetherGuestsControl) => update({ togetherGuestsControl })}
+      />
+      <ToggleRow
         label={t("Smooth speed catch-up (Syncplay style)")}
         sub={t("Gently slow down or speed up playback (0.95× / 1.05×) to correct small drift (1.5s–4.0s) without jarring seeks.")}
         value={settings.togetherSlowOnDesync}

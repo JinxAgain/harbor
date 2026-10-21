@@ -34,11 +34,16 @@ export function usePlaybackControls(params: {
   isHost: boolean;
   hasStarted: boolean;
   canControl: boolean;
+  roomGuestControl?: boolean;
   castDevice: CastDeviceInfo | null;
   startHost: () => void;
   togglePlayCast: () => Promise<void>;
   seekCast: (sec: number) => Promise<void>;
   sendCommand: (command: RoomCommand) => void;
+  notifyHostPlayPause?: (playing: boolean) => void;
+  notifyHostSeek?: (targetSec: number) => void;
+  notifyGuestPlayPause?: (playing: boolean) => void;
+  notifyGuestSeek?: (targetSec: number) => void;
 }) {
   const {
     bridgeRef,
@@ -50,11 +55,16 @@ export function usePlaybackControls(params: {
     isHost,
     hasStarted,
     canControl,
+    roomGuestControl = true,
     castDevice,
     startHost,
     togglePlayCast,
     seekCast,
     sendCommand,
+    notifyHostPlayPause,
+    notifyHostSeek,
+    notifyGuestPlayPause,
+    notifyGuestSeek,
   } = params;
 
   const pendingSubtitleCacheRef = useRef<(() => void) | null>(null);
@@ -176,8 +186,12 @@ export function usePlaybackControls(params: {
   };
 
   const playPauseToggle = () => {
-    if (inRoom && isHost && !hasStarted) {
-      startHost();
+    if (inRoom && !hasStarted) {
+      if (isHost) {
+        startHost();
+      } else if (roomGuestControl) {
+        sendCommand({ action: "play" });
+      }
       return;
     }
     if (castDevice) {
@@ -185,14 +199,24 @@ export function usePlaybackControls(params: {
       return;
     }
     if (!canControl) return;
+    const b = bridgeRef.current;
+    const nextPlaying = snapRef.current.status !== "playing";
     if (inRoom && !isHost) {
-      sendCommand(snapRef.current.status === "playing" ? { action: "pause" } : { action: "play" });
+      if (!roomGuestControl) return;
+      notifyGuestPlayPause?.(nextPlaying);
+      if (b) {
+        if (nextPlaying) b.play().catch(() => {});
+        else b.pause();
+      }
+      sendCommand(nextPlaying ? { action: "play" } : { action: "pause" });
       return;
     }
-    const b = bridgeRef.current;
     if (!b) return;
-    if (snapRef.current.status === "playing") b.pause();
-    else b.play().catch(() => {});
+    if (nextPlaying) b.play().catch(() => {});
+    else b.pause();
+    if (inRoom && isHost) {
+      notifyHostPlayPause?.(nextPlaying);
+    }
   };
 
   const seekAccumRef = useRef<{ target: number; at: number; clock: number } | null>(null);
@@ -221,17 +245,37 @@ export function usePlaybackControls(params: {
         return;
       }
       if (!canControl) return;
-      seekAccumRef.current = { target, at: now, clock: observed };
       if (inRoom && !isHost) {
+        if (!roomGuestControl) return;
+        seekAccumRef.current = { target, at: now, clock: observed };
+        notifyGuestSeek?.(target);
+        bridgeRef.current?.seek(target, "exact");
+        notifyMediaSeeked(target);
         sendCommand({ action: "seek", positionSeconds: target });
         return;
       }
+      seekAccumRef.current = { target, at: now, clock: observed };
       // Exact: keyframe seeks snap to the previous keyframe and can land behind
       // the request (several seconds on sparse-GOP HEVC), so forward steps stall.
       bridgeRef.current?.seek(target, "exact");
       notifyMediaSeeked(target);
+      if (inRoom && isHost) {
+        notifyHostSeek?.(target);
+      }
     },
-    [snapRef, bridgeRef, castDevice, seekCast, canControl, inRoom, isHost, sendCommand],
+    [
+      snapRef,
+      bridgeRef,
+      castDevice,
+      seekCast,
+      canControl,
+      inRoom,
+      isHost,
+      roomGuestControl,
+      sendCommand,
+      notifyHostSeek,
+      notifyGuestSeek,
+    ],
   );
 
   const seekTo = useCallback(
@@ -243,15 +287,34 @@ export function usePlaybackControls(params: {
         return;
       }
       if (!canControl) return;
-      seekAccumRef.current = { target, at: performance.now(), clock: getPlaybackPosition() };
       if (inRoom && !isHost) {
+        if (!roomGuestControl) return;
+        seekAccumRef.current = { target, at: performance.now(), clock: getPlaybackPosition() };
+        notifyGuestSeek?.(target);
+        bridgeRef.current?.seek(target, "keyframes");
+        notifyMediaSeeked(target);
         sendCommand({ action: "seek", positionSeconds: target });
         return;
       }
+      seekAccumRef.current = { target, at: performance.now(), clock: getPlaybackPosition() };
       bridgeRef.current?.seek(target, "keyframes");
       notifyMediaSeeked(target);
+      if (inRoom && isHost) {
+        notifyHostSeek?.(target);
+      }
     },
-    [castDevice, canControl, inRoom, isHost, sendCommand, seekCast, bridgeRef],
+    [
+      castDevice,
+      canControl,
+      inRoom,
+      isHost,
+      roomGuestControl,
+      sendCommand,
+      seekCast,
+      bridgeRef,
+      notifyHostSeek,
+      notifyGuestSeek,
+    ],
   );
 
   return { rememberSubChoice, cycleSubtitles, playPauseToggle, seekStep, seekTo };

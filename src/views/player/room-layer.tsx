@@ -115,6 +115,7 @@ export const RoomLayer = memo(function RoomLayer({
       {showWaiting && (
         <WaitingForRoom
           isHost={isHost}
+          canGuestStart={syncState?.guestControl !== false}
           notReady={notReady}
           participants={participants}
           clientId={clientId}

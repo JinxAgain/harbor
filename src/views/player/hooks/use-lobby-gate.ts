@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { PlayerBridge } from "@/lib/player/bridge";
 import type { RoomSnapshot } from "@/lib/together/client";
+import type { RoomCommand } from "@/lib/together/protocol";
 import { GUEST_ESCAPE_MS, READY_STALE_MS } from "../player-utils";
 
 function sameSet(a: Set<string>, b: Set<string>): boolean {
@@ -20,6 +21,8 @@ export function useLobbyGate(params: {
   bridgeRef: RefObject<PlayerBridge | null>;
   initialSyncDoneRef: RefObject<boolean>;
   mediaKey: string;
+  sendCommand?: (command: RoomCommand) => void;
+  notifyHostPlayPause?: (playing: boolean) => void;
 }): {
   startHost: () => void;
   playWithoutSync: () => void;
@@ -37,14 +40,29 @@ export function useLobbyGate(params: {
     bridgeRef,
     initialSyncDoneRef,
     mediaKey,
+    sendCommand,
+    notifyHostPlayPause,
   } = params;
 
   const startHost = useCallback(() => {
+    if (!isHost) {
+      sendCommand?.({ action: "play" });
+      return;
+    }
     setHasStarted(true);
     startRoom();
     suppressOutgoingFor(0);
     bridgeRef.current?.play().catch(() => {});
-  }, [setHasStarted, startRoom, suppressOutgoingFor, bridgeRef]);
+    notifyHostPlayPause?.(true);
+  }, [
+    isHost,
+    sendCommand,
+    setHasStarted,
+    startRoom,
+    suppressOutgoingFor,
+    bridgeRef,
+    notifyHostPlayPause,
+  ]);
 
   useEffect(() => {
     if (!inRoom || !isHost || !hasStarted || roomSnapshot.started) return;

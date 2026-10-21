@@ -12,6 +12,7 @@ export type LastInviteMeta = {
   at: number;
   proto: number;
   guestPick: boolean;
+  guestControl?: boolean;
 };
 
 export function deriveHostSource(snapshot: RoomSnapshot): HostSourceInfo | null {
@@ -47,4 +48,22 @@ export function deriveRoomGuestPick(
   if (stateAt === 0 && inviteAt === 0) return false;
   if (inviteAt >= stateAt) return lastInvite?.guestPick === true;
   return s?.guestPick === true;
+}
+
+export function deriveRoomGuestControl(
+  snapshot: RoomSnapshot,
+  clientId: string,
+  lastInvite: LastInviteMeta | null,
+): boolean {
+  if (!snapshot.hostClientId || snapshot.hostClientId === clientId) return true;
+  const s = snapshot.syncState;
+  const stateAt = s && s.updatedBy === snapshot.hostClientId ? s.updatedAt : 0;
+  const inviteAt = lastInvite?.at ?? 0;
+  if (stateAt === 0 && inviteAt === 0) return true;
+  if (inviteAt > stateAt && typeof lastInvite?.guestControl === "boolean") {
+    return lastInvite.guestControl;
+  }
+  if (typeof s?.guestControl === "boolean") return s.guestControl;
+  if (typeof lastInvite?.guestControl === "boolean") return lastInvite.guestControl;
+  return true;
 }

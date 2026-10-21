@@ -66,6 +66,8 @@ export function useRoomSync(params: {
   bridgeRef: RefObject<PlayerBridge | null>;
   hostSourceRef: RefObject<SourceDescriptor | null>;
   guestPickRef: RefObject<boolean>;
+  guestControlRef?: RefObject<boolean>;
+  startRoom?: () => void;
   publishState: (state: PartialSyncState) => void;
   sendCommand?: (command: RoomCommand) => void;
   onIncomingState: (cb: (state: SyncState) => void) => () => void;
@@ -100,6 +102,8 @@ export function useRoomSync(params: {
     bridgeRef,
     hostSourceRef,
     guestPickRef,
+    guestControlRef,
+    startRoom,
     publishState,
     sendCommand,
     onIncomingState,
@@ -131,7 +135,14 @@ export function useRoomSync(params: {
   inRoomRef.current = inRoom;
   const isHostRef = useRef(isHost);
   isHostRef.current = isHost;
+  const hasStartedRef = useRef(hasStarted);
+  hasStartedRef.current = hasStarted;
+  const srcRef = useRef(src);
+  srcRef.current = src;
+  const snapRef = useRef(snap);
+  snapRef.current = snap;
   const syncCatchUpRef = useRef(false);
+  const syncCatchUpUntilRef = useRef(0);
   const syncSpeedAdjustedRef = useRef<-1 | 0 | 1>(0);
   const behindSinceRef = useRef<number | null>(null);
   const behindResetUntilRef = useRef(0);
@@ -160,6 +171,10 @@ export function useRoomSync(params: {
   const hostSlowdownActiveRef = useRef(false);
   const lastHostPosRef = useRef(0);
   const lastHostTickAtRef = useRef(0);
+  const hostPendingSeekRef = useRef<{ targetPos: number; at: number; until: number } | null>(null);
+  const hostPendingPlayRef = useRef<{ playing: boolean; until: number } | null>(null);
+  const guestSeekGraceRef = useRef<{ targetPos: number; until: number } | null>(null);
+  const guestPlayGraceRef = useRef<{ playing: boolean; until: number } | null>(null);
   const mediaKey = `${src.meta.id}|${src.episode?.season ?? ""}|${src.episode?.episode ?? ""}`;
 
   const selectedAudioId = snap.audioTracks?.find((t) => t.selected)?.id ?? null;
@@ -179,6 +194,7 @@ export function useRoomSync(params: {
 
   useEffect(() => {
     syncCatchUpRef.current = false;
+    syncCatchUpUntilRef.current = 0;
     syncSpeedAdjustedRef.current = 0;
     behindSinceRef.current = null;
     behindResetUntilRef.current = 0;
@@ -190,6 +206,10 @@ export function useRoomSync(params: {
     hostSlowdownActiveRef.current = false;
     lastHostPosRef.current = 0;
     lastHostTickAtRef.current = 0;
+    hostPendingSeekRef.current = null;
+    hostPendingPlayRef.current = null;
+    guestSeekGraceRef.current = null;
+    guestPlayGraceRef.current = null;
     prevAudioIdRef.current = selectedAudioId;
     prevSubIdRef.current = selectedSubId;
     hostBaseRateRef.current = snap.rate || 1;
@@ -216,19 +236,153 @@ export function useRoomSync(params: {
   durationRef.current = snap.durationSec;
   const initialSyncDoneRef = useRef(false);
 
+  const publishHostStateNow = (opts?: {
+    positionSeconds?: number;
+    playing?: boolean;
+    doSeek?: boolean;
+  }) => {
+    if (!inRoomRef.current || !isHostRef.current) return;
+    if (cast?.activeRef.current) return;
+    const curSrc = srcRef.current;
+    const now = Date.now();
+    const baseRate = hostBaseRateRef.current || 1;
+    let pos =
+      typeof opts?.positionSeconds === "number" && Number.isFinite(opts.positionSeconds)
+        ? opts.positionSeconds
+        : getPlaybackPosition();
+    if (
+      opts?.positionSeconds == null &&
+      hostPendingSeekRef.current &&
+      now < hostPendingSeekRef.current.until
+    ) {
+      pos = hostPendingSeekRef.current.targetPos;
+    }
+    if (!Number.isFinite(pos) || pos < 0) pos = 0;
+    if (
+      !hasStartedRef.current &&
+      durationRef.current > 0 &&
+      pos >= Math.max(0, durationRef.current - 20)
+    ) {
+      pos = 0;
+    }
+    let isPlaying =
+      typeof opts?.playing === "boolean"
+        ? opts.playing
+        : statusRef.current === "playing";
+    if (
+      opts?.playing == null &&
+      hostPendingPlayRef.current &&
+      now < hostPendingPlayRef.current.until
+    ) {
+      isPlaying = hostPendingPlayRef.current.playing;
+    }
+    if (!hasStartedRef.current && opts?.playing !== true) {
+      isPlaying = false;
+    }
+    publishState({
+      mediaId: curSrc.meta.id,
+      mediaTitle: curSrc.meta.name ?? null,
+      episode: curSrc.episode
+        ? {
+            season: curSrc.episode.season,
+            episode: curSrc.episode.episode,
+            name: curSrc.episode.name,
+          }
+        : null,
+      posterUrl: curSrc.meta.poster ?? null,
+      positionSeconds: pos,
+      playing: isPlaying,
+      buffering: bufferingRef.current === true ? true : undefined,
+      speed: baseRate,
+      source: hostSourceRef.current ?? undefined,
+      guestPick: guestPickRef.current || undefined,
+      guestControl: guestControlRef ? guestControlRef.current : undefined,
+      doSeek: opts?.doSeek ? true : undefined,
+    });
+  };
+
+  const notifyHostPlayPause = (playing: boolean) => {
+    const now = Date.now();
+    hostPendingPlayRef.current = { playing, until: now + 1500 };
+    if (!playing && hostSlowdownActiveRef.current) {
+      bridgeRef.current?.setRate(hostBaseRateRef.current || 1);
+      hostSlowdownActiveRef.current = false;
+    }
+    publishHostStateNow({ playing });
+  };
+
+  const notifyHostSeek = (targetSec: number) => {
+    const dur = durationRef.current;
+    const targetPos =
+      dur > 0 ? Math.max(0, Math.min(targetSec, dur - 0.5)) : Math.max(0, targetSec);
+    const now = Date.now();
+    hostSeekGraceUntilRef.current = now + 5000;
+    hostPendingSeekRef.current = { targetPos, at: now, until: now + 2500 };
+    hostBehindSinceRef.current = null;
+    lastHostPosRef.current = targetPos;
+    lastHostTickAtRef.current = now;
+    if (hostSlowdownActiveRef.current) {
+      bridgeRef.current?.setRate(hostBaseRateRef.current || 1);
+      hostSlowdownActiveRef.current = false;
+    }
+    publishHostStateNow({
+      positionSeconds: targetPos,
+      doSeek: hasStartedRef.current ? true : undefined,
+    });
+  };
+
+  const notifyGuestPlayPause = (playing: boolean) => {
+    guestPlayGraceRef.current = { playing, until: Date.now() + 2000 };
+  };
+
+  const notifyGuestSeek = (targetSec: number) => {
+    const now = Date.now();
+    guestSeekGraceRef.current = { targetPos: Math.max(0, targetSec), until: now + 2500 };
+    lastSeekAtRef.current = now;
+    syncCatchUpRef.current = true;
+    syncCatchUpUntilRef.current = now + 4000;
+    behindSinceRef.current = null;
+    behindResetUntilRef.current = now + 3000;
+  };
+
   useEffect(() => {
     if (!inRoom || !isHost || !hasStarted) return;
     if (cast?.activeRef.current) return;
     const tick = () => {
       if (cast?.activeRef.current) return;
-      const status = statusRef.current;
-      if (status !== "playing" && status !== "paused") return;
-      const pos = getPlaybackPosition();
-      if (durationRef.current <= 0) return;
-      if (pos <= 0) return;
-      const isBuffering = bufferingRef.current === true;
       const now = Date.now();
+      let status = statusRef.current;
+      if (hostPendingPlayRef.current) {
+        if (now < hostPendingPlayRef.current.until) {
+          if ((status === "playing") === hostPendingPlayRef.current.playing) {
+            hostPendingPlayRef.current = null;
+          } else {
+            status = hostPendingPlayRef.current.playing ? "playing" : "paused";
+          }
+        } else {
+          hostPendingPlayRef.current = null;
+        }
+      }
+      if (status !== "playing" && status !== "paused") return;
+      if (durationRef.current <= 0) return;
+      let pos = getPlaybackPosition();
+      if (!Number.isFinite(pos) || pos < 0) return;
+      const isBuffering = bufferingRef.current === true;
       const baseRate = hostBaseRateRef.current || 1;
+      if (hostPendingSeekRef.current) {
+        if (now < hostPendingSeekRef.current.until) {
+          if (Math.abs(pos - hostPendingSeekRef.current.targetPos) <= 3.0) {
+            hostPendingSeekRef.current = null;
+          } else {
+            const seekElapsed = Math.max(0, (now - hostPendingSeekRef.current.at) / 1000);
+            pos =
+              hostPendingSeekRef.current.targetPos +
+              (status === "playing" && !isBuffering ? seekElapsed * baseRate : 0);
+          }
+        } else {
+          hostPendingSeekRef.current = null;
+        }
+      }
       const elapsed = lastHostTickAtRef.current > 0 ? (now - lastHostTickAtRef.current) / 1000 : 0;
       const expectedHostPos =
         lastHostPosRef.current + (status === "playing" ? elapsed * baseRate : 0);
@@ -254,6 +408,7 @@ export function useRoomSync(params: {
 
       // Filter matching guests on same media
       const matchingGuestPositions: number[] = [];
+      const bufferingGuestPositions: number[] = [];
       let anyGuestBuffering = false;
       for (const [from, r] of guestReportsRef.current) {
         if (from === clientId) continue;
@@ -262,12 +417,17 @@ export function useRoomSync(params: {
         const le = src.episode;
         if (!!se !== !!le) continue;
         if (se && le && (se.season !== le.season || se.episode !== le.episode)) continue;
+        if (r.positionSeconds <= 2) continue;
+        if (!r.playing && !r.buffering) continue;
         const rtt = typeof r.rtt === "number" && r.rtt > 0 ? r.rtt : 0;
         const transit = (rtt / 2) / 1000;
         const age = Math.max(0, (now - r.receivedAt) / 1000) + transit;
         const guestPos = r.positionSeconds + (r.playing && !r.buffering ? age * baseRate : 0);
         matchingGuestPositions.push(guestPos);
-        if (r.buffering) anyGuestBuffering = true;
+        if (r.buffering) {
+          anyGuestBuffering = true;
+          bufferingGuestPositions.push(guestPos);
+        }
       }
 
       const b = bridgeRef.current;
@@ -280,14 +440,21 @@ export function useRoomSync(params: {
       ) {
         const minGuestPos = Math.min(...matchingGuestPositions);
         const hostDrift = pos - minGuestPos;
+        const minBufferingPos =
+          bufferingGuestPositions.length > 0 ? Math.min(...bufferingGuestPositions) : null;
+        const bufferingDrift = minBufferingPos != null ? pos - minBufferingPos : 0;
 
-        if (hostDrift >= togetherRewindThresholdSec && hostDrift < 30) {
+        if (
+          minBufferingPos != null &&
+          bufferingDrift >= togetherRewindThresholdSec &&
+          bufferingDrift < 30
+        ) {
           if (hostBehindSinceRef.current == null) {
             hostBehindSinceRef.current = now;
           } else if (now - hostBehindSinceRef.current >= SYNC_BEHIND_SUSTAINED_MS) {
-            console.info(`[together] host-rewind to ${minGuestPos.toFixed(2)}s (drift ${hostDrift.toFixed(2)}s)`);
-            b.seek(minGuestPos);
-            lastHostPosRef.current = minGuestPos;
+            console.info(`[together] host-rewind to ${minBufferingPos.toFixed(2)}s (drift ${bufferingDrift.toFixed(2)}s)`);
+            b.seek(minBufferingPos);
+            lastHostPosRef.current = minBufferingPos;
             lastHostTickAtRef.current = now;
             hostBehindSinceRef.current = null;
             hostRewindCooldownUntilRef.current = now + 5000;
@@ -302,12 +469,13 @@ export function useRoomSync(params: {
                 ? { season: src.episode.season, episode: src.episode.episode, name: src.episode.name }
                 : null,
               posterUrl: src.meta.poster ?? null,
-              positionSeconds: minGuestPos,
+              positionSeconds: minBufferingPos,
               playing: true,
               buffering: isBuffering || undefined,
               speed: baseRate,
               source: hostSourceRef.current ?? undefined,
               guestPick: guestPickRef.current || undefined,
+              guestControl: guestControlRef ? guestControlRef.current : undefined,
               doSeek: false,
             });
             return;
@@ -354,6 +522,7 @@ export function useRoomSync(params: {
         speed: baseRate,
         source: hostSourceRef.current ?? undefined,
         guestPick: guestPickRef.current || undefined,
+        guestControl: guestControlRef ? guestControlRef.current : undefined,
         doSeek: isHostJump || now < hostSeekGraceUntilRef.current ? true : undefined,
       });
     };
@@ -397,16 +566,8 @@ export function useRoomSync(params: {
       const b = bridgeRef.current;
       if (!b || durationRef.current <= 0) return;
       const targetPos = Math.max(0, Math.min(pos, durationRef.current - 1));
-      const now = Date.now();
-      hostSeekGraceUntilRef.current = now + 5000;
-      hostBehindSinceRef.current = null;
-      lastHostPosRef.current = targetPos;
-      lastHostTickAtRef.current = now;
-      if (hostSlowdownActiveRef.current) {
-        b.setRate(hostBaseRateRef.current || 1);
-        hostSlowdownActiveRef.current = false;
-      }
       b.seek(targetPos);
+      notifyHostSeek(targetPos);
     };
     const fireTimer = () => {
       seekApplyTimerRef.current = null;
@@ -433,12 +594,22 @@ export function useRoomSync(params: {
         guestReportsRef.current.set(from, { ...command, receivedAt: Date.now() });
         return;
       }
+      if (guestControlRef && !guestControlRef.current) {
+        return;
+      }
       if (command.action === "play") {
         flushPending();
+        if (!hasStartedRef.current) {
+          setHasStarted(true);
+          startRoom?.();
+          suppressOutgoingFor(0);
+        }
         b.play().catch(() => {});
+        notifyHostPlayPause(true);
       } else if (command.action === "pause") {
         flushPending();
         b.pause();
+        notifyHostPlayPause(false);
       } else if (command.action === "seek") {
         hostSeekGraceUntilRef.current = Date.now() + 5000;
         hostBehindSinceRef.current = null;
@@ -466,7 +637,8 @@ export function useRoomSync(params: {
       if (cast?.activeRef.current) return;
       const b = bridgeRef.current;
       if (!b) return;
-      if (isDifferentMedia(state, src)) {
+      const curSrc = srcRef.current;
+      if (isDifferentMedia(state, curSrc)) {
         setForeignNotice({ title: state.mediaTitle, from: state.updatedBy });
         return;
       }
@@ -474,25 +646,52 @@ export function useRoomSync(params: {
       if (state.updatedAt < lastAppliedStateAtRef.current) return;
       lastAppliedStateAtRef.current = state.updatedAt;
 
+      const curSnap = snapRef.current;
       const isFrameReady =
-        snap.firstFrameReady ??
-        (selfFrameReadyRef.current ? true : snap.status === "playing");
+        curSnap.firstFrameReady !== undefined
+          ? Boolean(curSnap.firstFrameReady || selfFrameReadyRef.current)
+          : selfFrameReadyRef.current
+            ? true
+            : curSnap.status === "playing";
       if (
-        snap.status === "loading" ||
-        snap.status === "idle" ||
-        snap.status === "error" ||
-        snap.status === "ended" ||
+        curSnap.status === "loading" ||
+        curSnap.status === "idle" ||
+        curSnap.status === "error" ||
+        curSnap.status === "ended" ||
         durationRef.current <= 0 ||
         !isFrameReady
       ) {
-        if (state.playing && snap.status === "loading") {
+        if (state.playing && curSnap.status === "loading") {
           b.play().catch(() => {});
         }
         return;
       }
 
+      const now = Date.now();
+      if (guestSeekGraceRef.current) {
+        if (now < guestSeekGraceRef.current.until) {
+          if (Math.abs(state.positionSeconds - guestSeekGraceRef.current.targetPos) <= 5.0) {
+            guestSeekGraceRef.current = null;
+          } else {
+            return;
+          }
+        } else {
+          guestSeekGraceRef.current = null;
+        }
+      }
+
+      if (guestPlayGraceRef.current) {
+        if (now < guestPlayGraceRef.current.until) {
+          if (state.playing === guestPlayGraceRef.current.playing) {
+            guestPlayGraceRef.current = null;
+          }
+        } else {
+          guestPlayGraceRef.current = null;
+        }
+      }
+
       const rate = syncRate(state);
-      const isPlaying = snap.status === "playing";
+      const isPlaying = curSnap.status === "playing";
       const playStateChanged = state.playing !== isPlaying;
 
       const livePos = getPlaybackPosition();
@@ -506,11 +705,11 @@ export function useRoomSync(params: {
       const nearEof = durationRef.current > 0 && livePos >= durationRef.current - 5;
       if (
         syncCatchUpRef.current &&
-        isPlaying &&
-        !bufferingRef.current &&
-        (getPlaybackBuffered() >= 2.0 || nearEof)
+        ((isPlaying && !bufferingRef.current && (getPlaybackBuffered() >= 2.0 || nearEof)) ||
+          (syncCatchUpUntilRef.current > 0 && now >= syncCatchUpUntilRef.current))
       ) {
         syncCatchUpRef.current = false;
+        syncCatchUpUntilRef.current = 0;
       }
 
       // Track duration spent lagging behind host (Syncplay-style behind reset)
@@ -520,16 +719,16 @@ export function useRoomSync(params: {
         !bufferingRef.current &&
         !syncCatchUpRef.current &&
         isPlaying &&
-        Date.now() >= behindResetUntilRef.current;
+        now >= behindResetUntilRef.current;
 
       if (canAccumulateBehind) {
         if (behindSinceRef.current == null) {
-          behindSinceRef.current = Date.now();
+          behindSinceRef.current = now;
         }
       } else {
         behindSinceRef.current = null;
         if (bufferingRef.current) {
-          behindResetUntilRef.current = Date.now() + 3000;
+          behindResetUntilRef.current = now + 3000;
         }
       }
 
@@ -573,8 +772,10 @@ export function useRoomSync(params: {
       // 2. Hard seek check:
       // While still settling after a seek, block hard seeks unless explicit doSeek or big jump
       if (syncCatchUpRef.current && state.doSeek !== true && absDrift < SYNC_SEEK_JUMP_S) {
-        if (state.playing && !isPlaying) b.play().catch(() => {});
-        if (!state.playing && isPlaying) b.pause();
+        if (!guestPlayGraceRef.current || now >= guestPlayGraceRef.current.until) {
+          if (state.playing && !isPlaying) b.play().catch(() => {});
+          if (!state.playing && isPlaying) b.pause();
+        }
         return;
       }
 
@@ -588,7 +789,7 @@ export function useRoomSync(params: {
       const sustainedBehind =
         !state.buffering &&
         behindSinceRef.current != null &&
-        Date.now() - behindSinceRef.current >= SYNC_BEHIND_SUSTAINED_MS;
+        now - behindSinceRef.current >= SYNC_BEHIND_SUSTAINED_MS;
       const behindEligible =
         state.doSeek === true ||
         signedDrift >= 0 ||
@@ -602,7 +803,7 @@ export function useRoomSync(params: {
 
       if (shouldSeek) {
         const inCooldown =
-          Date.now() - lastSeekAtRef.current < SYNC_SEEK_COOLDOWN_MS &&
+          now - lastSeekAtRef.current < SYNC_SEEK_COOLDOWN_MS &&
           absDrift < SYNC_SEEK_JUMP_S &&
           state.doSeek !== true;
         if (!inCooldown && (!bufferingRef.current || absDrift >= SYNC_SEEK_JUMP_S)) {
@@ -610,28 +811,33 @@ export function useRoomSync(params: {
             `[together] hard-seek to ${target.toFixed(2)}s (drift ${signedDrift.toFixed(2)}s, doSeek: ${state.doSeek === true})`,
           );
           b.seek(target);
-          lastSeekAtRef.current = Date.now();
+          lastSeekAtRef.current = now;
           if (syncSpeedAdjustedRef.current !== 0) {
             b.setRate(rate);
             syncSpeedAdjustedRef.current = 0;
           }
           behindSinceRef.current = null;
-          behindResetUntilRef.current = Date.now() + 3000;
+          behindResetUntilRef.current = now + 3000;
           syncCatchUpRef.current = true;
+          syncCatchUpUntilRef.current = now + 6000;
         }
       }
 
-      if (state.playing && !isPlaying) b.play().catch(() => {});
-      if (!state.playing && isPlaying) b.pause();
+      if (!guestPlayGraceRef.current || now >= guestPlayGraceRef.current.until) {
+        if (state.playing && !isPlaying) b.play().catch(() => {});
+        if (!state.playing && isPlaying) b.pause();
+      }
     });
   }, [
     inRoom,
     onIncomingState,
     clientId,
+    src.url,
     mediaKey,
     suppressOutgoingFor,
     snap.status,
     snap.durationSec,
+    snap.firstFrameReady,
     cast,
     togetherSlowOnDesync,
     togetherRewindThresholdSec,
@@ -718,7 +924,7 @@ export function useRoomSync(params: {
   useEffect(() => {
     selfFrameReadyRef.current = false;
     markReady(false);
-  }, [mediaKey, inRoom, markReady, selfFrameReadyRef]);
+  }, [src.url, mediaKey, inRoom, markReady, selfFrameReadyRef]);
   useEffect(() => {
     if (!inRoom) return;
     if (selfFrameReadyRef.current) {
@@ -738,6 +944,7 @@ export function useRoomSync(params: {
     if (!inRoom || hasStarted || roomSnapshot.started) return;
     const seed = roomSnapshot.syncState;
     const hostId = roomSnapshot.hostClientId;
+    const isReady = Boolean(snap.firstFrameReady || selfFrameReadyRef.current);
     if (
       !isHost &&
       seed &&
@@ -745,21 +952,53 @@ export function useRoomSync(params: {
       !seed.playing &&
       !!hostId &&
       seed.updatedBy === hostId &&
+      snap.durationSec > 0 &&
+      snap.status !== "loading" &&
+      isReady &&
       Math.abs(getPlaybackPosition() - seed.positionSeconds) > 1.5
     ) {
-      bridgeRef.current?.seek(seed.positionSeconds);
+      const safeTarget =
+        seed.positionSeconds >= Math.max(0, snap.durationSec - 20)
+          ? 0
+          : seed.positionSeconds;
+      bridgeRef.current?.seek(safeTarget);
     }
     if (snap.status === "playing") bridgeRef.current?.pause();
-  }, [inRoom, hasStarted, snap.status, isHost, roomSnapshot.started, roomSnapshot.syncState, roomSnapshot.hostClientId]);
+  }, [
+    inRoom,
+    hasStarted,
+    snap.status,
+    snap.durationSec,
+    snap.firstFrameReady,
+    isHost,
+    roomSnapshot.started,
+    roomSnapshot.syncState,
+    roomSnapshot.hostClientId,
+  ]);
 
   const lobbySeededRef = useRef(false);
+  const lastLobbySeedPosRef = useRef<number | null>(null);
   useEffect(() => {
     lobbySeededRef.current = false;
-  }, [mediaKey]);
+    lastLobbySeedPosRef.current = null;
+  }, [src.url, mediaKey]);
   useEffect(() => {
-    if (!inRoom || !isHost || hasStarted || lobbySeededRef.current) return;
+    if (!inRoom || !isHost || hasStarted) return;
     if (snap.durationSec <= 0) return;
+    const rawPos = getPlaybackPosition();
+    const safePos =
+      Number.isFinite(rawPos) && rawPos >= 0 && rawPos < Math.max(0, snap.durationSec - 20)
+        ? rawPos
+        : 0;
+    if (
+      lobbySeededRef.current &&
+      lastLobbySeedPosRef.current != null &&
+      Math.abs(safePos - lastLobbySeedPosRef.current) <= 1.5
+    ) {
+      return;
+    }
     lobbySeededRef.current = true;
+    lastLobbySeedPosRef.current = safePos;
     publishState({
       mediaId: src.meta.id,
       mediaTitle: src.meta.name ?? null,
@@ -767,13 +1006,25 @@ export function useRoomSync(params: {
         ? { season: src.episode.season, episode: src.episode.episode, name: src.episode.name }
         : null,
       posterUrl: src.meta.poster ?? null,
-      positionSeconds: getPlaybackPosition(),
+      positionSeconds: safePos,
       playing: false,
       speed: rateRef.current,
       source: hostSourceRef.current ?? undefined,
       guestPick: guestPickRef.current || undefined,
+      guestControl: guestControlRef ? guestControlRef.current : undefined,
     });
-  }, [inRoom, isHost, hasStarted, snap.durationSec, publishState, src.meta.id, src.meta.name, src.meta.poster, src.episode]);
+  }, [
+    inRoom,
+    isHost,
+    hasStarted,
+    snap.durationSec,
+    snap.positionSec,
+    publishState,
+    src.meta.id,
+    src.meta.name,
+    src.meta.poster,
+    src.episode,
+  ]);
 
   useEffect(() => {
     if (!inRoom || isHost || hasStarted) return;
@@ -782,11 +1033,28 @@ export function useRoomSync(params: {
 
   useEffect(() => {
     initialSyncDoneRef.current = false;
-  }, [mediaKey, inRoom]);
+  }, [src.url, mediaKey, inRoom]);
   useEffect(() => {
     if (!inRoom || isHost || !hasStarted || initialSyncDoneRef.current) return;
     const state = roomSnapshot.syncState;
     if (!state?.mediaId || isDifferentMedia(state, src)) return;
+    const curSnap = snapRef.current;
+    const isReady =
+      curSnap.firstFrameReady !== undefined
+        ? Boolean(curSnap.firstFrameReady || selfFrameReadyRef.current)
+        : selfFrameReadyRef.current
+          ? true
+          : curSnap.status === "playing";
+    if (
+      curSnap.status === "loading" ||
+      curSnap.status === "idle" ||
+      curSnap.status === "error" ||
+      curSnap.status === "ended" ||
+      durationRef.current <= 0 ||
+      !isReady
+    ) {
+      return;
+    }
     const b = bridgeRef.current;
     if (!b) return;
     initialSyncDoneRef.current = true;
@@ -796,24 +1064,38 @@ export function useRoomSync(params: {
       `[together] initial-sync to ${target.toFixed(2)}s (rate ${syncRate(state)})`,
     );
     b.setRate(syncRate(state));
-    lastSeekAtRef.current = Date.now();
+    const now = Date.now();
+    lastSeekAtRef.current = now;
     syncCatchUpRef.current = true;
+    syncCatchUpUntilRef.current = now + 6000;
     b.seek(target);
     if (state.playing) b.play().catch(() => {});
     else b.pause();
-  }, [inRoom, isHost, hasStarted, roomSnapshot.syncState, mediaKey, suppressOutgoingFor]);
+  }, [
+    inRoom,
+    isHost,
+    hasStarted,
+    roomSnapshot.syncState,
+    src.url,
+    mediaKey,
+    suppressOutgoingFor,
+    snap.status,
+    snap.durationSec,
+    snap.firstFrameReady,
+  ]);
 
   useEffect(() => {
     if (!inRoom || isHost || !hasStarted) return;
     if (!sendCommand) return;
     const reportState = () => {
-      const isReady = snap.firstFrameReady || selfFrameReadyRef.current;
+      const curSnap = snapRef.current;
+      const isReady = Boolean(curSnap.firstFrameReady || selfFrameReadyRef.current);
       if (!initialSyncDoneRef.current || durationRef.current <= 0 || !isReady) return;
       sendCommand({
         action: "report",
         positionSeconds: getPlaybackPosition(),
         playing: statusRef.current === "playing",
-        buffering: bufferingRef.current || syncCatchUpRef.current,
+        buffering: bufferingRef.current === true,
         mediaId: src.meta.id,
         episode: src.episode ? { season: src.episode.season, episode: src.episode.episode } : null,
         updatedAt: Date.now(),
@@ -827,7 +1109,7 @@ export function useRoomSync(params: {
   useEffect(() => {
     if (!inRoom || isHost || !hasStarted) return;
     if (!snap.buffering) return;
-    const isReady = snap.firstFrameReady || selfFrameReadyRef.current;
+    const isReady = Boolean(snap.firstFrameReady || selfFrameReadyRef.current);
     if (!sendCommand || !initialSyncDoneRef.current || durationRef.current <= 0 || !isReady) return;
     sendCommand({
       action: "report",
@@ -842,7 +1124,7 @@ export function useRoomSync(params: {
 
   useEffect(() => {
     if (!inRoom) return;
-    const isReady = snap.firstFrameReady || selfFrameReadyRef.current;
+    const isReady = Boolean(snap.firstFrameReady || selfFrameReadyRef.current);
     if (durationRef.current <= 0 || !isReady) {
       prevAudioIdRef.current = selectedAudioId;
       prevSubIdRef.current = selectedSubId;
@@ -858,13 +1140,15 @@ export function useRoomSync(params: {
     prevAudioIdRef.current = selectedAudioId;
     prevSubIdRef.current = selectedSubId;
 
-    if (audioChanged || subChanged) {
+    if (audioChanged) {
       console.info(
         `[together] track-switch-grace (audio: ${selectedAudioId}, sub: ${selectedSubId})`,
       );
-      behindResetUntilRef.current = Date.now() + 4000;
+      const now = Date.now();
+      behindResetUntilRef.current = now + 4000;
       behindSinceRef.current = null;
       syncCatchUpRef.current = true;
+      syncCatchUpUntilRef.current = now + 4000;
       if (!isHost && sendCommand && (initialSyncDoneRef.current || hasStarted)) {
         sendCommand({
           action: "report",
@@ -875,9 +1159,12 @@ export function useRoomSync(params: {
           episode: src.episode
             ? { season: src.episode.season, episode: src.episode.episode }
             : null,
-          updatedAt: Date.now(),
+          updatedAt: now,
         });
       }
+    } else if (subChanged) {
+      behindResetUntilRef.current = Date.now() + 2000;
+      behindSinceRef.current = null;
     }
   }, [
     inRoom,
@@ -891,5 +1178,13 @@ export function useRoomSync(params: {
     src.episode,
   ]);
 
-  return { inRoomRef, isHostRef, initialSyncDoneRef };
+  return {
+    inRoomRef,
+    isHostRef,
+    initialSyncDoneRef,
+    notifyHostPlayPause,
+    notifyHostSeek,
+    notifyGuestPlayPause,
+    notifyGuestSeek,
+  };
 }

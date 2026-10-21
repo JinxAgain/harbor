@@ -42,6 +42,8 @@ export type RemotePlaybackBinding = {
   stopCast: () => Promise<void>;
   /** Full cast path (URL resolve + load), same as the player cast menu. */
   onPickDevice: (device: CastDeviceInfo) => Promise<void>;
+  onPlayPause?: () => void;
+  onSeek?: (sec: number) => void;
   onPrevEpisode?: () => void;
   onNextEpisode?: () => void;
   hasPrevEpisode?: boolean;
@@ -538,12 +540,19 @@ export async function dispatchRemoteCommand(command: RemoteCommand): Promise<voi
     case "play": {
       if (!b) return;
       if (b.castDevice) await b.playCast();
-      else await b.bridge?.play().catch(() => {});
+      else if (b.onPlayPause) {
+        if (b.snap.status !== "playing") b.onPlayPause();
+      } else await b.bridge?.play().catch(() => {});
       notify();
       return;
     }
     case "togglePlayback": {
       if (!b) return;
+      if (b.onPlayPause && !b.castDevice) {
+        b.onPlayPause();
+        notify();
+        return;
+      }
       const playing = b.castDevice ? b.castPlaying : b.snap.status === "playing";
       if (b.castDevice) {
         if (playing) await b.pauseCast();
@@ -569,13 +578,16 @@ export async function dispatchRemoteCommand(command: RemoteCommand): Promise<voi
     case "pause": {
       if (!b) return;
       if (b.castDevice) await b.pauseCast();
-      else b.bridge?.pause();
+      else if (b.onPlayPause) {
+        if (b.snap.status === "playing") b.onPlayPause();
+      } else b.bridge?.pause();
       notify();
       return;
     }
     case "seek": {
       if (!b) return;
       if (b.castDevice) await b.seekCast(Math.max(0, command.positionSec));
+      else if (b.onSeek) b.onSeek(Math.max(0, command.positionSec));
       else b.bridge?.seek(Math.max(0, command.positionSec));
       notify();
       return;

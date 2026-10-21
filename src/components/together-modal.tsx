@@ -11,6 +11,7 @@ import { useT } from "@/lib/i18n";
 import { Tooltip } from "@/views/detail/tooltip";
 import { Avatar } from "./together-modal/avatar";
 import { ChatPanel } from "./together-modal/chat-panel";
+import { GuestControlToggle } from "./together-modal/guest-control-toggle";
 import { GuestPickToggle } from "./together-modal/guest-pick-toggle";
 import { InvitePanel } from "./together-modal/invite-panel";
 import { ReturnToVideo } from "./together-modal/return-to-video";
@@ -430,7 +431,12 @@ export function TogetherPopover({
               onSend={sendChat}
             />
 
-            {snapshot.hostClientId === clientId && <GuestPickToggle />}
+            {snapshot.hostClientId === clientId && (
+              <>
+                <GuestPickToggle />
+                <GuestControlToggle />
+              </>
+            )}
 
             <button
               onClick={() => update({ togetherShareCursors: !settings.togetherShareCursors })}
