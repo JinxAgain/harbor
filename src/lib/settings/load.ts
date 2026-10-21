@@ -51,6 +51,13 @@ function sanitizePosterDockTransition(value: unknown): number {
   return Math.min(1500, Math.max(250, Math.round(value)));
 }
 
+function sanitizeWatchedThreshold(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT.watchedThreshold;
+  }
+  return Math.min(95, Math.max(70, Math.round(value)));
+}
+
 function sanitizeTopbarAppearance(
   value: unknown,
   transparent: unknown,
@@ -369,6 +376,7 @@ function parseStoredSettings(raw: string | null): Settings {
         parsed.topbarGlassControls,
       ),
       posterDockTransitionMs: sanitizePosterDockTransition(parsed.posterDockTransitionMs),
+      watchedThreshold: sanitizeWatchedThreshold(parsed.watchedThreshold),
       bigPictureDisplay: sanitizeDisplaySelection(parsed.bigPictureDisplay),
       playerSeparateDisplay: sanitizeDisplaySelection(parsed.playerSeparateDisplay),
       playerSeparateCoverTaskbar:

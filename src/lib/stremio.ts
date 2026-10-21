@@ -4,7 +4,7 @@ import { isDetectedAnime } from "./anime-detect";
 
 const API = "https://api.strem.io/api";
 
-const CW_FINISHED_RATIO = 0.9;
+const CW_FINISHED_RATIO = 0.85;
 
 export type User = {
   _id: string;

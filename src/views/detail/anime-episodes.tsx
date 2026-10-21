@@ -8,6 +8,12 @@ import { effectiveOrderProvider, tvdbPanelEnabled } from "@/lib/settings/episode
 import { useView } from "@/lib/view";
 import { fetchWatchedKeySet } from "@/lib/trakt/history";
 import { useTrakt } from "@/lib/trakt/provider";
+import { useSimkl } from "@/lib/simkl/provider";
+import {
+  loadSimklWatchedMap,
+  peekSimklWatchedMap,
+  simklWatchedForId,
+} from "@/lib/simkl/list-status";
 import { useAnilistWatched } from "@/lib/anilist/use-anilist-watched";
 import { useMalWatched } from "@/lib/mal/use-mal-watched";
 import { EpisodeWatchedMenu, type WatchedMenuTarget } from "@/components/episode-watched-menu";
@@ -102,6 +108,32 @@ export function AnimeEpisodes({
     };
   }, [traktConnected]);
 
+  const { isConnected: simklConnected } = useSimkl();
+  const [simklMap, setSimklMap] = useState<Map<string, Set<string>>>(() =>
+    simklConnected ? peekSimklWatchedMap() : new Map(),
+  );
+
+  useEffect(() => {
+    if (!simklConnected) {
+      setSimklMap(new Map());
+      return;
+    }
+    let cancelled = false;
+    loadSimklWatchedMap()
+      .then((m) => {
+        if (!cancelled) setSimklMap(m);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [simklConnected]);
+
+  const simklWatched = useMemo(
+    () => simklWatchedForId(simklMap, trackId, meta.id, imdbId),
+    [simklMap, trackId, meta.id, imdbId],
+  );
+
   const { watchedKeys: anilistWatched, completed: anilistCompleted } = useAnilistWatched(
     trackId ?? meta.id,
     episodes,
@@ -156,6 +188,7 @@ export function AnimeEpisodes({
     trackId,
     traktWatched,
     anilistWatched,
+    simklWatched,
     malWatched,
     mwVersion,
   });
@@ -311,6 +344,10 @@ export function AnimeEpisodes({
     for (const e of displayEpisodes) if (e.sourceMetaId != null) ids.add(e.sourceMetaId);
     return ids.size === 1 ? [...ids][0] : null;
   }, [displayEpisodes]);
+  const entrySimklWatched = useMemo(
+    () => (displaySourceId ? simklWatchedForId(simklMap, displaySourceId) : undefined),
+    [simklMap, displaySourceId],
+  );
   const entryPoolEpisodes = useMemo(
     () =>
       displaySourceId ? franchiseEpisodes.filter((e) => e.sourceMetaId === displaySourceId) : [],
@@ -364,9 +401,11 @@ export function AnimeEpisodes({
     trackId,
     traktWatched,
     anilistWatched,
+    simklWatched,
     malWatched,
     entrySourceId: displaySourceId,
     entryAnilistWatched,
+    entrySimklWatched,
     entryMalWatched,
     mwVersion,
     settings,

@@ -9,6 +9,10 @@ export function setSkipSegmentsView(next: SkipSegment[]): void {
   listeners.forEach((l) => l());
 }
 
+export function getSkipSegmentsView(): SkipSegment[] {
+  return segments;
+}
+
 function subscribe(l: () => void): () => void {
   listeners.add(l);
   return () => listeners.delete(l);

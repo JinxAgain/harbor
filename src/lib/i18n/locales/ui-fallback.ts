@@ -1,5 +1,8 @@
 // Newly introduced UI copy remains usable until each locale provides an override.
 const uiFallback: Record<string, string> = {
+  "Mark as watched threshold": "Mark as watched threshold",
+  "How much of a video you need to watch before it counts as finished, advances Continue Watching to the next episode, and scrobbles to Simkl and Trakt.":
+    "How much of a video you need to watch before it counts as finished, advances Continue Watching to the next episode, and scrobbles to Simkl and Trakt.",
   "Lower subtitles": "Lower subtitles",
   "Raise subtitles": "Raise subtitles",
   "Move subtitles closer to the bottom of the video.":

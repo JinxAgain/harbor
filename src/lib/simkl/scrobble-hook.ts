@@ -4,6 +4,7 @@ import { simklScrobble, buildBody, type ScrobbleInfo } from "./scrobble";
 import { recordPendingWatch, removePendingWatch } from "./pending-sync";
 import { recordWatchedFallback } from "./record-watched";
 import { getPlaybackPosition } from "@/lib/player/playback-clock";
+import { isPlaybackFinished } from "@/lib/player/playback-finished";
 import { useSettings } from "@/lib/settings";
 import type { PlayerSrc } from "@/lib/view";
 import {
@@ -41,6 +42,8 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
   const { isConnected } = useSimkl();
   const { settings } = useSettings();
   const enabled = isConnected && settings.simklScrobbleEnabled;
+  const thresholdRef = useRef(settings.watchedThreshold ?? WATCHED_MARK_PCT);
+  thresholdRef.current = settings.watchedThreshold ?? WATCHED_MARK_PCT;
   const lastActionRef = useRef<LastAction>(null);
   const lastKeyRef = useRef<string | null>(null);
   const infoRef = useRef<ScrobbleInfo>(srcInfo(src));
@@ -49,6 +52,7 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
     metaId: src.meta.id,
     episode: src.episode,
     info: infoRef.current,
+    durationSec: snap.durationSec,
   });
   const progressRef = useRef(0);
   const loadResetSeenRef = useRef(true);
@@ -67,12 +71,20 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       const a = stopArgsRef.current;
       if (a.snap.durationSec < STUB_MAX_SEC) return;
       if (lastActionRef.current !== "start" && lastActionRef.current !== "pause") return;
-      const live = (getPlaybackPosition() / a.snap.durationSec) * 100;
+      const livePos = getPlaybackPosition();
+      const live = (livePos / a.snap.durationSec) * 100;
       const progress = Math.min(100, Math.max(0, live > 0 ? live : progressRef.current));
-      const action = progress >= WATCHED_MARK_PCT ? "stop" : "pause";
+      const posSec = livePos > 0 ? livePos : (progress / 100) * a.snap.durationSec;
+      const finished =
+        progress >= thresholdRef.current ||
+        isPlaybackFinished(posSec, a.snap.durationSec, thresholdRef.current);
+      const action = finished ? "stop" : "pause";
       sendBeacon(a.metaId, a.episode, action === "stop" ? 100 : progress, action, a.info);
       if (action === "stop") {
         recordPendingWatch(a.metaId, a.episode, a.info?.imdb);
+        void recordWatchedFallback(a.metaId, a.episode, a.info).then((ok) => {
+          if (ok) removePendingWatch(a.metaId, a.episode);
+        });
       }
       lastActionRef.current = action;
     };
@@ -85,7 +97,15 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       const prev = prevIdentityRef.current;
       const prevProgress = progressRef.current;
       if (enabled && lastActionRef.current !== "stop") {
-        if (prevProgress >= WATCHED_MARK_PCT) {
+        const finished =
+          prevProgress >= thresholdRef.current ||
+          (prev.durationSec > 0 &&
+            isPlaybackFinished(
+              (prevProgress / 100) * prev.durationSec,
+              prev.durationSec,
+              thresholdRef.current,
+            ));
+        if (finished) {
           sendBeacon(prev.metaId, prev.episode, 100, "stop", prev.info);
           void recordWatchedFallback(prev.metaId, prev.episode, prev.info).then((ok) => {
             if (!ok) recordPendingWatch(prev.metaId, prev.episode, prev.info?.imdb);
@@ -100,8 +120,13 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       loadResetSeenRef.current = false;
     }
     lastKeyRef.current = key;
-    prevIdentityRef.current = { metaId, episode: src.episode, info: infoRef.current };
-  }, [enabled, key, metaId, src.episode]);
+    prevIdentityRef.current = {
+      metaId,
+      episode: src.episode,
+      info: infoRef.current,
+      durationSec: snap.durationSec,
+    };
+  }, [enabled, key, metaId, src.episode, snap.durationSec]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -110,15 +135,19 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
         snap.durationSec >= STUB_MAX_SEC &&
         (lastActionRef.current === "start" || lastActionRef.current === "pause")
       ) {
+        const livePos = getPlaybackPosition() || snap.positionSec;
         const endPct =
           snap.durationSec > 0
             ? Math.min(
                 100,
-                Math.max(0, progressRef.current, (getPlaybackPosition() / snap.durationSec) * 100),
+                Math.max(0, progressRef.current, (livePos / snap.durationSec) * 100),
               )
             : 100;
-        sendBeacon(metaId, src.episode, endPct, "stop", infoRef.current);
-        if (endPct >= WATCHED_MARK_PCT) {
+        const finished =
+          endPct >= thresholdRef.current ||
+          isPlaybackFinished(livePos, snap.durationSec, thresholdRef.current);
+        sendBeacon(metaId, src.episode, finished ? 100 : endPct, "stop", infoRef.current);
+        if (endPct >= WATCHED_MARK_PCT || finished) {
           const ep = src.episode;
           const info = infoRef.current;
           void recordWatchedFallback(metaId, ep, info).then((ok) => {
@@ -163,9 +192,14 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       if (lastActionRef.current !== "start" && lastActionRef.current !== "pause") return;
       const a = stopArgsRef.current;
       if (a.snap.durationSec >= STUB_MAX_SEC) {
-        const live = (getPlaybackPosition() / a.snap.durationSec) * 100;
+        const livePos = getPlaybackPosition();
+        const live = (livePos / a.snap.durationSec) * 100;
         const progress = Math.min(100, Math.max(0, live > 0 ? live : progressRef.current));
-        const action = progress >= WATCHED_MARK_PCT ? "stop" : "pause";
+        const posSec = livePos > 0 ? livePos : (progress / 100) * a.snap.durationSec;
+        const finished =
+          progress >= thresholdRef.current ||
+          isPlaybackFinished(posSec, a.snap.durationSec, thresholdRef.current);
+        const action = finished ? "stop" : "pause";
         sendBeacon(a.metaId, a.episode, action === "stop" ? 100 : progress, action, a.info);
         if (action === "stop") {
           recordPendingWatch(a.metaId, a.episode, a.info?.imdb);

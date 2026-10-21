@@ -103,7 +103,10 @@ export function getEpisodeProgress(
   const traktDone = traktKey ? traktWatched.has(traktKey) : false;
   const stremioDone = stremioWatched ? stremioWatched.has(`${season}:${episode}`) : false;
   const anilistDone = anilistWatched ? anilistWatched.has(`${season}:${episode}`) : false;
-  const simklDone = simklWatched ? simklWatched.has(`${season}:${episode}`) : false;
+  const simklDone = simklWatched
+    ? simklWatched.has(`${season}:${episode}`) ||
+      (canonDiffers && simklWatched.has(`${canonS}:${canonE}`))
+    : false;
   const malDone = malWatched ? malWatched.has(`${season}:${episode}`) : false;
   const manualDone = resumeIds.some(
     (id) =>

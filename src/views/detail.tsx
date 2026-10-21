@@ -18,7 +18,8 @@ import {
 import { isTextInLanguage } from "@/lib/providers/anime-episode-build";
 import { peekAnimeArt, saveAnimeArt } from "@/lib/providers/anime-art-cache";
 import { imdbToKitsu, tmdbTvToKitsu } from "@/lib/providers/anime-mapping";
-import { kitsuAnime, kitsuMainTvSeries } from "@/lib/providers/kitsu";
+import { kitsuAnime, kitsuMainTvSeries, parseKitsuId } from "@/lib/providers/kitsu";
+import { splitFranchiseDisplaySeason } from "@/lib/streams/anime-identity-core";
 import { isOrphanAnimeCandidate } from "@/lib/anime-detect";
 import { recordAnimeCwId } from "@/lib/anime-cw-ids";
 import { stripFranchiseSuffix } from "@/lib/providers/jikan";
@@ -44,7 +45,7 @@ import { isCapstanId, titlesAgree } from "@/lib/streams/plugins/extension/detail
 import { resolveMeta } from "@/lib/meta-resource";
 import { useMdblistScores } from "@/lib/providers/mdblist";
 import { hasResumeProgress, lastPlayedEpisode, readResumeEntry, saveResumeMs } from "@/lib/resume";
-import { advancePastFinished } from "@/lib/detail-resume-advance";
+import { advancePastFinished, isEpisodeFinished } from "@/lib/detail-resume-advance";
 import { localCwEntry } from "@/lib/local-cw";
 import { omdbPrefetch, omdbScores, type OmdbScores } from "@/lib/providers/omdb";
 import { harborImdbTitle } from "@/lib/providers/harbor-imdb";
@@ -1309,7 +1310,76 @@ export function DetailView({
 
   const lastPlay = useMemo(() => {
     if (episodeHint) return episodeHint;
-    if (isAnime) return lastPlayedEpisode(meta.id);
+    if (isAnime) {
+      const lp = lastPlayedEpisode(meta.id);
+      const lc = localCwEntry(meta.id);
+      const useLc =
+        lc?.type === "series" &&
+        typeof lc.season === "number" &&
+        typeof lc.episode === "number" &&
+        lc.season >= 1 &&
+        lc.episode >= 1 &&
+        (!lp || lc.t > lp.t);
+      const base = useLc
+        ? {
+            season: lc.season!,
+            episode: lc.episode!,
+            displaySeason:
+              lp && lp.episode === lc.episode
+                ? lp.displaySeason
+                : splitFranchiseDisplaySeason(parseKitsuId(meta.id)),
+          }
+        : lp;
+      if (!base) return null;
+      const thresholdPct = settings.watchedThreshold ?? 85;
+      const matchIdx = animeEpisodes.findIndex(
+        (e) =>
+          ((e.seasonNumber ?? 1) === base.season && e.number === base.episode) ||
+          (e.imdbSeason === (base.displaySeason ?? base.season) &&
+            (e.imdbEpisode ?? e.number) === base.episode) ||
+          (e.sourceMetaId == null && e.number === base.episode),
+      );
+      const matchEp = matchIdx >= 0 ? animeEpisodes[matchIdx] : undefined;
+      const epDurSec = matchEp?.length && matchEp.length > 0 ? matchEp.length * 60 : undefined;
+      const isEpDone = (s: number, e: number, ds?: number, durSec?: number): boolean =>
+        manualWatchedState(meta.id, s, e) === true ||
+        (ds != null && manualWatchedState(meta.id, ds, e) === true) ||
+        isEpisodeFinished(meta.id, { season: s, episode: e }, thresholdPct, durSec) ||
+        (ds != null && isEpisodeFinished(meta.id, { season: ds, episode: e }, thresholdPct, durSec));
+      if (
+        isEpDone(
+          base.season,
+          base.episode,
+          base.displaySeason ?? matchEp?.imdbSeason,
+          epDurSec,
+        ) &&
+        matchIdx >= 0
+      ) {
+        for (let i = matchIdx + 1; i < animeEpisodes.length; i += 1) {
+          const nextEp = animeEpisodes[i];
+          const nextS = idAnime
+            ? (nextEp.seasonNumber ?? 1)
+            : (nextEp.imdbSeason ?? nextEp.seasonNumber ?? 1);
+          const nextE = idAnime ? nextEp.number : (nextEp.imdbEpisode ?? nextEp.number);
+          const nextDs =
+            base.displaySeason ??
+            splitFranchiseDisplaySeason(parseKitsuId(meta.id)) ??
+            (nextEp.imdbSeason != null && nextEp.imdbSeason >= 1
+              ? nextEp.imdbSeason
+              : undefined);
+          const nextDurSec =
+            nextEp.length && nextEp.length > 0 ? nextEp.length * 60 : undefined;
+          if (!isEpDone(nextS, nextE, nextDs, nextDurSec)) {
+            return {
+              season: nextS,
+              episode: nextE,
+              ...(nextDs != null ? { displaySeason: nextDs } : {}),
+            };
+          }
+        }
+      }
+      return base;
+    }
     const candidates: Array<{ season: number; episode: number; t: number }> = [];
     const ids = Array.from(
       new Set(
@@ -1360,6 +1430,7 @@ export function DetailView({
       meta.id,
       { season: eligible[0].season, episode: eligible[0].episode },
       cinemetaFull?.videos,
+      settings.watchedThreshold,
     );
   }, [
     meta.id,
@@ -1370,6 +1441,9 @@ export function DetailView({
     episodeHint,
     seriesWatchedVer,
     cinemetaFull?.videos,
+    animeEpisodes,
+    idAnime,
+    settings.watchedThreshold,
   ]);
 
   useEffect(() => {

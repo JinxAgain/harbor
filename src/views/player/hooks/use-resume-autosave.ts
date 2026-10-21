@@ -32,6 +32,7 @@ import { ANIME_CLOUD_ID, CLOUD_OK } from "@/lib/stremio";
 import { syncSeriesWatchedToStremio } from "@/lib/stremio-episode-watched";
 import { isNaturalEnd } from "@/lib/player/playback-end";
 import { playerLoadIdentity } from "@/lib/player/load-identity";
+import { DEFAULT_WATCHED_THRESHOLD_PCT, isPlaybackFinished } from "@/lib/player/playback-finished";
 
 const TICK_MS = 4000;
 const MIN_POSITION_SEC = 5;
@@ -85,6 +86,8 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
   anilistAutoSyncRef.current = settings.anilistAutoSync;
   const malAutoSyncRef = useRef(settings.malAutoSync);
   malAutoSyncRef.current = settings.malAutoSync;
+  const watchedThresholdRef = useRef(settings.watchedThreshold ?? DEFAULT_WATCHED_THRESHOLD_PCT);
+  watchedThresholdRef.current = settings.watchedThreshold ?? DEFAULT_WATCHED_THRESHOLD_PCT;
   // Cleanup must retain the outgoing source, duration and position together.
   // A new episode can render before the bridge publishes its loading reset.
   const sourceIdentity = playerLoadIdentity(src, src.url, season, episode);
@@ -154,8 +157,12 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
     if (pos < MIN_POSITION_SEC) return;
     const seasonForeign = splitSeasonForeign(s, se);
     const cs = seasonForeign ? se : canonSeason(s, se);
+    const thresholdPct = watchedThresholdRef.current ?? DEFAULT_WATCHED_THRESHOLD_PCT;
     const finished =
-      (sn.durationSec > 0 && pos / sn.durationSec >= WATCHED_RATIO) || isNaturalEnd(sn, pos);
+      (typeof isPlaybackFinished === "function"
+        ? isPlaybackFinished(pos, sn.durationSec, thresholdPct)
+        : sn.durationSec > 0 && pos / sn.durationSec >= WATCHED_RATIO) ||
+      isNaturalEnd(sn, pos);
     current.lastSaved = pos * 1000;
     const covered =
       s.episodeSpan && cs === s.episodeSpan.season
@@ -216,8 +223,12 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
         poster: s.meta.poster,
         background: s.meta.background,
       });
-      for (const coveredEpisode of covered.length ? covered : [ep])
+      for (const coveredEpisode of covered.length ? covered : [ep]) {
         setManualWatched(id, cs, coveredEpisode, true);
+        if (isAnimeId(id) && typeof se === "number" && se >= 1 && se !== cs) {
+          setManualWatched(id, se, coveredEpisode, true);
+        }
+      }
       void syncSeriesWatchedToStremio(s.meta, rv ? rid : null);
     }
     if (s.meta.type === "movie" && finished) {
@@ -268,7 +279,10 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
           season: cs,
           episode: ep,
           videoId: s.episode?.videoId ?? s.episode?.kitsuStreamId,
-          positionMs: Math.floor(pos * 1000),
+          positionMs:
+            finished && sn.durationSec > 0
+              ? Math.floor(sn.durationSec * 1000)
+              : Math.floor(pos * 1000),
           durationMs: Math.max(0, Math.floor(sn.durationSec * 1000)),
           t: Date.now(),
         },

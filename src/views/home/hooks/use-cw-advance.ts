@@ -37,8 +37,10 @@ import { isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { anyProfileSharesStremioWith, useProfiles } from "@/lib/profiles";
 import { listLocalCw } from "@/lib/local-cw";
 import { localToLibraryItem } from "@/lib/continue-watching";
-
-const FINISHED_RATIO = 0.9;
+import {
+  DEFAULT_WATCHED_THRESHOLD_PCT,
+  isPlaybackFinished,
+} from "@/lib/player/playback-finished";
 const ANIME_ID = /^(kitsu|mal|anilist|anidb):/;
 
 const EMPTY_TRAKT_WATCHED: Set<string> = new Set();
@@ -46,12 +48,16 @@ const EMPTY_SIMKL_WATCHED: Map<string, Set<string>> = new Map();
 const EMPTY_ANILIST_WATCHED: Map<string, Set<string>> = new Map();
 const EMPTY_SIMKL_STATUS: Map<string, WatchlistStatus> = new Map();
 
-function isFinishedSeries(i: LibraryItem): boolean {
+function isFinishedSeries(
+  i: LibraryItem,
+  thresholdPct: number = DEFAULT_WATCHED_THRESHOLD_PCT,
+): boolean {
   if (i.type !== "series" || !i.state) return false;
   const dur = i.state.duration ?? 0;
   const off = i.state.timeOffset ?? 0;
-  if ((i.state.flaggedWatched ?? 0) > 0) return dur <= 0 || off / dur >= FINISHED_RATIO;
-  return dur > 0 && off / dur >= FINISHED_RATIO;
+  const finished = dur > 0 && isPlaybackFinished(off / 1000, dur / 1000, thresholdPct, []);
+  if ((i.state.flaggedWatched ?? 0) > 0) return dur <= 0 || off <= 0 || finished;
+  return finished;
 }
 
 function currentEpisode(i: LibraryItem): { season: number; episode: number } | null {
@@ -78,12 +84,13 @@ export function shouldDropFinished(
   effCur: { season: number; episode: number },
   nextEp: PlayEpisode | null | undefined,
   hideCaughtUp = false,
+  thresholdPct: number = DEFAULT_WATCHED_THRESHOLD_PCT,
 ): boolean {
   if (!fetchOk || list.length === 0) return false;
   const finaleEp = list[list.length - 1];
   const dur = state?.duration ?? 0;
   const off = state?.timeOffset ?? 0;
-  const midEpisode = off > 0 && (dur <= 0 || off / dur < FINISHED_RATIO);
+  const midEpisode = off > 0 && (dur <= 0 || !isPlaybackFinished(off / 1000, dur / 1000, thresholdPct, []));
   const freshMidResume =
     animeMode === "only" && midEpisode && finaleEp != null && effCur.episode < finaleEp.episode;
   if (freshMidResume || midEpisode) return false;
@@ -113,8 +120,9 @@ function watchedPredicate(
   anilistWatched: Map<string, Set<string>>,
   simklStatus: Map<string, WatchlistStatus>,
   privateOnly = false,
+  thresholdPct: number = DEFAULT_WATCHED_THRESHOLD_PCT,
 ) {
-  const finished = isFinishedSeries(i);
+  const finished = isFinishedSeries(i, thresholdPct);
   if (privateOnly) {
     return (season: number, episode: number) =>
       season === cur.season && episode === cur.episode && finished;
@@ -184,6 +192,7 @@ export function useCwAdvance(
   useCwDismissVersion();
   const { settings } = useSettings();
   const hideCaughtUp = settings.cwHideCaughtUp;
+  const watchedThreshold = settings.watchedThreshold ?? DEFAULT_WATCHED_THRESHOLD_PCT;
   const { activeProfile, profiles } = useProfiles();
   const privacyOwner =
     settings.cwPerProfile && anyProfileSharesStremioWith(activeProfile, profiles)
@@ -306,12 +315,20 @@ export function useCwAdvance(
             effectiveSimklWatched,
             anilistWatched,
             effectiveSimklStatus,
+            false,
+            watchedThreshold,
           )(cur.season, cur.episode)
         );
       };
-      const candidates = items.filter(
-        (i) => currentEpisode(i) != null && (isFinishedSeries(i) || completedRemotely(i)),
-      );
+      const candidates = items.filter((i) => {
+        const cur = currentEpisode(i);
+        if (!cur) return false;
+        return (
+          isFinishedSeries(i, watchedThreshold) ||
+          manualWatchedState(i._id, cur.season, cur.episode) === true ||
+          completedRemotely(i)
+        );
+      });
       const next = new Map<string, LibraryItem>();
       const remove = new Set<string>();
       for (const i of candidates) {
@@ -390,6 +407,7 @@ export function useCwAdvance(
           anilistWatched,
           effectiveSimklStatus,
           !!privacyOwner,
+          watchedThreshold,
         );
         const aliasCur = scoped ? providerAliasCoords(list, effCur.season, effCur.episode) : [];
         const watchedCur =
@@ -441,6 +459,7 @@ export function useCwAdvance(
             effCur,
             nextEp,
             hideCaughtUp,
+            watchedThreshold,
           )
         ) {
           remove.add(i._id);
@@ -494,6 +513,7 @@ export function useCwAdvance(
           anilistWatched,
           effectiveSimklStatus,
           !!privacyOwner,
+          watchedThreshold,
         );
       const resurfaced = await resurfaceCandidates(
         lib,
@@ -570,6 +590,7 @@ export function useCwAdvance(
     simklSession,
     simklEnabled,
     simkl,
+    watchedThreshold,
   ]);
 
   if (

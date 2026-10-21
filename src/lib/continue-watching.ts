@@ -46,7 +46,7 @@ export function localToLibraryItem(e: ReturnType<typeof listLocalCw>[number]): L
       video_id:
         e.videoId ??
         (e.season != null && e.episode != null ? `${e.id}:${e.season}:${e.episode}` : undefined),
-      flaggedWatched: e.durationMs > 0 && e.positionMs / e.durationMs >= 0.9 ? 1 : 0,
+      flaggedWatched: e.durationMs > 0 && e.positionMs / e.durationMs >= 0.85 ? 1 : 0,
       lastWatched: new Date(e.t).toISOString(),
     },
     removed: false,

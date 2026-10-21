@@ -15,9 +15,11 @@ export function useAnimeProgressMap({
   trackId,
   traktWatched,
   anilistWatched,
+  simklWatched,
   malWatched,
   entrySourceId,
   entryAnilistWatched,
+  entrySimklWatched,
   entryMalWatched,
   mwVersion,
   settings,
@@ -28,9 +30,11 @@ export function useAnimeProgressMap({
   trackId?: string;
   traktWatched: Set<string>;
   anilistWatched?: Set<string>;
+  simklWatched?: Set<string>;
   malWatched?: Set<string>;
   entrySourceId?: string | null;
   entryAnilistWatched?: Set<string>;
+  entrySimklWatched?: Set<string>;
   entryMalWatched?: Set<string>;
   mwVersion: number;
   settings: Parameters<typeof spoilerMaskFor>[0];
@@ -51,7 +55,7 @@ export function useAnimeProgressMap({
         traktWatched,
         undefined,
         isCurrent ? anilistWatched : isEntry ? entryAnilistWatched : undefined,
-        undefined,
+        isCurrent ? simklWatched : isEntry ? entrySimklWatched : undefined,
         isCurrent ? malWatched : isEntry ? entryMalWatched : undefined,
         ep.imdbSeason,
         ep.imdbEpisode,
@@ -72,7 +76,7 @@ export function useAnimeProgressMap({
           traktWatched,
           undefined,
           anilistWatched,
-          undefined,
+          simklWatched,
           malWatched,
           ep.imdbSeason,
           ep.imdbEpisode,
@@ -91,9 +95,11 @@ export function useAnimeProgressMap({
     trackId,
     traktWatched,
     anilistWatched,
+    simklWatched,
     malWatched,
     entrySourceId,
     entryAnilistWatched,
+    entrySimklWatched,
     entryMalWatched,
     mwVersion,
   ]);

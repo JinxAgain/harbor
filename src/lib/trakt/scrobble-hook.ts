@@ -3,6 +3,8 @@ import { useTrakt } from "./provider";
 import { TRAKT_API_BASE, TRAKT_API_VERSION, TRAKT_CLIENT_ID } from "./config";
 import { getSession } from "./session";
 import { getPlaybackPosition } from "@/lib/player/playback-clock";
+import { isPlaybackFinished } from "@/lib/player/playback-finished";
+import { useSettings } from "@/lib/settings";
 import type { PlayerSrc } from "@/lib/view";
 
 type Snap = {
@@ -16,13 +18,20 @@ type LastAction = "start" | "pause" | "stop" | null;
 const STUB_MAX_SEC = 150;
 // Keep pause scrobbles (resumable on other devices) up to where Harbor's own
 // CW drops the card (CW_FINISHED_RATIO); only beyond that report stop/watched.
-const WATCHED_MARK_PCT = 90;
+const WATCHED_MARK_PCT = 85;
 
 export function useTraktScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }): void {
   const { isConnected, resolveTarget, scrobble } = useTrakt();
+  const { settings } = useSettings();
+  const thresholdRef = useRef(settings.watchedThreshold ?? WATCHED_MARK_PCT);
+  thresholdRef.current = settings.watchedThreshold ?? WATCHED_MARK_PCT;
   const lastActionRef = useRef<LastAction>(null);
   const lastKeyRef = useRef<string | null>(null);
-  const prevIdentityRef = useRef({ metaId: src.meta.id, episode: src.episode });
+  const prevIdentityRef = useRef({
+    metaId: src.meta.id,
+    episode: src.episode,
+    durationSec: snap.durationSec,
+  });
   const progressRef = useRef(0);
   const loadResetSeenRef = useRef(true);
 
@@ -42,9 +51,14 @@ export function useTraktScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       const a = stopArgsRef.current;
       if (a.snap.durationSec <= 0) return;
       if (lastActionRef.current !== "start" && lastActionRef.current !== "pause") return;
-      const live = (getPlaybackPosition() / a.snap.durationSec) * 100;
+      const livePos = getPlaybackPosition();
+      const live = (livePos / a.snap.durationSec) * 100;
       const progress = Math.min(100, Math.max(0, progressRef.current, live));
-      const action = progress >= WATCHED_MARK_PCT ? "stop" : "pause";
+      const posSec = livePos > 0 ? livePos : (progress / 100) * a.snap.durationSec;
+      const finished =
+        progress >= thresholdRef.current ||
+        isPlaybackFinished(posSec, a.snap.durationSec, thresholdRef.current);
+      const action = finished ? "stop" : "pause";
       sendBeacon(target, action === "stop" ? 100 : progress, action);
       // Beacon is fire-and-forget and may drop on exit, so also run the
       // confirmed stop to clear Trakt's "Now Playing" and write history.
@@ -60,7 +74,15 @@ export function useTraktScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       const prev = prevIdentityRef.current;
       const prevProgress = progressRef.current;
       if (lastActionRef.current !== "stop") {
-        if (prevProgress >= WATCHED_MARK_PCT) {
+        const finished =
+          prevProgress >= thresholdRef.current ||
+          (prev.durationSec > 0 &&
+            isPlaybackFinished(
+              (prevProgress / 100) * prev.durationSec,
+              prev.durationSec,
+              thresholdRef.current,
+            ));
+        if (finished) {
           scrobble("stop", { metaId: prev.metaId, episode: prev.episode, progress: 100 });
         } else if (prevProgress > 0) {
           scrobble("pause", { metaId: prev.metaId, episode: prev.episode, progress: prevProgress });
@@ -71,8 +93,8 @@ export function useTraktScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       loadResetSeenRef.current = false;
     }
     lastKeyRef.current = key;
-    prevIdentityRef.current = { metaId, episode: src.episode };
-  }, [key, metaId, src.episode, scrobble]);
+    prevIdentityRef.current = { metaId, episode: src.episode, durationSec: snap.durationSec };
+  }, [key, metaId, src.episode, scrobble, snap.durationSec]);
 
   useEffect(() => {
     if (!isConnected) return;
@@ -83,14 +105,18 @@ export function useTraktScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
         snap.durationSec >= STUB_MAX_SEC &&
         (lastActionRef.current === "start" || lastActionRef.current === "pause")
       ) {
+        const livePos = getPlaybackPosition() || snap.positionSec;
         const endPct =
           snap.durationSec > 0
             ? Math.min(
                 100,
-                Math.max(0, progressRef.current, (getPlaybackPosition() / snap.durationSec) * 100),
+                Math.max(0, progressRef.current, (livePos / snap.durationSec) * 100),
               )
             : 100;
-        scrobble("stop", { metaId, episode: src.episode, progress: endPct });
+        const finished =
+          endPct >= thresholdRef.current ||
+          isPlaybackFinished(livePos, snap.durationSec, thresholdRef.current);
+        scrobble("stop", { metaId, episode: src.episode, progress: finished ? 100 : endPct });
         lastActionRef.current = "stop";
       }
       return;
@@ -152,9 +178,14 @@ export function useTraktScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       if (lastActionRef.current !== "start" && lastActionRef.current !== "pause") return;
       const a = stopArgsRef.current;
       if (a.snap.durationSec > 0) {
-        const live = (getPlaybackPosition() / a.snap.durationSec) * 100;
+        const livePos = getPlaybackPosition();
+        const live = (livePos / a.snap.durationSec) * 100;
         const progress = Math.min(100, Math.max(progressRef.current, live));
-        const action = progress >= WATCHED_MARK_PCT ? "stop" : "pause";
+        const posSec = livePos > 0 ? livePos : (progress / 100) * a.snap.durationSec;
+        const finished =
+          progress >= thresholdRef.current ||
+          isPlaybackFinished(posSec, a.snap.durationSec, thresholdRef.current);
+        const action = finished ? "stop" : "pause";
         scrobble(action, {
           metaId: a.metaId,
           episode: a.episode,

@@ -71,7 +71,7 @@ test("Simkl and Trakt agree on when a session is finished", () => {
   const simklRatio = Number(
     read("src/lib/simkl/config.ts").match(/SIMKL_WATCHED_RATIO\s*=\s*([\d.]+)/)?.[1],
   );
-  assert.equal(traktPct, 90);
+  assert.equal(traktPct, 85);
   assert.equal(simklRatio * 100, traktPct);
   assert.match(simkl, /WATCHED_MARK_PCT = SIMKL_WATCHED_RATIO \* 100;/);
 });
@@ -81,6 +81,6 @@ test("Simkl does not write an early EOF directly to watched history", () => {
     simkl.indexOf('if (snap.status === "ended")'),
     simkl.indexOf("if (!loadResetSeenRef.current)"),
   );
-  assert.match(ended, /if \(endPct >= WATCHED_MARK_PCT\)/);
+  assert.match(ended, /if \(endPct >= WATCHED_MARK_PCT/);
   assert.match(ended, /recordWatchedFallback/);
 });

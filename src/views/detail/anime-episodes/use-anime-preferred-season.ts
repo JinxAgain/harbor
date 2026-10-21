@@ -13,6 +13,7 @@ export function useAnimePreferredSeason({
   trackId,
   traktWatched,
   anilistWatched,
+  simklWatched,
   malWatched,
   mwVersion,
 }: {
@@ -21,6 +22,7 @@ export function useAnimePreferredSeason({
   trackId?: string;
   traktWatched: Set<string>;
   anilistWatched?: Set<string>;
+  simklWatched?: Set<string>;
   malWatched?: Set<string>;
   mwVersion: number;
 }): string | null {
@@ -92,7 +94,7 @@ export function useAnimePreferredSeason({
         traktWatched,
         undefined,
         isCurrent ? anilistWatched : undefined,
-        undefined,
+        isCurrent ? simklWatched : undefined,
         isCurrent ? malWatched : undefined,
         ep.imdbSeason,
         ep.imdbEpisode,
@@ -113,7 +115,7 @@ export function useAnimePreferredSeason({
           traktWatched,
           undefined,
           anilistWatched,
-          undefined,
+          simklWatched,
           malWatched,
           ep.imdbSeason,
           ep.imdbEpisode,
@@ -129,5 +131,5 @@ export function useAnimePreferredSeason({
     if (playedSeason != null) return String(playedSeason);
     return String(maxSeason);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [episodes, metaId, trackId, traktWatched, anilistWatched, malWatched, mwVersion]);
+  }, [episodes, metaId, trackId, traktWatched, anilistWatched, simklWatched, malWatched, mwVersion]);
 }

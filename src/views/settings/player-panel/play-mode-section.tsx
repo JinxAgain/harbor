@@ -6,6 +6,7 @@ import { STALL_WAIT_OPTIONS, stallWaitSec } from "@/lib/player/stall-wait";
 import { SettingGroup, SettingRow } from "../kit";
 import { RowDesc, RowTitle, Segmented, ToggleRow, useRegisterRowTitle } from "../shared";
 import { Dropdown } from "@/components/dropdown";
+import { SliderRow } from "../theme-panel/display-section";
 import { mediaServerConnections } from "@/lib/media-server/connections";
 import { Anchored, Nested } from "./choice";
 import { PressPlayPreview } from "./press-play-preview";
@@ -162,6 +163,19 @@ export function PlayModePanel() {
           )}
           value={settings.resumePrompt}
           onChange={(v) => update({ resumePrompt: v })}
+        />
+        <SliderRow
+          label={t("Mark as watched threshold")}
+          desc={t(
+            "How much of a video you need to watch before it counts as finished, advances Continue Watching to the next episode, and scrobbles to Simkl and Trakt.",
+          )}
+          value={settings.watchedThreshold}
+          min={70}
+          max={95}
+          step={5}
+          readout={`${settings.watchedThreshold}%`}
+          resetTo={85}
+          onChange={(v) => update({ watchedThreshold: v })}
         />
       </SettingGroup>
 
