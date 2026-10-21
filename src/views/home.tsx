@@ -1211,7 +1211,7 @@ export function Home({
               <div
                 data-scroll-anchor="hero"
                 data-tv-hero-zone
-                className={`relative ${heroFull ? `${cwTop ? "" : "-mt-24 lg:-mt-28"} -mb-12 harbor-hero-full` : ""}`}
+                className={`relative ${heroFull ? `${cwTop ? "" : "-mt-24 lg:-mt-28"} ${editMode ? "" : "-mb-12"} harbor-hero-full` : ""}`}
               >
                 {editMode && (
                   <PinnedRowControls
@@ -1229,16 +1229,14 @@ export function Home({
                   playSquare={!!homeRowsCustom.playButtonSquare}
                   moreInfo={!!homeRowsCustom.secondaryMoreInfo}
                 />
-                {!editMode && (
-                  <div className="pointer-events-none absolute -bottom-3 end-5 z-20 flex justify-end [&>*]:pointer-events-auto">
-                    <CustomizeBar
-                      editMode={editMode}
-                      customization={homeRowsCustom}
-                      onToggleEdit={() => setEditMode((v) => !v)}
-                      onReset={() => mutateHomeRows(resetHomeRows())}
-                    />
-                  </div>
-                )}
+                <div className="pointer-events-none absolute -bottom-3 end-5 z-20 flex justify-end [&>*]:pointer-events-auto">
+                  <CustomizeBar
+                    editMode={editMode}
+                    customization={homeRowsCustom}
+                    onToggleEdit={() => setEditMode((v) => !v)}
+                    onReset={() => mutateHomeRows(resetHomeRows())}
+                  />
+                </div>
                 {seasonalInvitation && (
                   <div
                     data-hero-overlay-slot="seasonal"
@@ -1256,18 +1254,22 @@ export function Home({
               onToggleHidden={() => handleToggleHidden("hero")}
             />
           )}
-          {!editMode &&
-            settings.homeMode !== "classic" &&
-            homeRowsCustom.hidden.includes("hero") && (
-              <div className="pointer-events-none absolute end-5 top-0 z-20 [&>*]:pointer-events-auto">
-                <CustomizeBar
-                  editMode={editMode}
-                  customization={homeRowsCustom}
-                  onToggleEdit={() => setEditMode((v) => !v)}
-                  onReset={() => mutateHomeRows(resetHomeRows())}
-                />
-              </div>
-            )}
+          {settings.homeMode !== "classic" && homeRowsCustom.hidden.includes("hero") && (
+            <div
+              className={
+                editMode
+                  ? "flex justify-end"
+                  : "pointer-events-none absolute end-5 top-0 z-20 [&>*]:pointer-events-auto"
+              }
+            >
+              <CustomizeBar
+                editMode={editMode}
+                customization={homeRowsCustom}
+                onToggleEdit={() => setEditMode((v) => !v)}
+                onReset={() => mutateHomeRows(resetHomeRows())}
+              />
+            </div>
+          )}
           {(settings.homeMode === "classic" ||
             homeRowsCustom.hidden.includes("hero") ||
             !showHero) &&
