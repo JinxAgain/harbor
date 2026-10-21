@@ -73,6 +73,7 @@ export function usePickHandler({
   absoluteEpisode,
   attempt,
   resume,
+  startPositionMs,
   debrids,
   isCached,
   seasonLock,
@@ -103,6 +104,7 @@ export function usePickHandler({
   absoluteEpisode?: number | null;
   attempt?: number;
   resume?: boolean;
+  startPositionMs?: number;
   debrids: DebridStore[];
   isCached: (s: ScoredStream) => boolean;
   seasonLock: boolean;
@@ -393,6 +395,7 @@ export function usePickHandler({
         attempt: attempt ?? 0,
         autoFired: autoPickRef.current,
         resume: !!resume,
+        startPositionMs: startPositionMs ?? undefined,
         playbackTraceId,
         proxySessionId,
         historyUrl: r.data.url,

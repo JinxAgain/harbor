@@ -415,23 +415,21 @@ export const ContinueCard = memo(function ContinueCard({
 
   const resolveEpisode = async (): Promise<PlayEpisode | undefined> => {
     let episode: PlayEpisode | undefined = item.type === "series" && ep ? ep : undefined;
-    if (!episode && kitsuThreeSeg) {
-      if (kitsuVideo) {
-        episode = {
-          season: kitsuVideo.season || 1,
-          episode: kitsuVideo.episode,
-          name: kitsuVideo.title,
-          still: kitsuVideo.thumbnail,
-          overview: kitsuVideo.overview,
-          kitsuStreamId: kitsuVideo.id,
-          imdbId: kitsuVideo.imdb_id,
-          imdbSeason: kitsuVideo.imdbSeason,
-          imdbEpisode: kitsuVideo.imdbEpisode,
-        };
-      } else {
-        const epNum = Number((item.state?.video_id ?? "").split(":")[2]);
-        if (Number.isFinite(epNum) && epNum > 0) episode = { season: 1, episode: epNum };
-      }
+    if (kitsuThreeSeg && kitsuVideo) {
+      episode = {
+        season: kitsuVideo.season || 1,
+        episode: kitsuVideo.episode,
+        name: kitsuVideo.title,
+        still: kitsuVideo.thumbnail,
+        overview: kitsuVideo.overview,
+        kitsuStreamId: kitsuVideo.id,
+        imdbId: kitsuVideo.imdb_id,
+        imdbSeason: kitsuVideo.imdbSeason ?? ep?.season,
+        imdbEpisode: kitsuVideo.imdbEpisode,
+      };
+    } else if (!episode && kitsuThreeSeg) {
+      const epNum = Number((item.state?.video_id ?? "").split(":")[2]);
+      if (Number.isFinite(epNum) && epNum > 0) episode = { season: 1, episode: epNum };
     }
     if (needsAniZipSyncIds(item._id, episode) && episode) {
       const key = aniZipLookupKey(item._id);
@@ -463,6 +461,7 @@ export const ContinueCard = memo(function ContinueCard({
       openPicker(meta, episode, {
         autoPlay: !chooseEveryTime && (settings.instantPlay || (!!episode && settings.seasonSourceLock)),
         resume: isResuming,
+        startPositionMs: isResuming && off > 0 ? off : undefined,
       });
     const tmdbMatch = meta.id.match(/^tmdb:(?:movie|tv):(\d+)$/);
     const identity = {
@@ -485,6 +484,8 @@ export const ContinueCard = memo(function ContinueCard({
       const source = localPlayerSrc(entry, undefined, episode);
       openPlayer({
         ...source,
+        resume: isResuming,
+        startPositionMs: isResuming && off > 0 ? off : source.startPositionMs,
         meta: {
           ...source.meta,
           id: meta.id,
@@ -499,16 +500,19 @@ export const ContinueCard = memo(function ContinueCard({
         (entry) => entry.connectionId === copy.connectionId && entry.id === copy.itemId,
       );
       if (!connection || !item) return;
-      openPlayer(
-        await createMediaServerPlayerSrc({
-          meta,
-          imdbId: identity.imdbId,
-          episode,
-          connection,
-          item,
-          versionId: copy.version.id,
-        }),
-      );
+      const serverSrc = await createMediaServerPlayerSrc({
+        meta,
+        imdbId: identity.imdbId,
+        episode,
+        connection,
+        item,
+        versionId: copy.version.id,
+      });
+      openPlayer({
+        ...serverSrc,
+        resume: isResuming,
+        startPositionMs: isResuming && off > 0 ? off : serverSrc.startPositionMs,
+      });
     };
     const showChooser = () => {
       if (local.length === 0 && serverCopies.length === 0) {

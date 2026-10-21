@@ -12,8 +12,7 @@ import { resolveViaDebrids } from "@/lib/streams/resolve";
 import { registerStreamProxy } from "@/lib/stream-proxy";
 import { buildTranscodedUrl, probeStremioServer } from "@/lib/stremio-server";
 import type { DebridStore } from "@/lib/debrid/types";
-import type { Meta } from "@/lib/cinemeta";
-import type { PlayerSrc, PlayEpisode } from "@/lib/view";
+import { type useView, type PlayerSrc } from "@/lib/view";
 import {
   BLACK_SCREEN_GRACE_MS,
   MAX_AUTORETRY_ATTEMPTS,
@@ -24,11 +23,7 @@ import {
 } from "../player-utils";
 import { GENUINE_FAILURE_WINDOW_MS, type EngineStats } from "@/lib/torrent/engine-stats";
 
-type OpenPicker = (
-  meta: Meta,
-  episode?: PlayEpisode,
-  opts?: { autoPlay?: boolean; attempt?: number },
-) => void;
+type OpenPicker = ReturnType<typeof useView>["openPicker"];
 
 export type SourceError = { status: number; host: string; exhausted?: boolean };
 
@@ -207,13 +202,26 @@ export function useAutoRetry(params: {
       openPicker(
         src.meta,
         src.episode,
-        instantPlay || inRoom ? { autoPlay: true, attempt: nextAttempt } : { autoPlay: false },
+        instantPlay || inRoom
+          ? {
+              autoPlay: true,
+              attempt: nextAttempt,
+              resume: src.resume,
+              startPositionMs: src.startPositionMs,
+            }
+          : {
+              autoPlay: false,
+              resume: src.resume,
+              startPositionMs: src.startPositionMs,
+            },
       );
     },
     [
       src.attempt,
       src.meta,
       src.episode,
+      src.resume,
+      src.startPositionMs,
       openPicker,
       instantPlay,
       isLocal,

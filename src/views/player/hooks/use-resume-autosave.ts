@@ -278,6 +278,7 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
     }
     if (pos < TASTE_MIN_SEC) return;
     const track = animeTrackerTarget(id, s.episode, ep);
+    const trackId = track?.id;
     const profile = activeProfileId();
     const anilistSession = getAnilistSession();
     const malSession = getMalSession();
@@ -297,7 +298,7 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
     const useIdentity =
       (anilistAutoSyncRef.current || malAutoSyncRef.current) &&
       animeIdentityEligibleForSync(id, s.episode);
-    if (track && !useIdentity) {
+    if (trackId && !useIdentity) {
       fireTrackers(track.id, track.episode);
     } else if (useIdentity) {
       void resolveAnimeIdentity(id, rid, {

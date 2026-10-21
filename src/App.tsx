@@ -2018,6 +2018,7 @@ function Shell({ onReady }: { onReady?: () => void }) {
                   intent={picker.intent}
                   seasonEpisodes={picker.seasonEpisodes}
                   resume={picker.resume}
+                  startPositionMs={picker.startPositionMs}
                   playerActive={playerActive}
                 />
               </Suspense>

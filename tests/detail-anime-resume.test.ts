@@ -44,6 +44,8 @@ test("the real hero play and prefetch preserve a saved episode absent from the l
     animeEpisodes: [episode({ imdbSeason: 1, streamId: "kitsu:310:4" })],
     lastPlay: { season: 3, episode: 4 }, playMeta: { id: "kitsu:310", type: "series" },
     inSession: false, settings: { instantPlay: false }, animePlayEpisode,
+    roomSnapshot: { hostClientId: null }, clientId: "test",
+    libraryItem: null, detail: null, watchedMark: false, hasResumeProgress: () => false,
     openPicker: (_meta: unknown, ep: unknown) => requested.push(ep),
     prefetchSegments: (_meta: unknown, ep: unknown) => requested.push(ep),
   };

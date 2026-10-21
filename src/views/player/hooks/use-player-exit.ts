@@ -135,12 +135,25 @@ export function usePlayerExit(params: {
     openPicker(
       src.meta,
       src.episode,
-      instantPlay || inRoom ? { autoPlay: true, attempt: nextAttempt } : { autoPlay: false },
+      instantPlay || inRoom
+        ? {
+            autoPlay: true,
+            attempt: nextAttempt,
+            resume: src.resume,
+            startPositionMs: src.startPositionMs,
+          }
+        : {
+            autoPlay: false,
+            resume: src.resume,
+            startPositionMs: src.startPositionMs,
+          },
     );
   }, [
     src.attempt,
     src.meta,
     src.episode,
+    src.resume,
+    src.startPositionMs,
     src.streamRef,
     season,
     episode,

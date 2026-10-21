@@ -236,6 +236,7 @@ export type Frame =
       intent?: "play" | "download";
       seasonEpisodes?: PlayEpisode[];
       resume?: boolean;
+      startPositionMs?: number;
     }
   | { kind: "player"; src: PlayerSrc }
   | { kind: "match-detail"; game: SportsGame; eventGames?: SportsGame[] };
@@ -349,6 +350,7 @@ type ViewValue = {
     intent?: "play" | "download";
     seasonEpisodes?: PlayEpisode[];
     resume?: boolean;
+    startPositionMs?: number;
   } | null;
   openPicker: (
     meta: Meta,
@@ -359,6 +361,7 @@ type ViewValue = {
       intent?: "play" | "download";
       seasonEpisodes?: PlayEpisode[];
       resume?: boolean;
+      startPositionMs?: number;
     },
   ) => void;
   player: PlayerSrc | null;
@@ -690,6 +693,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
           intent: top.intent,
           seasonEpisodes: top.seasonEpisodes,
           resume: top.resume,
+          startPositionMs: top.startPositionMs,
         }
       : null;
   const player = playbackTop.kind === "player" ? playbackTop.src : null;
@@ -1306,6 +1310,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
         intent?: "play" | "download";
         seasonEpisodes?: PlayEpisode[];
         resume?: boolean;
+        startPositionMs?: number;
       },
     ) => {
       if (m.id?.startsWith("magnet:")) {
@@ -1337,6 +1342,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
           intent: opts?.intent,
           seasonEpisodes: opts?.seasonEpisodes,
           resume: opts?.resume,
+          startPositionMs: opts?.startPositionMs,
         });
       });
     },

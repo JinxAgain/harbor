@@ -620,6 +620,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
       autoPlay: true,
       attempt: (src.attempt ?? 0) + 1,
       resume: src.resume,
+      startPositionMs: src.startPositionMs,
     });
   }, [snap.status, src, inRoom, exitPlayback, openPicker]);
 
@@ -652,6 +653,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
         autoPlay: true,
         attempt: (s.attempt ?? 0) + 1,
         resume: s.resume,
+        startPositionMs: s.startPositionMs,
       });
     }, stallWaitMs(settings.autoNextStreamOnStallSec));
     return () => window.clearTimeout(timer);

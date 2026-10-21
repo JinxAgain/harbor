@@ -95,7 +95,10 @@ export function useBridgeLoad(params: {
         imdbVerified: src.imdbIdVerified === true,
       };
       const shouldResolveResume =
-        !isLive && !src.startFromZero && (resumePlaybackRef.current || resumePromptRef.current);
+        !isLive &&
+        !src.startFromZero &&
+        src.startPositionMs == null &&
+        (resumePlaybackRef.current || resumePromptRef.current);
       const resumePromise = !shouldResolveResume
         ? Promise.resolve({ ms: 0, fromRemote: false, finished: false })
         : resolveStartMs({
@@ -132,6 +135,7 @@ export function useBridgeLoad(params: {
         isFirstLoad &&
         !isAutoRetry &&
         !isLive &&
+        !src.resume &&
         resumePromptRef.current &&
         startSec > RESUME_PROMPT_MIN_SEC &&
         !guestInRoom;

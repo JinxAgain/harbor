@@ -118,6 +118,7 @@ export function PlayPicker({
   intent,
   seasonEpisodes,
   resume,
+  startPositionMs,
   playerActive,
 }: {
   meta: Meta;
@@ -127,6 +128,7 @@ export function PlayPicker({
   intent?: "play" | "download";
   seasonEpisodes?: PlayEpisode[];
   resume?: boolean;
+  startPositionMs?: number;
   playerActive?: boolean;
 }) {
   const t = useT();
@@ -631,6 +633,7 @@ export function PlayPicker({
     absoluteEpisode: animeAbsoluteEpisode,
     attempt,
     resume,
+    startPositionMs,
     debrids,
     isCached,
     seasonLock,
@@ -736,6 +739,8 @@ export function PlayPicker({
         isAnime: isAnimeRequest,
       }),
       autoFired: true,
+      resume,
+      startPositionMs,
     });
   }, [
     downloadMatch,
@@ -751,6 +756,8 @@ export function PlayPicker({
     imdbId,
     isAnimeRequest,
     openPlayerGated,
+    resume,
+    startPositionMs,
   ]);
 
   useAutoFire({
@@ -1013,14 +1020,16 @@ export function PlayPicker({
           <LocalStreamList
             entries={diskEntries}
             onPlay={(entry) =>
-              openPlayerGated(
-                downloadMatch && entry.id === downloadEntry?.id
+              openPlayerGated({
+                ...(downloadMatch && entry.id === downloadEntry?.id
                   ? downloadPlayerSrc(metaForDisplay, episode, downloadMatch, {
                       imdbId,
                       isAnime: isAnimeRequest,
                     })
-                  : localPlayerSrc(entry, undefined, episode),
-              )
+                  : localPlayerSrc(entry, undefined, episode)),
+                resume,
+                startPositionMs,
+              })
             }
           />
         )}
