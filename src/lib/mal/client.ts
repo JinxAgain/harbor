@@ -3,11 +3,16 @@ import { getSession } from "./session";
 import { resolveMalRequestUrl } from "./url";
 
 export class MalApiError extends Error {
+  status: number;
+  body: string;
+
   constructor(
-    public status: number,
-    public body: string,
+    status: number,
+    body: string,
   ) {
     super(`MAL HTTP ${status}: ${body.slice(0, 200)}`);
+    this.status = status;
+    this.body = body;
   }
 }
 

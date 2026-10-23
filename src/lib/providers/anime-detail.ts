@@ -354,6 +354,13 @@ export function franchiseTags(franchise: FranchiseEntry[]): FranchiseTag[] {
 
 const FRANCHISE_CAST_CACHE = new Map<string, CastEntry[]>();
 
+const DETAIL_CACHE = new Map<string, AnimeDetailResult>();
+const MAX_CACHE = 20;
+
+export function clearAnimeDetailCache(): void {
+  DETAIL_CACHE.clear();
+}
+
 export async function animeDetails(
   settings: Settings,
   meta: Meta,
@@ -375,9 +382,26 @@ export async function animeDetails(
   }
   if (kitsuId == null) return null;
 
-  let anime = await kitsuAnime(kitsuId);
+  const iso1 = settings.tmdbLanguage || settings.uiLanguage || "en";
+  const localized = iso1.split("-")[0]?.toLowerCase() !== "en";
+  const cacheKey = `${kitsuId}:${iso1}:${settings.translateTitles ? 1 : 0}:${settings.translateDescriptions ? 1 : 0}`;
+  const cached = DETAIL_CACHE.get(cacheKey);
+  if (cached) {
+    DETAIL_CACHE.delete(cacheKey);
+    DETAIL_CACHE.set(cacheKey, cached);
+    return cached;
+  }
+
+  let [anime, addonMeta, aniZip, kitsuRawEpisodes, streamers] = await Promise.all([
+    kitsuAnime(kitsuId),
+    animeKitsuMeta(`kitsu:${kitsuId}`).catch(() => null),
+    aniZipByKitsu(kitsuId).catch(() => null),
+    kitsuEpisodes(kitsuId, 100),
+    kitsuStreamingLinks(kitsuId),
+  ]);
+  if (!anime) return null;
+
   if (
-    anime &&
     (anime.episodeCount == null || anime.episodeCount <= 1) &&
     SIDE_ENTRY_SUBTYPES.has((anime.subtype ?? "").toLowerCase())
   ) {
@@ -387,132 +411,23 @@ export async function animeDetails(
       if (mainAnime) {
         kitsuId = mainTv;
         anime = mainAnime;
+        [addonMeta, aniZip, kitsuRawEpisodes, streamers] = await Promise.all([
+          animeKitsuMeta(`kitsu:${kitsuId}`).catch(() => null),
+          aniZipByKitsu(kitsuId).catch(() => null),
+          kitsuEpisodes(kitsuId, 100),
+          kitsuStreamingLinks(kitsuId),
+        ]);
       }
     }
   }
-  const addonMeta = await animeKitsuMeta(`kitsu:${kitsuId}`).catch(() => null);
-  if (!anime) return null;
 
   const kind: "movie" | "tv" = anime.subtype === "movie" ? "movie" : "tv";
-  const iso1 = settings.tmdbLanguage || settings.uiLanguage || "en";
-  const localized = iso1.split("-")[0]?.toLowerCase() !== "en";
-
   const franchisePromise = buildFranchise(kitsuId, anime).catch(() => [] as FranchiseEntry[]);
 
-  const slugify = (s: string) =>
-    s
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-  const effectiveSlugs =
-    anime.genreSlugs.length > 0 ? anime.genreSlugs : anime.genres.map(slugify).filter(Boolean);
-
-  const [
-    kitsuRawEpisodes,
-    characters,
-    related,
-    studios,
-    streamers,
-    genreSimilar,
-    aniZip,
-    anilistRecs,
-    tvdbEpsRaw,
-  ] = await Promise.all([
-    kitsuEpisodes(kitsuId, 100),
-    kitsuCharacters(kitsuId, 30),
-    kitsuRelated(kitsuId),
-    kitsuStudios(kitsuId),
-    kitsuStreamingLinks(kitsuId),
-    effectiveSlugs.length > 0
-      ? kitsuSimilarByGenres(effectiveSlugs, kitsuId, 34)
-      : Promise.resolve([] as Meta[]),
-    aniZipByKitsu(kitsuId).catch(() => null),
-    kitsuToAnilist(kitsuId)
-      .then((aid) => (aid ? anilistRecommendations(aid) : []))
-      .catch(() => [] as Meta[]),
-    kitsuToTvdb(kitsuId)
-      .then((tid) => {
-        if (!tid) return null;
-        const lang = tvdbLangFromIso1(settings.tmdbLanguage || settings.uiLanguage);
-        const fetchAll = (l: string) =>
-          Promise.all([
-            tvdbEpisodesByType(settings.tvdbKey ?? "", tid, "default", l),
-            tvdbEpisodesAbsolute(settings.tvdbKey ?? "", tid, l),
-          ]).then(([def, abs]) => {
-            const all = [...def, ...abs];
-            const unique = new Map(all.map((e) => [e.id, e]));
-            return Array.from(unique.values());
-          });
-        return Promise.all([
-          fetchAll(lang),
-          lang !== "eng" ? fetchAll("eng").catch(() => null) : Promise.resolve(null),
-        ]).then(([loc, en]) => ({ loc, en }));
-      })
-      .catch(() => null),
-  ]);
-
   const episodes = buildKitsuEpisodes(addonMeta, kitsuRawEpisodes, kitsuId);
-  let tmdbEpsRaw: TmdbEpisode[] | null = null;
-  let tmdbEnRaw: TmdbEpisode[] | null = null;
-  if (localized && settings.tmdbKey && kind === "tv") {
-    const tmdbEpisodesId = Number(aniZip?.mappings?.themoviedb_id);
-    if (tmdbEpisodesId > 0) {
-      // TMDB sometimes merges multiple cours into a single generalized season (e.g. a 25-episode
-      // "season 1" covering two 12/13-episode seasons). AniZip carries the real per-cour season
-      // numbers, so fetch every season it reports plus season 1 (where TMDB may have merged them)
-      // and concatenate, letting the merge match by absolute episode number.
-      const seasons = new Set<number>([1]);
-      for (const az of Object.values(aniZip?.episodes ?? {})) {
-        if (az.seasonNumber != null && az.seasonNumber > 0) seasons.add(az.seasonNumber);
-      }
-      const fetchTmdb = (l: string) =>
-        Promise.all(
-          Array.from(seasons).map((s) =>
-            tmdbSeasonEpisodes(settings.tmdbKey, tmdbEpisodesId, s, l).catch(() => null),
-          ),
-        ).then((arr) => {
-          const merged = arr.flat().filter((e): e is TmdbEpisode => e != null);
-          return merged.length > 0 ? merged : null;
-        });
-      const isoBase = iso1.split("-")[0]?.toLowerCase();
-      const [loc, en] = await Promise.all([
-        fetchTmdb(iso1),
-        isoBase && isoBase !== "en"
-          ? fetchTmdb("en").catch(() => null)
-          : Promise.resolve<TmdbEpisode[] | null>(null),
-      ]);
-      tmdbEpsRaw = loc;
-      tmdbEnRaw = en;
-    }
-  }
   mergeAniZipEpisodes(episodes, aniZip, { lang: localized ? iso1 : undefined });
-  mergeTvdbEpisodes(episodes, tvdbEpsRaw?.loc ?? null, { lang: localized ? iso1 : undefined });
-  mergeTmdbEpisodes(episodes, tmdbEpsRaw, { lang: localized ? iso1 : undefined });
-  // Fall back to English titles/overviews when the localized translation is missing (providers
-  // otherwise fall back to the original, e.g. Japanese for anime).
-  if (localized) {
-    if (tvdbEpsRaw?.en) mergeTvdbEpisodes(episodes, tvdbEpsRaw.en);
-    if (tmdbEnRaw) mergeTmdbEpisodes(episodes, tmdbEnRaw);
-  }
 
-  // AniZip has no mapping for not-yet-indexed cours (e.g. Bleach TYBW cour 4).
-  // Fall back to the AniDB id (ARM) plus the anime-lists season window to
-  // attach provider season/episode coords, so stream queries carry the season.
-  if (episodes.every((ep) => ep.imdbSeason == null)) {
-    const win = await resolveAnidbSeasonWindow(kitsuId).catch(() => null);
-    if (win) {
-      for (const ep of episodes) {
-        if (ep.number == null) continue;
-        if (ep.imdbSeason == null) ep.imdbSeason = win.season;
-        if (ep.imdbEpisode == null) ep.imdbEpisode = ep.number + win.offset;
-        if (win.imdbId && !ep.imdbId) ep.imdbId = win.imdbId;
-      }
-    }
-  }
-
-  let seriesImdb = aniZip?.mappings?.imdb_id ?? episodes.find((e) => e.imdbId)?.imdbId ?? null;
-  if (!seriesImdb) seriesImdb = await kitsuToImdb(kitsuId).catch(() => null);
+  let seriesImdb = aniZip?.mappings?.imdb_id ?? addonMeta?.imdb_id ?? episodes.find((e) => e.imdbId)?.imdbId ?? null;
 
   if (seriesImdb?.startsWith("tt")) {
     for (const ep of episodes) {
@@ -523,40 +438,6 @@ export async function animeDetails(
     }
   }
 
-  const toCast = (chars: typeof characters): CastEntry[] =>
-    chars.map((c, i) => ({
-      id: c.id,
-      name: c.name,
-      character: c.voiceActor ?? (c.role === "main" ? "Main" : "Supporting"),
-      profilePath: c.image ?? null,
-      order: i,
-    }));
-  const cast: CastEntry[] = toCast(characters);
-  const castKeys = [meta.id, `kitsu:${kitsuId}`];
-  if (cast.length > 0) for (const k of castKeys) FRANCHISE_CAST_CACHE.set(k, cast);
-
-  const franchiseIds = new Set<string>([meta.id, `kitsu:${kitsuId}`]);
-  for (const r of related) franchiseIds.add(r.meta.id);
-
-  const similarPool: Meta[] = [];
-  const poolSeen = new Set<string>();
-  const poolNames = new Set<string>();
-  for (const m of [...anilistRecs, ...genreSimilar]) {
-    const nameKey = m.name.trim().toLowerCase();
-    if (franchiseIds.has(m.id) || poolSeen.has(m.id) || poolNames.has(nameKey)) continue;
-    poolSeen.add(m.id);
-    poolNames.add(nameKey);
-    similarPool.push(m);
-  }
-  const moreLikeThis = similarPool.slice(0, 14);
-  const youMightLike = similarPool.slice(14, 28);
-
-  const sortedStudios = [...studios].sort((a, b) => {
-    const ra = STUDIO_ROLE_RANK[a.role] ?? 9;
-    const rb = STUDIO_ROLE_RANK[b.role] ?? 9;
-    return ra - rb;
-  });
-  const productionCompanies = Array.from(new Set(sortedStudios.map((s) => s.name)));
   const networks = Array.from(new Set(streamers.map((s) => s.service)));
 
   const detail: TmdbDetail = {
@@ -577,23 +458,121 @@ export async function animeDetails(
     originalLanguage: "ja",
     spokenLanguages: ["Japanese"],
     productionCountries: ["Japan"],
-    productionCompanies,
+    productionCompanies: [],
     networks,
     trailerYtId: anime.trailerYtId ?? null,
     trailerCandidates: anime.trailerYtId ? [anime.trailerYtId] : [],
     gallery: { backdrops: anime.backdrop ? [anime.backdrop] : [], posters: [], logos: [] },
-    cast,
-    recommendations: moreLikeThis,
-    similar: youMightLike,
+    cast: [],
+    recommendations: [],
+    similar: [],
     numberOfEpisodes: anime.episodeCount ?? 0,
     numberOfSeasons: kind === "tv" ? 1 : 0,
     firstAirDate: anime.startDate,
     lastAirDate: anime.endDate,
   };
 
-  const enrichPromise = enrichEpisodes(episodes, settings, kitsuId, seriesImdb)
-    .then(() => episodes)
-    .catch(() => episodes);
+  const enrichPromise = (async () => {
+    try {
+      const tvdbEpsPromise = kitsuToTvdb(kitsuId)
+        .then((tid) => {
+          if (!tid) return null;
+          const lang = tvdbLangFromIso1(settings.tmdbLanguage || settings.uiLanguage);
+          const fetchAll = (l: string) =>
+            Promise.all([
+              tvdbEpisodesByType(settings.tvdbKey ?? "", tid, "default", l),
+              tvdbEpisodesAbsolute(settings.tvdbKey ?? "", tid, l),
+            ]).then(([def, abs]) => {
+              const all = [...def, ...abs];
+              const unique = new Map(all.map((e) => [e.id, e]));
+              return Array.from(unique.values());
+            });
+          return Promise.all([
+            fetchAll(lang),
+            lang !== "eng" ? fetchAll("eng").catch(() => null) : Promise.resolve(null),
+          ]).then(([loc, en]) => ({ loc, en }));
+        })
+        .catch(() => null);
+
+      let tmdbEpsPromise: Promise<{ loc: TmdbEpisode[] | null; en: TmdbEpisode[] | null }> =
+        Promise.resolve({ loc: null, en: null });
+      if (localized && settings.tmdbKey && kind === "tv") {
+        const tmdbEpisodesId = Number(aniZip?.mappings?.themoviedb_id);
+        if (tmdbEpisodesId > 0) {
+          const seasons = new Set<number>([1]);
+          for (const az of Object.values(aniZip?.episodes ?? {})) {
+            if (az.seasonNumber != null && az.seasonNumber > 0) seasons.add(az.seasonNumber);
+          }
+          const fetchTmdb = (l: string) =>
+            Promise.all(
+              Array.from(seasons).map((s) =>
+                tmdbSeasonEpisodes(settings.tmdbKey, tmdbEpisodesId, s, l).catch(() => null),
+              ),
+            ).then((arr) => {
+              const merged = arr.flat().filter((e): e is TmdbEpisode => e != null);
+              return merged.length > 0 ? merged : null;
+            });
+          const isoBase = iso1.split("-")[0]?.toLowerCase();
+          tmdbEpsPromise = Promise.all([
+            fetchTmdb(iso1),
+            isoBase && isoBase !== "en"
+              ? fetchTmdb("en").catch(() => null)
+              : Promise.resolve<TmdbEpisode[] | null>(null),
+          ]).then(([loc, en]) => ({ loc, en }));
+        }
+      }
+
+      const [tvdbEpsRaw, tmdbEpsRaw] = await Promise.all([tvdbEpsPromise, tmdbEpsPromise]);
+
+      mergeTvdbEpisodes(episodes, tvdbEpsRaw?.loc ?? null, { lang: localized ? iso1 : undefined });
+      mergeTmdbEpisodes(episodes, tmdbEpsRaw.loc, { lang: localized ? iso1 : undefined });
+      if (localized) {
+        if (tvdbEpsRaw?.en) mergeTvdbEpisodes(episodes, tvdbEpsRaw.en);
+        if (tmdbEpsRaw.en) mergeTmdbEpisodes(episodes, tmdbEpsRaw.en);
+      }
+
+      if (episodes.every((ep) => ep.imdbSeason == null)) {
+        const win = await resolveAnidbSeasonWindow(kitsuId).catch(() => null);
+        if (win) {
+          for (const ep of episodes) {
+            if (ep.number == null) continue;
+            if (ep.imdbSeason == null) ep.imdbSeason = win.season;
+            if (ep.imdbEpisode == null) ep.imdbEpisode = ep.number + win.offset;
+            if (win.imdbId && !ep.imdbId) ep.imdbId = win.imdbId;
+          }
+        }
+      }
+
+      if (!seriesImdb) {
+        seriesImdb = await kitsuToImdb(kitsuId).catch(() => null);
+      }
+
+      if (seriesImdb?.startsWith("tt")) {
+        for (const ep of episodes) {
+          if (ep.thumbnailFallback) continue;
+          const s = ep.imdbSeason ?? 1;
+          const e = ep.imdbEpisode ?? ep.absoluteNumber ?? ep.number;
+          ep.thumbnailFallback = `https://episodes.metahub.space/${seriesImdb}/${s}/${e}/w780.jpg`;
+        }
+      }
+
+      await enrichEpisodes(episodes, settings, kitsuId, seriesImdb).catch(() => episodes);
+      return episodes;
+    } catch {
+      return episodes;
+    }
+  })();
+
+  const slugify = (s: string) =>
+    s
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  const effectiveSlugs =
+    anime.genreSlugs.length > 0 ? anime.genreSlugs : anime.genres.map(slugify).filter(Boolean);
+
+  const castKeys = [meta.id, `kitsu:${kitsuId}`];
 
   const anilistArtPromise: Promise<{ banner?: string; cover?: string }> = kitsuToAnilist(kitsuId)
     .then((aid) => (aid ? anilistArtById(aid) : {}))
@@ -617,8 +596,62 @@ export async function animeDetails(
     .catch(() => anime.backdrop);
 
   const extrasPromise: Promise<AnimeDetailExtras> = (async () => {
-    const [tmdbHit, tvdbId, tvdbArt] = await firstArtBatch;
-    const aniArt = await anilistArtPromise;
+    const [
+      characters,
+      related,
+      studios,
+      genreSimilar,
+      anilistRecs,
+      [tmdbHit, tvdbId, tvdbArt],
+      aniArt,
+    ] = await Promise.all([
+      kitsuCharacters(kitsuId, 30).catch(() => []),
+      kitsuRelated(kitsuId).catch(() => []),
+      kitsuStudios(kitsuId).catch(() => []),
+      effectiveSlugs.length > 0
+        ? kitsuSimilarByGenres(effectiveSlugs, kitsuId, 34).catch(() => [])
+        : Promise.resolve([] as Meta[]),
+      kitsuToAnilist(kitsuId)
+        .then((aid) => (aid ? anilistRecommendations(aid) : []))
+        .catch(() => [] as Meta[]),
+      firstArtBatch,
+      anilistArtPromise,
+    ]);
+
+    const toCast = (chars: typeof characters): CastEntry[] =>
+      chars.map((c, i) => ({
+        id: c.id,
+        name: c.name,
+        character: c.voiceActor ?? (c.role === "main" ? "Main" : "Supporting"),
+        profilePath: c.image ?? null,
+        order: i,
+      }));
+    const cast: CastEntry[] = toCast(characters);
+    if (cast.length > 0) for (const k of castKeys) FRANCHISE_CAST_CACHE.set(k, cast);
+
+    const franchiseIds = new Set<string>([meta.id, `kitsu:${kitsuId}`]);
+    for (const r of related) franchiseIds.add(r.meta.id);
+
+    const similarPool: Meta[] = [];
+    const poolSeen = new Set<string>();
+    const poolNames = new Set<string>();
+    for (const m of [...anilistRecs, ...genreSimilar]) {
+      const nameKey = m.name.trim().toLowerCase();
+      if (franchiseIds.has(m.id) || poolSeen.has(m.id) || poolNames.has(nameKey)) continue;
+      poolSeen.add(m.id);
+      poolNames.add(nameKey);
+      similarPool.push(m);
+    }
+    const moreLikeThis = similarPool.slice(0, 14);
+    const youMightLike = similarPool.slice(14, 28);
+
+    const sortedStudios = [...studios].sort((a, b) => {
+      const ra = STUDIO_ROLE_RANK[a.role] ?? 9;
+      const rb = STUDIO_ROLE_RANK[b.role] ?? 9;
+      return ra - rb;
+    });
+    const productionCompanies = Array.from(new Set(sortedStudios.map((s) => s.name)));
+
     let logo: string | undefined =
       addonMeta?.logo ?? tvdbArt?.clearLogos?.[0] ?? tmdbHit?.logo ?? undefined;
     let poster = anime.poster;
@@ -630,6 +663,7 @@ export async function animeDetails(
     addBackdrop(backdrop);
     addBackdrop(anime.backdrop);
     addBackdrop(tmdbHit?.backdrop);
+
     const fanartPromise =
       settings.fanartKey && kind === "movie" && tmdbHit?.tmdbId
         ? fanartMovie(settings.fanartKey, tmdbHit.tmdbId).catch(() => null)
@@ -660,7 +694,6 @@ export async function animeDetails(
     const backdrops = gallery;
     let tmdbFull: TmdbDetail | null = null;
     if (fullRaw) {
-      // AniZip's themoviedb_id is authoritative per entry; the title-search id can false-positive, so it keeps the year gate.
       if (tmdbFullFromMapping) {
         tmdbFull = fullRaw;
       } else {
@@ -690,14 +723,16 @@ export async function animeDetails(
       cinematography: tmdbFull?.cinematography ?? [],
       editor: tmdbFull?.editor ?? [],
       keywords: tmdbFull?.keywords ?? [],
+      cast,
+      productionCompanies,
+      recommendations: moreLikeThis,
+      similar: youMightLike,
     };
     if (localized && tmdbFull) {
       const overviewOk = !!tmdbFull.overview && isTextInLanguage(tmdbFull.overview, iso1);
       const titleOk = !!tmdbFull.title && isTextInLanguage(tmdbFull.title, iso1);
       if (overviewOk) patch.overview = tmdbFull.overview;
       if (titleOk) patch.title = tmdbFull.title;
-      // TMDB's tv/{id} response carries per-season localized overviews; surface them so the season
-      // hero can vary per season instead of showing the static series overview everywhere.
       const seasonOverviews: Record<number, string> = {};
       for (const s of tmdbFull.seasons ?? []) {
         if (s.overview && isTextInLanguage(s.overview, iso1))
@@ -723,7 +758,7 @@ export async function animeDetails(
     return patch;
   })().catch(() => ({}) as AnimeDetailExtras);
 
-  return {
+  const result: AnimeDetailResult = {
     detail,
     episodes,
     streamers,
@@ -735,4 +770,12 @@ export async function animeDetails(
     heroBgPromise,
     kitsuId,
   };
+
+  if (DETAIL_CACHE.size >= MAX_CACHE) {
+    const firstKey = DETAIL_CACHE.keys().next().value;
+    if (firstKey !== undefined) DETAIL_CACHE.delete(firstKey);
+  }
+  DETAIL_CACHE.set(cacheKey, result);
+
+  return result;
 }

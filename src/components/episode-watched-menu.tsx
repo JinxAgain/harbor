@@ -13,7 +13,8 @@ import { isEpisodeHidden, setEpisodeHidden } from "@/lib/hidden-episodes";
 import { useSettings } from "@/lib/settings";
 import { clearResume, readResumeEntry } from "@/lib/resume";
 import { markEpisodesWatched, unmarkEpisodeWatched } from "@/lib/simkl/history";
-import { simklShowIdsForMeta } from "@/lib/simkl/ids";
+import { resolveSimklAnimeShowIds, simklShowIdsForMeta } from "@/lib/simkl/ids";
+import type { SimklIds } from "@/lib/simkl/types";
 import { useSimkl } from "@/lib/simkl/provider";
 
 export type WatchedMenuTarget = {
@@ -64,14 +65,26 @@ export function EpisodeWatchedMenu({
     };
   }, [onClose]);
 
-  const showIds = simklConnected ? simklShowIdsForMeta(metaId) : null;
+  const withSimklShowIds = (cb: (ids: SimklIds) => void) => {
+    if (!simklConnected) return;
+    const direct = simklShowIdsForMeta(metaId);
+    if (direct && (direct.imdb || direct.tmdb || direct.mal)) {
+      cb(direct);
+      return;
+    }
+    void resolveSimklAnimeShowIds(metaId).then((ids) => {
+      if (ids) cb(ids);
+    });
+  };
 
   const started = !target.watched && readResumeEntry(metaId, target.season, target.episode) != null;
 
   const unmark = () => {
     setManualWatched(metaId, target.season, target.episode, false);
     clearResume(metaId, target.season, target.episode);
-    if (showIds) void unmarkEpisodeWatched(showIds, target.season, target.episode);
+    withSimklShowIds((ids) => {
+      void unmarkEpisodeWatched(ids, target.season, target.episode);
+    });
     onClose();
   };
 
@@ -99,7 +112,9 @@ export function EpisodeWatchedMenu({
             onClick={() => {
               recordManualWatchedMeta(metaId, meta);
               setManualWatched(metaId, target.season, target.episode, true);
-              if (showIds) void markEpisodesWatched(showIds, target.season, [target.episode]);
+              withSimklShowIds((ids) => {
+                void markEpisodesWatched(ids, target.season, [target.episode]);
+              });
               onClose();
             }}
           />
@@ -116,16 +131,18 @@ export function EpisodeWatchedMenu({
                       (e.season === target.season && e.episode <= target.episode)),
                 );
                 setManualWatchedMany(metaId, upTo, true);
-                if (showIds) {
-                  const eps = upTo.filter((e) => e.season === target.season).map((e) => e.episode);
-                  if (eps.length > 0) void markEpisodesWatched(showIds, target.season, eps);
+                const eps = upTo.filter((e) => e.season === target.season).map((e) => e.episode);
+                if (eps.length > 0) {
+                  withSimklShowIds((ids) => {
+                    void markEpisodesWatched(ids, target.season, eps);
+                  });
                 }
               } else {
                 setManualWatchedUpTo(metaId, target.season, target.episode, true);
-                if (showIds) {
-                  const eps = Array.from({ length: target.episode }, (_, i) => i + 1);
-                  void markEpisodesWatched(showIds, target.season, eps);
-                }
+                const eps = Array.from({ length: target.episode }, (_, i) => i + 1);
+                withSimklShowIds((ids) => {
+                  void markEpisodesWatched(ids, target.season, eps);
+                });
               }
               onClose();
             }}

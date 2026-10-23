@@ -14,6 +14,7 @@ export function EpisodeGrid({
   progressFor,
   spoilerFor,
   onContextMenu,
+  focusEpisodeKey,
 }: {
   meta: Meta;
   episodes: GridEpisode[];
@@ -26,17 +27,31 @@ export function EpisodeGrid({
     watched: boolean,
     sourceMetaId?: string,
   ) => void;
+  focusEpisodeKey?: string | null;
 }) {
   const { settings } = useSettings();
   const sort = settings.episodeSort;
   const wrapRef = useRef<HTMLDivElement>(null);
+  const userPagedRef = useRef(false);
   const displayed = useMemo(
     () => (sort === "newest" ? episodes.slice().reverse() : episodes),
     [episodes, sort],
   );
   const [page, setPage] = useState(0);
   const resetKey = `${sort}:${displayed.length}:${displayed[0]?.key ?? ""}:${displayed[displayed.length - 1]?.key ?? ""}`;
-  useEffect(() => setPage(0), [resetKey]);
+  useEffect(() => {
+    userPagedRef.current = false;
+    setPage(0);
+  }, [resetKey]);
+
+  useEffect(() => {
+    if (!focusEpisodeKey || userPagedRef.current) return;
+    const idx = displayed.findIndex((e) => e.key === focusEpisodeKey);
+    if (idx >= 0) {
+      const targetPage = Math.floor(idx / PAGE_SIZE);
+      setPage(targetPage);
+    }
+  }, [focusEpisodeKey, displayed]);
 
   const pageCount = Math.max(1, Math.ceil(displayed.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -47,6 +62,7 @@ export function EpisodeGrid({
   );
 
   const change = (p: number) => {
+    userPagedRef.current = true;
     setPage(p);
     requestAnimationFrame(() => wrapRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };

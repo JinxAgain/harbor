@@ -57,11 +57,16 @@ import type {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class StremboxdApiError extends Error {
+  status: number;
+  body: string;
+
   constructor(
-    public status: number,
-    public body: string,
+    status: number,
+    body: string,
   ) {
     super(`Stremboxd HTTP ${status}: ${body.slice(0, 200)}`);
+    this.status = status;
+    this.body = body;
   }
 }
 
@@ -118,7 +123,11 @@ async function getJson<T>(path: string, auth?: string): Promise<T> {
 }
 
 export class StremboxdClient {
-  constructor(private configSegment: string) {}
+  private configSegment: string;
+
+  constructor(configSegment: string) {
+    this.configSegment = configSegment;
+  }
 
   async getManifest(): Promise<StremboxdManifest> {
     const key = this.configSegment;
@@ -545,12 +554,17 @@ export async function loginLetterboxd(
 }
 
 export class StremboxdLoginError extends Error {
+  status: number;
+  code?: string;
+
   constructor(
-    public status: number,
+    status: number,
     message: string,
-    public code?: string,
+    code?: string,
   ) {
     super(message);
+    this.status = status;
+    this.code = code;
   }
 }
 

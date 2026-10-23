@@ -6,7 +6,13 @@ import { parseWowDungeonRuns, parseWowRunEquipment, wowRunQueryUrl, type WowDung
 
 const BASE = "https://raider.io/api/v1", MAX_BYTES = 2 * 1024 * 1024;
 let retryAt = 0;
-export class WowApiError extends Error { constructor(public status: number) { super(`Raider.IO ${status}`); } }
+export class WowApiError extends Error {
+  status: number;
+  constructor(status: number) {
+    super(`Raider.IO ${status}`);
+    this.status = status;
+  }
+}
 const requests = new CompanionRequests(async (url, signal) => {
   if (Date.now() < retryAt) throw new WowApiError(429);
   const response = await safeFetchBytes(url, { signal }, 15_000, MAX_BYTES);

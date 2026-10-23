@@ -29,6 +29,7 @@ export function AnimeEpisodeStrip({
   onReachEnd,
   metaForEp,
   showSeason,
+  focusEpisodeKey,
 }: {
   meta: Meta;
   episodes: KitsuEpisode[];
@@ -45,6 +46,7 @@ export function AnimeEpisodeStrip({
   onReachEnd?: () => void;
   metaForEp?: (ep: KitsuEpisode) => Meta;
   showSeason?: boolean;
+  focusEpisodeKey?: string | null;
 }) {
   const { openPicker, openEpisodeDetail } = useView();
   const { settings } = useSettings();
@@ -98,6 +100,7 @@ export function AnimeEpisodeStrip({
         progressFor={(g) => progressFor(epByKey.get(g.key)!)}
         spoilerFor={spoilerFor ? (g) => spoilerFor(epByKey.get(g.key)!) : undefined}
         onContextMenu={onContextMenu}
+        focusEpisodeKey={focusEpisodeKey}
       />
     );
   }
@@ -163,6 +166,7 @@ function AnimeEpisodeStripCard({
   return (
     <div
       data-ep={ep.number}
+      data-epid={ep.id}
       data-no-card-ring
       onContextMenu={(e) =>
         onContextMenu?.(e, animeSeasonKey(ep), ep.number, progress.watched, ep.sourceMetaId)

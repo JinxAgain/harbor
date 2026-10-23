@@ -1,4 +1,11 @@
-import { anidbToMal, anilistToMal, kitsuToMal } from "@/lib/providers/anime-mapping";
+import {
+  anidbToMal,
+  anilistToMal,
+  kitsuToAnidb,
+  kitsuToAnilist,
+  kitsuToMal,
+  relatedLibraryIds,
+} from "@/lib/providers/anime-mapping";
 import type { SimklIds, SimklTarget } from "./types";
 
 export type IdResolution =
@@ -107,6 +114,60 @@ export function simklShowIdsForMeta(metaId: string): SimklIds | null {
     if (r.target.kind === "anime-episode") return r.target.anime.ids;
   }
   return nativeAnimeIds(metaId);
+}
+
+export async function resolveSimklAnimeShowIds(harborId: string): Promise<SimklIds | null> {
+  const direct = stremioIdToSimklTarget(harborId, { season: 1, episode: 1 });
+  if (direct.ok) {
+    if (direct.target.kind === "episode") return direct.target.show.ids;
+    if (direct.target.kind === "anime-episode") return direct.target.anime.ids;
+  }
+  const mal = await animeIdToMal(harborId);
+  const native = nativeAnimeIds(harborId);
+  if (native || mal != null) {
+    return { ...(native ?? {}), ...(mal != null ? { mal } : {}) };
+  }
+  return null;
+}
+
+export async function resolveAnimeAliasKeys(
+  harborId: string,
+  imdbId?: string | null,
+): Promise<string[]> {
+  const keys = new Set<string>();
+  if (harborId) keys.add(harborId);
+  if (imdbId) keys.add(imdbId);
+
+  const n = Number(harborId.split(":")[1]);
+  if (Number.isFinite(n) && harborId.startsWith("kitsu:")) {
+    const [mal, anilist, anidb] = await Promise.all([
+      kitsuToMal(n).catch(() => null),
+      kitsuToAnilist(n).catch(() => null),
+      kitsuToAnidb(n).catch(() => null),
+    ]);
+    if (mal != null) keys.add(`mal:${mal}`);
+    if (anilist != null) keys.add(`anilist:${anilist}`);
+    if (anidb != null) keys.add(`anidb:${anidb}`);
+  } else if (Number.isFinite(n) && harborId.startsWith("anilist:")) {
+    const mal = await anilistToMal(n).catch(() => null);
+    if (mal != null) keys.add(`mal:${mal}`);
+  } else if (Number.isFinite(n) && harborId.startsWith("anidb:")) {
+    const mal = await anidbToMal(n).catch(() => null);
+    if (mal != null) keys.add(`mal:${mal}`);
+  }
+
+  const related = await relatedLibraryIds(harborId).catch(() => []);
+  for (const r of related) {
+    if (r) keys.add(r);
+  }
+  if (imdbId) {
+    const imdbRelated = await relatedLibraryIds(imdbId).catch(() => []);
+    for (const r of imdbRelated) {
+      if (r) keys.add(r);
+    }
+  }
+
+  return Array.from(keys);
 }
 
 export function stremioIdToSimklTarget(

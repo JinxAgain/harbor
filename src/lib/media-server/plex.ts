@@ -138,7 +138,9 @@ function normalizePlexItem(
 
 export class PlexAdapter implements MediaServerAdapter {
   readonly provider = "plex" as const;
-  constructor(private origin: string) {
+  private origin: string;
+
+  constructor(origin: string) {
     this.origin = normalizeServerOrigin(origin);
   }
   private headers(connection?: MediaServerConnection, token?: string) {

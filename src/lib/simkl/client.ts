@@ -18,12 +18,19 @@ export type SimklRequestOptions = {
 };
 
 export class SimklApiError extends Error {
+  status: number;
+  body: string;
+  retryAt?: number;
+
   constructor(
-    public status: number,
-    public body: string,
-    public retryAt?: number,
+    status: number,
+    body: string,
+    retryAt?: number,
   ) {
     super(`Simkl HTTP ${status}: ${body.slice(0, 200)}`);
+    this.status = status;
+    this.body = body;
+    this.retryAt = retryAt;
   }
 }
 

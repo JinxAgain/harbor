@@ -10,13 +10,55 @@ import {
 import { syncAnimeProgress } from "@/lib/anilist/sync";
 import { syncMalProgress } from "@/lib/mal/sync";
 import { useSettings } from "@/lib/settings";
+import { useSimkl } from "@/lib/simkl/provider";
+import { resolveSimklAnimeShowIds } from "@/lib/simkl/ids";
+import { markEpisodesWatched, unmarkEpisodesWatched } from "@/lib/simkl/history";
+import type { SimklIds } from "@/lib/simkl/types";
 import { airedOnly } from "../helpers";
 import { animeSeasonKey } from "./anime-season-key";
 
 const ANIME_TRACK_ID = /^(kitsu|mal|anilist|anidb):/;
 
+export async function syncSimklWatchedMany(
+  syncId: string,
+  eps: Array<{ season: number; episode: number }>,
+  watched: boolean,
+  dispatchers?: {
+    resolveIds?: (id: string) => Promise<SimklIds | null>;
+    mark?: typeof markEpisodesWatched;
+    unmark?: typeof unmarkEpisodesWatched;
+  },
+): Promise<boolean> {
+  const resolveIds = dispatchers?.resolveIds ?? resolveSimklAnimeShowIds;
+  const mark = dispatchers?.mark ?? markEpisodesWatched;
+  const unmark = dispatchers?.unmark ?? unmarkEpisodesWatched;
+
+  const ids = await resolveIds(syncId).catch(() => null);
+  if (!ids) return false;
+
+  const bySeason = new Map<number, number[]>();
+  for (const ep of eps) {
+    const list = bySeason.get(ep.season) ?? [];
+    list.push(ep.episode);
+    bySeason.set(ep.season, list);
+  }
+
+  let ok = true;
+  for (const [season, epNums] of bySeason) {
+    if (watched) {
+      const res = await mark(ids, season, epNums).catch(() => false);
+      if (!res) ok = false;
+    } else {
+      const res = await unmark(ids, season, epNums).catch(() => false);
+      if (!res) ok = false;
+    }
+  }
+  return ok;
+}
+
 export function useAnimeWatchedRouting(meta: Meta, franchise: FranchiseEntry[], trackId?: string) {
   const { settings } = useSettings();
+  const { isConnected: simklConnected } = useSimkl();
   const byId = useMemo(() => {
     const m = new Map<string, Meta>();
     for (const f of franchise) m.set(f.meta.id, f.meta);
@@ -60,6 +102,9 @@ export function useAnimeWatchedRouting(meta: Meta, franchise: FranchiseEntry[], 
           if (settings.anilistAutoSync) void syncAnimeProgress(syncId, highest, title);
           if (settings.malAutoSync) void syncMalProgress(syncId, highest, title);
         }
+      }
+      if (simklConnected) {
+        void syncSimklWatchedMany(syncId, eps, watched);
       }
     }
   };

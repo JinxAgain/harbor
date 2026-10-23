@@ -76,6 +76,7 @@ export function EpisodeGridCard({
     <div onMouseEnter={enter} onMouseLeave={leave} className={`group relative ${preview ? "z-30" : ""}`}>
       <button
         data-ep={g.number}
+        data-epid={g.key}
         data-no-card-ring
         onClick={() => g.play({ resume: partial })}
         onContextMenu={ctx}

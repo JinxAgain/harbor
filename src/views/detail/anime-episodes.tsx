@@ -8,12 +8,7 @@ import { effectiveOrderProvider, tvdbPanelEnabled } from "@/lib/settings/episode
 import { useView } from "@/lib/view";
 import { fetchWatchedKeySet } from "@/lib/trakt/history";
 import { useTrakt } from "@/lib/trakt/provider";
-import { useSimkl } from "@/lib/simkl/provider";
-import {
-  loadSimklWatchedMap,
-  peekSimklWatchedMap,
-  simklWatchedForId,
-} from "@/lib/simkl/list-status";
+import { useSimklAnimeWatched } from "@/lib/simkl/use-simkl-anime-watched";
 import { useAnilistWatched } from "@/lib/anilist/use-anilist-watched";
 import { useMalWatched } from "@/lib/mal/use-mal-watched";
 import { EpisodeWatchedMenu, type WatchedMenuTarget } from "@/components/episode-watched-menu";
@@ -35,7 +30,10 @@ import { EpisodeSearchToggle } from "./series-episodes/episode-search-controls";
 import { AnimeAiBar } from "./anime-episodes/anime-ai-bar";
 import { useAnimeAiSearch } from "./anime-episodes/use-anime-ai-search";
 import { useAnimeProgressMap } from "./anime-episodes/use-anime-progress-map";
-import { useAnimePreferredSeason } from "./anime-episodes/use-anime-preferred-season";
+import {
+  useAnimePreferredSeason,
+  resolveAnimeFocusEpisode,
+} from "./anime-episodes/use-anime-preferred-season";
 import { useAnimeTvdbPanel } from "./anime-episodes/use-anime-tvdb-panel";
 
 import { useFranchiseEpisodes } from "./anime-episodes/use-franchise-episodes";
@@ -64,6 +62,7 @@ export function AnimeEpisodes({
   trackId,
   imdbId,
   episodeHint,
+  resumeEpisode,
   localizedOverview,
   seasonOverviews,
   onSeasonArt,
@@ -76,6 +75,7 @@ export function AnimeEpisodes({
   trackId?: string;
   imdbId?: string | null;
   episodeHint?: { season: number; episode: number };
+  resumeEpisode?: { season: number; episode: number } | null;
   localizedOverview?: string;
   seasonOverviews?: Record<number, string>;
   onSeasonArt?: (
@@ -108,31 +108,11 @@ export function AnimeEpisodes({
     };
   }, [traktConnected]);
 
-  const { isConnected: simklConnected } = useSimkl();
-  const [simklMap, setSimklMap] = useState<Map<string, Set<string>>>(() =>
-    simklConnected ? peekSimklWatchedMap() : new Map(),
-  );
-
-  useEffect(() => {
-    if (!simklConnected) {
-      setSimklMap(new Map());
-      return;
-    }
-    let cancelled = false;
-    loadSimklWatchedMap()
-      .then((m) => {
-        if (!cancelled) setSimklMap(m);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [simklConnected]);
-
-  const simklWatched = useMemo(
-    () => simklWatchedForId(simklMap, trackId, meta.id, imdbId),
-    [simklMap, trackId, meta.id, imdbId],
-  );
+  const {
+    watchedKeys: simklWatched,
+    completed: simklCompleted,
+    simklMap,
+  } = useSimklAnimeWatched(trackId ?? meta.id, episodes, imdbId);
 
   const { watchedKeys: anilistWatched, completed: anilistCompleted } = useAnilistWatched(
     trackId ?? meta.id,
@@ -189,6 +169,7 @@ export function AnimeEpisodes({
     traktWatched,
     anilistWatched,
     simklWatched,
+    simklMap,
     malWatched,
     mwVersion,
   });
@@ -344,14 +325,14 @@ export function AnimeEpisodes({
     for (const e of displayEpisodes) if (e.sourceMetaId != null) ids.add(e.sourceMetaId);
     return ids.size === 1 ? [...ids][0] : null;
   }, [displayEpisodes]);
-  const entrySimklWatched = useMemo(
-    () => (displaySourceId ? simklWatchedForId(simklMap, displaySourceId) : undefined),
-    [simklMap, displaySourceId],
-  );
   const entryPoolEpisodes = useMemo(
     () =>
       displaySourceId ? franchiseEpisodes.filter((e) => e.sourceMetaId === displaySourceId) : [],
     [displaySourceId, franchiseEpisodes],
+  );
+  const { watchedKeys: entrySimklWatched } = useSimklAnimeWatched(
+    displaySourceId ?? "",
+    entryPoolEpisodes,
   );
   const { watchedKeys: entryAnilistWatched } = useAnilistWatched(
     displaySourceId ?? "",
@@ -394,7 +375,7 @@ export function AnimeEpisodes({
     setWatchedMenu({ x: e.clientX, y: e.clientY, season, episode, watched, metaId: sourceMetaId });
   };
 
-  const { progressFor, nextUpNum, nextUpId, spoilerFor, allWatched } = useAnimeProgressMap({
+  const { progressFor, nextUpId, spoilerFor, allWatched } = useAnimeProgressMap({
     episodes,
     displayEpisodes,
     metaId: meta.id,
@@ -486,21 +467,37 @@ export function AnimeEpisodes({
     return () => io.disconnect();
   }, [settings.episodeLayout, hasMore, grow, scrollRef]);
 
+  const focusTarget = useMemo(
+    () =>
+      resolveAnimeFocusEpisode(
+        displayEpisodes,
+        episodes,
+        progressFor,
+        nextUpId,
+        resumeEpisode,
+        episodeHint,
+      ),
+    [displayEpisodes, episodes, progressFor, nextUpId, resumeEpisode, episodeHint],
+  );
+
   const didJumpRef = useRef("");
   useEffect(() => {
-    if (order || tvdbPanel.panel) return;
-    if (nextUpNum == null || didJumpRef.current === meta.id) return;
-    const idx = episodes.findIndex((ep) => ep.id === nextUpId);
-    if (idx < 12) return;
-    didJumpRef.current = meta.id;
-    if ((scrollRef.current?.scrollTop ?? 0) > 240) return;
-    reveal(nextUpNum, nextUpId);
-    scrollToDataEp(scrollRef.current, nextUpNum, {
+    if (!focusTarget) return;
+    if (pickedKeyRef.current != null) return;
+
+    const jumpKey = `${meta.id}:${focusTarget.id}`;
+    if (didJumpRef.current === jumpKey) return;
+
+    if (didJumpRef.current !== "" && (scrollRef.current?.scrollTop ?? 0) > 240) return;
+
+    didJumpRef.current = jumpKey;
+    reveal(focusTarget.number, focusTarget.id);
+    scrollToDataEp(scrollRef.current, focusTarget.number, {
       behavior: "auto",
       center: true,
-      epId: nextUpId,
+      epId: focusTarget.id,
     });
-  }, [nextUpNum, nextUpId, episodes, meta.id, reveal, scrollRef]);
+  }, [focusTarget, meta.id, reveal, scrollRef]);
 
   const isOneOff = meta.type === "movie" || episodes.length <= 1;
   const downloadEpisodes = useMemo(
@@ -631,7 +628,11 @@ export function AnimeEpisodes({
         )}
       </div>
       {isOneOff ? (
-        <MovieEntryCard meta={meta} ep={episodes[0]} watched={anilistCompleted || malCompleted} />
+        <MovieEntryCard
+          meta={meta}
+          ep={episodes[0]}
+          watched={anilistCompleted || malCompleted || simklCompleted}
+        />
       ) : (
         <div key={settings.episodeLayout} className="animate-fade-in">
           {filteredEpisodes && filteredEpisodes.length === 0 ? (
@@ -673,6 +674,7 @@ export function AnimeEpisodes({
               onReachEnd={settings.episodeLayout === "grid" ? undefined : grow}
               metaForEp={routing.metaForEp}
               showSeason={showSeason}
+              focusEpisodeKey={focusTarget ? String(focusTarget.id) : null}
             />
           )}
         </div>
