@@ -18,6 +18,7 @@ import { downloadText } from "@/lib/download-text";
 import { nextBackgroundImage } from "@/lib/theme-background";
 import {
   consumeThemeLibraryRequest,
+  requestThemeLibrary,
   setThemeLibraryOpen,
   subscribeThemeLibraryRequest,
 } from "./library-open-store";
@@ -270,6 +271,7 @@ export function CustomThemesSection({
           setImportedNotice(null);
           setLibraryTab("library");
           setLibraryOpen(true);
+          requestThemeLibrary({ tab: "library" });
         }}
         onOpenStudio={() => setStudioOpen(true)}
         onImport={pickImportFile}

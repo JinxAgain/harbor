@@ -14,6 +14,7 @@ import { CustomThemesSection } from "./theme-panel/custom-themes-section";
 import {
   consumeThemeLibraryRequest,
   requestThemeLibrary,
+  setThemeLibraryOpen,
   subscribeThemeLibraryRequest,
   useThemeLibraryOpen,
 } from "./theme-panel/library-open-store";
@@ -50,12 +51,12 @@ export function ThemePanel() {
   useEffect(() => {
     const req = consumeThemeLibraryRequest();
     if (req) {
-      setTab("library");
+      setTab("mylibrary");
       requestThemeLibrary(req);
     }
-    return subscribeThemeLibraryRequest(() =>
-      setTab((current) => (current === "mylibrary" ? current : "library")),
-    );
+    return subscribeThemeLibraryRequest(() => {
+      setTab("mylibrary");
+    });
   }, []);
 
   const tabs = [
@@ -69,22 +70,30 @@ export function ThemePanel() {
     ...(isTauri ? [{ id: "window" as const, label: t("Window") }] : []),
   ];
 
-  const active: Tab = libraryOpen && tab !== "mylibrary" ? "library" : tab;
-
   const wasLibraryOpen = useRef(false);
   useEffect(() => {
     if (wasLibraryOpen.current && !libraryOpen && tab === "mylibrary") setTab("library");
     wasLibraryOpen.current = libraryOpen;
   }, [libraryOpen, tab]);
 
-  useSubTabs(libraryOpen && tab !== "mylibrary" ? [] : tabs, tab, (id) => setTab(id as Tab));
+  const onSelectTab = (nextTab: Tab) => {
+    if (nextTab !== "mylibrary") {
+      setThemeLibraryOpen(false);
+    }
+    setTab(nextTab);
+  };
+
+  const activeSidebarTab = tab === "library" && libraryOpen ? "mylibrary" : tab;
+  useSubTabs(tabs, activeSidebarTab, (id) => onSelectTab(id as Tab));
+
+  const active: Tab = tab === "library" && libraryOpen ? "mylibrary" : tab;
 
   return (
     <>
       <div key={active} className="harbor-cascade flex flex-col gap-10">
         {active === "theme" && <ThemeTab />}
-        {active === "library" && <LibraryTab />}
-        {active === "mylibrary" && <LibraryTab startOpenTab="library" />}
+        {active === "library" && <LibraryTab key="library" />}
+        {active === "mylibrary" && <LibraryTab key="mylibrary" startOpenTab="library" />}
         {active === "logo" && <LogoTab />}
         {active === "type" && <TypographyTab />}
         {active === "interface" && <DisplaySection />}

@@ -10,6 +10,7 @@ import { useT } from "@/lib/i18n";
 import { useSettings } from "@/lib/settings";
 import { getThemeById } from "@/lib/theme";
 import { useView } from "@/lib/view";
+import { useSectionBackActive } from "@/lib/section-back";
 import { close, minimize, toggleMaximize } from "@/lib/window";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -30,7 +31,8 @@ export function FloatingTop() {
   const customMark = themePreset?.logo?.mark ?? null;
   const liveActive = view === "live";
   const inSettings = view === "settings";
-  const showBack = canGoBack && topKind !== "home" && topKind !== "picker";
+  const sectionBack = useSectionBackActive();
+  const showBack = canGoBack && (sectionBack || topKind !== "home") && topKind !== "picker";
   const onBack = () => (topKind === "picker" ? exitPlayback() : goBack());
 
   return (

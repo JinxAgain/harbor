@@ -10,7 +10,7 @@ import { useOnboarding } from "@/lib/onboarding";
 const Festival = lazy(() => import("./spooktober-view").then(module => ({ default: module.SpooktoberView })));
 
 export function SpooktoberHome({ active = true, onReady }: { active?: boolean; onReady?: () => void }) {
-  const { setView } = useView();
+  const { setView, homeResetTick } = useView();
   const { isDismissed, dismiss } = useOnboarding();
   const [available, setAvailable] = useState(isSpooktoberSeason);
   const [screen, setScreen] = useState<"home" | "festival">("home");
@@ -22,6 +22,9 @@ export function SpooktoberHome({ active = true, onReady }: { active?: boolean; o
     setPlaylistRequest(null);
     requestAnimationFrame(() => document.querySelector<HTMLButtonElement>("[data-spooktober-invitation]")?.focus({ preventScroll: true }));
   }, []);
+  useEffect(() => {
+    if (homeResetTick > 0) close();
+  }, [homeResetTick, close]);
   const prepareFestival = () => setFestivalOpened(true);
   const openFestival = () => { prepareFestival(); setEntryToken(value => value + 1); setScreen("festival"); };
   useEffect(() => {
