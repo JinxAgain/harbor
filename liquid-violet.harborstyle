@@ -1,0 +1,629 @@
+# Harbor Style
+name: Liquid Glass Violet
+blurb: Refractive dark violet glass, glowing lavender edges, nebula backdrop.
+layout: minui
+card: glass
+button: custom
+font: plus-jakarta
+bokeh: true
+swatch: #161521, #2a2640, #bd93f9
+bg-image: radial-gradient(ellipse 88% 68% at 18% 8%, rgba(189, 147, 249, 0.26) 0%, rgba(76, 48, 130, 0.24) 36%, transparent 70%), radial-gradient(ellipse 75% 60% at 85% 92%, rgba(255, 121, 198, 0.16) 0%, rgba(56, 38, 98, 0.22) 42%, transparent 72%), linear-gradient(160deg, #1e1930 0%, #151320 52%, #0e0d16 100%)
+bg-dim: 0
+
+@tokens
+--color-canvas: #161521
+--color-surface: rgba(38, 35, 56, 0.52)
+--color-elevated: rgba(56, 52, 82, 0.58)
+--color-raised: rgba(76, 70, 110, 0.65)
+--color-ink: #f8f8f2
+--color-ink-muted: #d8d6e8
+--color-ink-subtle: #8c88b2
+--color-edge: rgba(189, 147, 249, 0.32)
+--color-edge-soft: rgba(189, 147, 249, 0.14)
+--color-accent: #bd93f9
+--color-accent-soft: rgba(189, 147, 249, 0.22)
+--color-danger: #ff5555
+
+@css
+:root {
+  --lg-blur: 16px;
+  --lg-saturate: 145%;
+  --lg-tint: 24%;
+  --lg-specular-alpha: 0.22;
+  --lg-chromatic-alpha: 0.12;
+  --lg-accent-glow: rgba(189, 147, 249, 0.35);
+  --lg-glass-rim: rgba(255, 255, 255, 0.24);
+  --lg-glass-fill: rgba(28, 24, 42, 0.62);
+  --lg-glass-elevated: rgba(44, 38, 66, 0.68);
+  --lg-glass-raised: rgba(62, 54, 92, 0.74);
+  --lg-dispersion-grad: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.45)) 0%,
+    rgba(189, 147, 249, calc(var(--lg-chromatic-alpha, 0.12) * 0.55)) 48%,
+    rgba(255, 121, 198, calc(var(--lg-chromatic-alpha, 0.12) * 0.35)) 100%
+  );
+  --lg-dock-glass-bg: var(--lg-dispersion-grad), color-mix(in srgb, var(--color-canvas) var(--lg-tint, 24%), transparent);
+  --lg-dock-glass-blur: blur(calc(var(--lg-blur, 16px) * 1.25)) saturate(var(--lg-saturate, 145%));
+  --lg-dock-glass-border: 1px solid rgba(255, 255, 255, var(--lg-specular-alpha, 0.22));
+  --lg-dock-glass-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 1.35)),
+    inset 0 -1px 0 rgba(255, 255, 255, calc(var(--lg-chromatic-alpha, 0.12) * 0.8)),
+    0 24px 60px -16px rgba(0, 0, 0, 0.65),
+    0 4px 20px -4px var(--color-accent-soft);
+}
+
+/* Fix absolute buttons across player & UI */
+button.absolute,
+button[class*="absolute"],
+button[aria-label*="Resize subtitle"],
+button[aria-label*="Up next" i] {
+  position: absolute !important;
+}
+
+/* ===== 1. DOCKER (MINUI DOCK) ===== */
+.harbor-minui-shell {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border: var(--lg-dock-glass-border) !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+
+.harbor-minui-button:not([aria-current="page"]) {
+  background:
+    linear-gradient(
+      160deg,
+      rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.45)),
+      rgba(255, 255, 255, 0.02)
+    ),
+    color-mix(in srgb, var(--color-elevated) var(--lg-tint, 24%), transparent) !important;
+  border-color: rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.65)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, var(--lg-specular-alpha, 0.22)),
+    0 6px 16px -6px rgba(0, 0, 0, 0.4) !important;
+}
+
+.harbor-minui-button:not([aria-current="page"]):hover {
+  background:
+    linear-gradient(
+      160deg,
+      rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.65)),
+      rgba(255, 255, 255, 0.05)
+    ),
+    color-mix(in srgb, var(--color-raised) calc(var(--lg-tint, 24%) + 12%), transparent) !important;
+  border-color: rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.9)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 1.2)),
+    0 8px 20px -6px rgba(0, 0, 0, 0.5) !important;
+}
+
+.harbor-minui-button[aria-current="page"] {
+  background:
+    linear-gradient(
+      155deg,
+      rgba(255, 255, 255, 0.34) 0%,
+      rgba(255, 255, 255, 0.04) 55%,
+      transparent 100%
+    ),
+    color-mix(in srgb, var(--color-accent) 82%, transparent) !important;
+  border-color: rgba(255, 255, 255, 0.38) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 10px 26px -6px var(--color-accent-soft) !important;
+}
+
+.harbor-minui-tooltip {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border: var(--lg-dock-glass-border) !important;
+  color: var(--color-ink) !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+
+.harbor-minui-tooltip > span[aria-hidden],
+.harbor-minui-tooltip > span {
+  background: color-mix(in srgb, var(--color-canvas) var(--lg-tint, 24%), transparent) !important;
+  border-right: var(--lg-dock-glass-border) !important;
+  border-bottom: var(--lg-dock-glass-border) !important;
+  border-top: none !important;
+  border-left: none !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+}
+
+/* Service tiles in MinUI layout */
+html[data-theme-layout="minui"] {
+  --service-logo-filter: none !important;
+}
+html[data-theme-layout="minui"] .harbor-service-tile {
+  background: color-mix(in srgb, var(--color-surface) calc(var(--lg-tint, 24%) + 12%), transparent) !important;
+  backdrop-filter: blur(var(--lg-blur, 16px)) saturate(var(--lg-saturate, 145%));
+  -webkit-backdrop-filter: blur(var(--lg-blur, 16px)) saturate(var(--lg-saturate, 145%));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, var(--lg-specular-alpha, 0.22)),
+    inset 0 0 0 1px var(--color-edge-soft),
+    0 10px 28px -12px rgba(0, 0, 0, 0.45) !important;
+}
+html[data-theme-layout="minui"] .harbor-service-tile:hover {
+  background: color-mix(in srgb, var(--color-elevated) calc(var(--lg-tint, 24%) + 20%), transparent) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) + 0.12)),
+    inset 0 0 0 1px var(--color-edge),
+    0 14px 34px -12px rgba(0, 0, 0, 0.55) !important;
+}
+html[data-theme-layout="minui"] .harbor-service-tile img {
+  filter: none !important;
+  opacity: 0.92;
+}
+html[data-theme-layout="minui"] .harbor-service-tile:hover img {
+  opacity: 1;
+}
+
+/* ===== 2. CARD HOVER PREVIEW ===== */
+.animate-preview-in,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border: var(--lg-dock-glass-border) !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+
+/* Crown gradient override */
+.animate-preview-in .pointer-events-none.absolute.inset-x-0.bottom-0,
+.animate-preview-in .pointer-events-none.absolute.inset-0,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated .pointer-events-none.absolute.inset-x-0.bottom-0,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated .pointer-events-none.absolute.inset-0 {
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--color-canvas) 95%, transparent) 0%,
+    color-mix(in srgb, var(--color-canvas) 45%, transparent) 46%,
+    transparent 85%
+  ) !important;
+}
+
+/* Rating chip */
+.animate-preview-in span.rounded-\[4px\].border.border-edge,
+.animate-preview-in [data-stagger="0"] span.rounded-md,
+.animate-preview-in [data-stagger="2"] span.rounded-\[4px\],
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated span.rounded-\[4px\].border.border-edge,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated [data-stagger="0"] span.rounded-md,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated [data-stagger="2"] span.rounded-\[4px\] {
+  background: color-mix(in srgb, var(--color-canvas) 70%, transparent) !important;
+  backdrop-filter: blur(8px) saturate(130%) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(130%) !important;
+  border-color: rgba(255, 255, 255, var(--lg-specular-alpha, 0.22)) !important;
+  color: var(--color-ink) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Decision line */
+.animate-preview-in [data-stagger="1"].truncate,
+.animate-preview-in [data-stagger="1"].flex.items-baseline,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated [data-stagger="1"].truncate,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated [data-stagger="1"].flex.items-baseline {
+  color: var(--color-ink-muted) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.animate-preview-in [data-stagger="1"] span.text-ink,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated [data-stagger="1"] span.text-ink {
+  color: var(--color-ink) !important;
+  font-weight: 600;
+}
+
+/* Synopsis */
+.animate-preview-in p[data-stagger="2"],
+.animate-preview-in p.line-clamp-3,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated p[data-stagger="2"],
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated p.line-clamp-3 {
+  color: var(--color-ink-muted) !important;
+  line-height: 1.55;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+/* Secondary action buttons */
+.animate-preview-in button.h-11.w-11:not(.bg-ink),
+.animate-preview-in button.h-7.w-7,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated button.h-11.w-11:not(.bg-ink),
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated button.h-7.w-7 {
+  background:
+    linear-gradient(
+      150deg,
+      rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.45)),
+      rgba(255, 255, 255, 0.02)
+    ),
+    color-mix(in srgb, var(--color-raised) 55%, transparent) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  border: 1px solid rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.75)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, var(--lg-specular-alpha, 0.22)),
+    0 4px 14px -3px rgba(0, 0, 0, 0.4) !important;
+}
+.animate-preview-in button.h-11.w-11:not(.bg-ink):hover,
+.animate-preview-in button.h-7.w-7:hover,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated button.h-11.w-11:not(.bg-ink):hover,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated button.h-7.w-7:hover {
+  background:
+    linear-gradient(
+      150deg,
+      rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.75)),
+      rgba(255, 255, 255, 0.06)
+    ),
+    color-mix(in srgb, var(--color-raised) 75%, transparent) !important;
+  border-color: rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 1.1)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 6px 18px -3px rgba(0, 0, 0, 0.55),
+    0 0 12px -2px var(--lg-accent-glow) !important;
+}
+.animate-preview-in button.h-11.w-11.bg-ink,
+.group.relative.cursor-pointer.overflow-hidden.bg-elevated button.h-11.w-11.bg-ink {
+  background:
+    linear-gradient(
+      155deg,
+      rgba(255, 255, 255, 0.45) 0%,
+      rgba(255, 255, 255, 0.08) 50%,
+      transparent 100%
+    ),
+    var(--color-accent) !important;
+  color: var(--color-canvas) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 8px 24px -4px var(--lg-accent-glow) !important;
+}
+
+/* ===== 3. VIDEO PLAYBACK SURFACES ===== */
+
+/* Subtitles menu & resizable panel (ResizableSubtitlePanel) */
+button[aria-label*="Resize subtitle"] {
+  position: absolute !important;
+  top: 0.25rem !important;
+  inset-inline-start: 0.25rem !important;
+  z-index: 20 !important;
+  color: var(--color-ink-muted) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+button[aria-label*="Resize subtitle"]:hover {
+  background: rgba(255, 255, 255, 0.18) !important;
+  color: var(--color-ink) !important;
+}
+
+.animate-menu-pop > .relative.flex.h-full.w-full.flex-col.bg-elevated,
+.fixed.end-14.bottom-\[150px\] > .relative.flex.h-full.w-full.flex-col.bg-elevated,
+.mb-\[84px\].me-\[56px\] > .relative.flex.h-full.w-full.flex-col.bg-elevated,
+.relative.flex.h-full.w-full.flex-col.bg-elevated:has(> button[aria-label*="Resize subtitle"]) {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border: var(--lg-dock-glass-border) !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+
+/* Subtitle language sidebar & body */
+.relative.flex.h-full.w-full.flex-col.bg-elevated aside {
+  background: color-mix(in srgb, var(--color-canvas) 30%, transparent) !important;
+  border-inline-end: var(--lg-dock-glass-border) !important;
+}
+
+/* Sync dropdown & general dropdown portals */
+[data-dropdown-menu] {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border: var(--lg-dock-glass-border) !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+[data-dropdown-menu] button[role="option"] {
+  transition: background-color 150ms ease, color 150ms ease;
+}
+[data-dropdown-menu] button[role="option"]:not([aria-selected="true"]):hover,
+[data-dropdown-menu] button[role="option"]:not([aria-selected="true"]):focus {
+  background-color: var(--lg-glass-raised) !important;
+  color: var(--color-ink) !important;
+}
+[data-dropdown-menu] button[role="option"][aria-selected="true"] {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.35) 0%, transparent 100%),
+    var(--color-accent) !important;
+  color: var(--color-canvas) !important;
+  font-weight: 600;
+  box-shadow: 0 4px 14px -3px var(--lg-accent-glow) !important;
+}
+
+/* FPS control */
+.harbor-press-pop {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.3) 0%, transparent 100%),
+    var(--color-accent) !important;
+  color: var(--color-canvas) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 4px 12px -2px var(--lg-accent-glow) !important;
+}
+
+/* Audio tracks menu (inline popover & overlay modal) */
+.fixed.end-14.bottom-\[150px\].w-\[360px\].bg-elevated.animate-menu-pop,
+.fixed.end-14.bottom-\[150px\] > div.flex.flex-col.overflow-hidden.rounded-md.bg-elevated,
+.mb-\[110px\].me-\[160px\].bg-elevated,
+div.m-3.mb-\[110px\].me-\[160px\] {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border: var(--lg-dock-glass-border) !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+
+/* Episode panel / Up Next tab button (anchored to the right) */
+button[aria-label*="Up next" i],
+button[aria-label="Up next"] {
+  position: absolute !important;
+  left: auto !important;
+  right: 0 !important;
+  border-radius: 1rem 0 0 1rem !important;
+  border-width: 1px 0 1px 1px !important;
+  border-color: rgba(255, 255, 255, var(--lg-specular-alpha, 0.22)) !important;
+  background:
+    var(--lg-dispersion-grad),
+    color-mix(in srgb, var(--color-surface) calc(var(--lg-tint, 24%) + 25%), transparent) !important;
+  backdrop-filter: blur(calc(var(--lg-blur, 16px) * 1.3)) saturate(var(--lg-saturate, 145%)) !important;
+  -webkit-backdrop-filter: blur(calc(var(--lg-blur, 16px) * 1.3)) saturate(var(--lg-saturate, 145%)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 1.25)),
+    0 10px 28px -6px rgba(0, 0, 0, 0.55),
+    0 0 18px -4px var(--lg-accent-glow) !important;
+}
+button[aria-label*="Up next" i]:hover,
+button[aria-label="Up next"]:hover {
+  background:
+    var(--lg-dispersion-grad),
+    color-mix(in srgb, var(--color-elevated) calc(var(--lg-tint, 24%) + 35%), transparent) !important;
+  border-color: rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 1.5)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 14px 34px -6px rgba(0, 0, 0, 0.65),
+    0 0 22px -2px var(--lg-accent-glow) !important;
+}
+
+/* Episode panel / Up Next drawer anchored to the right */
+aside[role="dialog"][aria-label="Up next"] > div,
+aside[role="dialog"].max-w-\[440px\] > div {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border-inline-start: var(--lg-dock-glass-border) !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+
+aside[role="dialog"][aria-label="Up next"],
+aside[role="dialog"].max-w-\[440px\] {
+  left: auto !important;
+  right: 0 !important;
+  border-radius: 12px 0 0 12px !important;
+}
+
+aside[role="dialog"][aria-label="Up next"].-translate-x-full,
+aside[role="dialog"].max-w-\[440px\].-translate-x-full {
+  transform: translateX(100%) !important;
+}
+aside[role="dialog"][aria-label="Up next"].translate-x-0,
+aside[role="dialog"].max-w-\[440px\].translate-x-0 {
+  transform: translateX(0) !important;
+}
+
+/* EpisodeRow cards */
+aside[role="dialog"] .rounded-2xl.bg-elevated\/60 {
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.4)) 0%, transparent 60%),
+    color-mix(in srgb, var(--color-surface) 60%, transparent) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border: 1px solid rgba(255, 255, 255, var(--lg-specular-alpha, 0.22)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.9)),
+    0 6px 18px -6px rgba(0, 0, 0, 0.45) !important;
+}
+aside[role="dialog"] .rounded-2xl.bg-elevated\/60:hover {
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.6)) 0%, transparent 60%),
+    color-mix(in srgb, var(--color-elevated) 75%, transparent) !important;
+  border-color: rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 1.2)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 8px 24px -6px rgba(0, 0, 0, 0.55),
+    0 0 14px -3px var(--lg-accent-glow) !important;
+}
+aside[role="dialog"] .rounded-2xl.ring-accent,
+aside[role="dialog"] .rounded-2xl.ring-2.ring-accent {
+  border-color: var(--color-accent) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 0 0 2px var(--color-accent),
+    0 8px 26px -6px var(--lg-accent-glow) !important;
+}
+
+/* Season selector (SeasonPicker trigger & dropdown menu) */
+aside[role="dialog"] .rounded-full.bg-white\/10,
+aside[role="dialog"] button[aria-haspopup="listbox"] {
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.22) 0%, transparent 100%),
+    color-mix(in srgb, var(--color-elevated) 65%, transparent) !important;
+  border: 1px solid rgba(255, 255, 255, var(--lg-specular-alpha, 0.22)) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+aside[role="dialog"] .rounded-full.bg-white\/10:hover,
+aside[role="dialog"] button[aria-haspopup="listbox"]:hover {
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.35) 0%, transparent 100%),
+    color-mix(in srgb, var(--color-raised) 75%, transparent) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+}
+aside[role="dialog"] .max-h-\[52vh\].rounded-md.bg-elevated {
+  background:
+    var(--lg-dispersion-grad),
+    color-mix(in srgb, var(--color-canvas) calc(var(--lg-tint, 24%) + 35%), transparent) !important;
+  backdrop-filter: blur(calc(var(--lg-blur, 16px) * 1.35)) saturate(var(--lg-saturate, 145%)) !important;
+  -webkit-backdrop-filter: blur(calc(var(--lg-blur, 16px) * 1.35)) saturate(var(--lg-saturate, 145%)) !important;
+  border: 1px solid var(--lg-glass-rim) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, var(--lg-specular-alpha, 0.22)),
+    0 16px 40px -12px rgba(0, 0, 0, 0.75) !important;
+}
+
+/* StreamsView addon group & StreamPill */
+aside[role="dialog"] .rounded-2xl.bg-elevated\/30 {
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.35)) 0%, transparent 60%),
+    color-mix(in srgb, var(--color-surface) 55%, transparent) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  border: 1px solid rgba(255, 255, 255, var(--lg-specular-alpha, 0.22)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.8)),
+    0 4px 16px -4px rgba(0, 0, 0, 0.4) !important;
+}
+aside[role="dialog"] button.group.rounded-xl.bg-elevated\/40 {
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.3)) 0%, transparent 70%),
+    color-mix(in srgb, var(--color-elevated) 55%, transparent) !important;
+  border: 1px solid rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.7)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, var(--lg-specular-alpha, 0.22)) !important;
+}
+aside[role="dialog"] button.group.rounded-xl.bg-elevated\/40:hover {
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.5)) 0%, transparent 70%),
+    color-mix(in srgb, var(--color-raised) 70%, transparent) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 4px 16px -3px var(--lg-accent-glow) !important;
+}
+
+/* ===== 4. STREAM SWITCHER MODAL (SOURCE PICKER) ===== */
+.pointer-events-auto.absolute.inset-0.z-\[60\] > .max-w-\[880px\].bg-elevated,
+div.max-w-\[880px\].rounded-xl.bg-elevated,
+div.max-w-\[880px\].bg-elevated {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border: var(--lg-dock-glass-border) !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+
+div.max-w-\[880px\] header,
+div.max-w-\[880px\] footer {
+  background: color-mix(in srgb, var(--color-canvas) 20%, transparent) !important;
+  border-color: rgba(255, 255, 255, var(--lg-chromatic-alpha, 0.12)) !important;
+}
+
+div.max-w-\[880px\] header button.bg-raised {
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.45)), rgba(255, 255, 255, 0.02)),
+    color-mix(in srgb, var(--color-raised) 55%, transparent) !important;
+  border: 1px solid rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.75)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, var(--lg-specular-alpha, 0.22)) !important;
+}
+
+div.max-w-\[880px\] header button.bg-raised:hover {
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.7)), rgba(255, 255, 255, 0.05)),
+    color-mix(in srgb, var(--color-raised) 75%, transparent) !important;
+  border-color: rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 1.1)) !important;
+}
+
+/* Stream switcher row cards */
+div.max-w-\[880px\] li > div[role="button"] {
+  border-bottom: 1px solid color-mix(in srgb, var(--color-edge-soft) 40%, transparent);
+  transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+
+div.max-w-\[880px\] li > div[role="button"]:hover {
+  background: color-mix(in srgb, var(--color-raised) 35%, transparent) !important;
+}
+
+div.max-w-\[880px\] li > div[role="button"].bg-accent-soft\/40 {
+  background: color-mix(in srgb, var(--color-accent-soft) 45%, transparent) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.6)) !important;
+}
+
+/* Filters dropdown popup */
+div.max-w-\[880px\] .w-\[288px\].rounded-md.bg-elevated {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border: var(--lg-dock-glass-border) !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+
+/* Transport menus (speed, shader, anime4k, aspect, seek step, cast, more) */
+.fixed.end-14.bottom-\[150px\].rounded-md.bg-elevated,
+.fixed.end-14.bottom-\[150px\] .rounded-md.bg-elevated,
+.absolute.bottom-\[calc\(100\%\+12px\)\].rounded-md.bg-elevated,
+.absolute.end-0.top-\[calc\(100\%\+10px\)\].rounded-md.bg-elevated,
+.absolute.end-0.top-\[calc\(100\%\+6px\)\].rounded-md.bg-elevated,
+.animate-menu-pop.fixed.z-\[140\].bg-elevated,
+div[role="dialog"][aria-label*="Cast"].animate-menu-pop,
+div[role="dialog"].animate-menu-pop.bg-elevated {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border: var(--lg-dock-glass-border) !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+
+/* Subtitle appearance toolbar & portaled menus */
+div[role="toolbar"][aria-label*="Subtitle appearance"],
+.animate-sub-bar-drop div[role="toolbar"],
+div[role="toolbar"].bg-elevated {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border: var(--lg-dock-glass-border) !important;
+  border-radius: 14px !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+div[role="toolbar"][aria-label*="Subtitle appearance"] .bg-raised,
+.animate-sub-bar-drop div[role="toolbar"] .bg-raised,
+div[role="toolbar"].bg-elevated .bg-raised {
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.35)) 0%, transparent 100%),
+    color-mix(in srgb, var(--color-surface) 65%, transparent) !important;
+  border: 1px solid rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 0.7)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, var(--lg-specular-alpha, 0.22)) !important;
+}
+
+div.fixed.z-\[320\].w-\[260px\].bg-elevated,
+div.fixed.z-\[320\].w-\[208px\].bg-elevated,
+div.fixed.z-\[320\].w-\[260px\].rounded-md.bg-elevated,
+div.fixed.z-\[320\].w-\[208px\].rounded-md.bg-elevated,
+div[data-title-suggest-dropdown] {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border: var(--lg-dock-glass-border) !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+
+/* Playback dialogs & leave confirm modal (strictly scoped to player to preserve settings styles) */
+[data-harbor-player] .modal-panel,
+[data-harbor-player] [role="dialog"] > div.rounded-2xl,
+[data-harbor-player] [role="dialog"] > div.rounded-xl,
+[data-harbor-player] [role="dialog"] > div.rounded-md.bg-surface,
+[data-harbor-player] div.mx-4.w-full.max-w-md.rounded-2xl.border.bg-surface {
+  background: var(--lg-dock-glass-bg) !important;
+  backdrop-filter: var(--lg-dock-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lg-dock-glass-blur) !important;
+  border: var(--lg-dock-glass-border) !important;
+  box-shadow: var(--lg-dock-glass-shadow) !important;
+}
+
+.group:hover .harbor-card-ring,
+.group:focus-visible .harbor-card-ring {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, calc(var(--lg-specular-alpha, 0.22) * 1.4)),
+    0 0 0 1.5px var(--color-accent),
+    0 14px 34px -10px var(--color-accent-soft) !important;
+}
