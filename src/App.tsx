@@ -2019,6 +2019,7 @@ function Shell({ onReady }: { onReady?: () => void }) {
                   seasonEpisodes={picker.seasonEpisodes}
                   resume={picker.resume}
                   startPositionMs={picker.startPositionMs}
+                  startFromZero={picker.startFromZero}
                   playerActive={playerActive}
                 />
               </Suspense>

@@ -336,6 +336,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
   const clearPreparedSubtitles = () => preparedSubtitleCleanups.clearAll();
   let lastCachedEnd: number | null = null;
   let lastSeekableRanges: Array<{ start: number; end: number }> = [];
+  let awaitingFileLoaded = false;
 
   const computeBufferedSec = (currentPos: number): number => {
     if (lastSeekableRanges.length > 0) {
@@ -660,6 +661,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       return;
     }
     if (raw.event === "player-failure") {
+      awaitingFileLoaded = false;
       const reason = String((raw as { reason?: unknown }).reason ?? "");
       snap = mpvFailureSnapshot(snap, reason);
       mediaRevision += 1;
@@ -673,6 +675,12 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
     } else if (raw.event === "property-change") {
       const name = raw.name;
       const data = raw.data;
+      if (
+        awaitingFileLoaded &&
+        (name === "time-pos" || name === "duration" || name === "pause" || name === "eof-reached")
+      ) {
+        return;
+      }
       if (name === "time-pos" && typeof data === "number") {
         snap.positionSec = data;
         if (lastSeekableRanges.length > 0 || lastCachedEnd != null) {
@@ -856,12 +864,14 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       }
       emit();
     } else if (raw.event === "file-loaded") {
+      awaitingFileLoaded = false;
       markPlaybackTrace(activeTraceId, "file-loaded");
       snap.status = observedPaused === true ? "paused" : "playing";
       snap.errorCode = null;
       snap.errorMessage = null;
       emit();
     } else if (raw.event === "playback-restart") {
+      awaitingFileLoaded = false;
       if (
         expectedMediaPath &&
         observedMediaPath &&
@@ -944,6 +954,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       mediaRevision += 1;
       invalidateSubtitleSelections();
       svpFilterFailed = false;
+      awaitingFileLoaded = true;
       snap.status = "loading";
       snap.errorCode = null;
       snap.errorMessage = null;
@@ -1000,6 +1011,10 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
             await applyHeaderProps(src.headers);
             const startAt =
               typeof src.startAtSec === "number" && src.startAtSec > 0 ? src.startAtSec : 0;
+            await invoke("mpv_set_property", {
+              name: "start",
+              value: startAt > 0 ? String(startAt) : "0",
+            }).catch(() => {});
             const cmd: Array<string | number> = [
               "loadfile",
               src.url,

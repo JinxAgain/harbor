@@ -355,17 +355,21 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
 
   const airedNext =
     adjacent.next && isNextAired(false, adjacent.next.airDate) ? adjacent.next : null;
+  const hasEpisodeTargets =
+    src.meta.type === "series" || adjacent.next != null || adjacent.prev != null;
   const canChangeEpisode =
-    (src.meta.type === "series" || adjacent.next != null || adjacent.prev != null) &&
-    (!inRoom || isHost);
+    hasEpisodeTargets && (!inRoom || isHost || roomGuestControl);
+  const canAutoAdvanceEpisode =
+    hasEpisodeTargets && (!inRoom || isHost);
   const roomGuest = inRoom && !isHost;
+  const roomGuestReadOnly = inRoom && !isHost && !roomGuestControl;
   const broadcastEpisode = useCallback(
     (ep: PlayEpisode) => {
-      if (!inRoom || !isHost) return;
-      claimHost(true);
+      if (!inRoom || (!isHost && !roomGuestControl)) return;
+      if (isHost) claimHost(true);
       sendInvite(buildPlayInvite(src.meta, ep));
     },
-    [inRoom, isHost, claimHost, sendInvite, src.meta],
+    [inRoom, isHost, roomGuestControl, claimHost, sendInvite, src.meta],
   );
 
   const [autoNextCancelled, setAutoNextCancelled] = useState(false);
@@ -409,7 +413,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     src,
     snap,
     nextEp: settings.autoPlayNextEpisode && !queueOrSleepArmed ? airedNext : null,
-    canChangeEpisode,
+    canChangeEpisode: canAutoAdvanceEpisode,
     cancelled: autoNextCancelled,
     startedNearEndRef,
     goToEpisode: autoAdvance,
@@ -751,6 +755,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     suppressOutgoingFor,
     bridgeRef,
     initialSyncDoneRef,
+    selfFrameReadyRef,
     mediaKey: `${src.meta.id}|${src.episode?.season ?? ""}|${src.episode?.episode ?? ""}`,
     sendCommand,
     notifyHostPlayPause,
@@ -1387,8 +1392,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     pendingSeekSec,
     skipSegments,
     hasNextEpisode: hasNextEpisodeNow,
-    hasNextEpDisplay: canChangeEpisode && !autoNextCancelled && !!airedNext,
-    nextEp: canChangeEpisode && !autoNextCancelled ? airedNext : null,
+    hasNextEpDisplay: hasEpisodeTargets && !autoNextCancelled && !!airedNext,
+    nextEp: hasEpisodeTargets && !autoNextCancelled ? airedNext : null,
     nextEpMask,
     pillsVisible: hasStarted || !inRoom,
     allowAutoSkip: !roomGuest && resumeReady,
@@ -1477,11 +1482,10 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
       !switcherOpen &&
       !pipMode &&
       !drawMode &&
-      !episodesHidden &&
-      !roomGuest,
+      !episodesHidden,
     episodesCorner,
     episodesHidden,
-    roomGuest,
+    roomGuest: roomGuestReadOnly,
     onHostAdvance: broadcastEpisode,
     watchedFor,
     acknowledgeResume,

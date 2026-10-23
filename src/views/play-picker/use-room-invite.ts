@@ -14,6 +14,7 @@ export function useRoomInvite(params: {
   clientId: string;
   hostSource: HostSourceInfo | null;
   lastInviteProto: number;
+  roomGuestControl?: boolean;
   wasInvitedTo: (key: string) => boolean;
   claimHost: (fresh: boolean) => void;
   sendInvite: (invite: PlayInvite) => void;
@@ -24,20 +25,44 @@ export function useRoomInvite(params: {
   hostSourceForMedia: SourceDescriptor | null;
   expectHostSource: boolean;
 } {
-  const { meta, episode, inSession, roomSnapshot, clientId, hostSource, lastInviteProto, wasInvitedTo, claimHost, sendInvite } = params;
+  const {
+    meta,
+    episode,
+    inSession,
+    roomSnapshot,
+    clientId,
+    hostSource,
+    lastInviteProto,
+    roomGuestControl,
+    wasInvitedTo,
+    claimHost,
+    sendInvite,
+  } = params;
 
   const inviteKey = `${meta.id}|${episode?.season ?? ""}|${episode?.episode ?? ""}`;
   const foreignHost = !!roomSnapshot.hostClientId && roomSnapshot.hostClientId !== clientId;
-  const canInvite = inSession && !wasInvitedTo(inviteKey) && !foreignHost;
+  const invited = wasInvitedTo(inviteKey);
+  const canInvite = inSession && !invited && (!foreignHost || roomGuestControl === true);
   const inviteSentRef = useRef<string | null>(null);
+  const hostClaimedRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!inSession) return;
+    // If we are the host following a guest's episode invite, reset room readiness via claimHost(true)
+    if (!foreignHost && invited && hostClaimedRef.current !== inviteKey) {
+      hostClaimedRef.current = inviteKey;
+      claimHost(true);
+      return;
+    }
     if (!canInvite) return;
     if (inviteSentRef.current === inviteKey) return;
     inviteSentRef.current = inviteKey;
-    claimHost(true);
+    if (!foreignHost) {
+      hostClaimedRef.current = inviteKey;
+      claimHost(true);
+    }
     sendInvite(buildPlayInvite(meta, episode));
-  }, [canInvite, inviteKey, sendInvite, claimHost, meta, episode]);
+  }, [inSession, canInvite, invited, foreignHost, inviteKey, sendInvite, claimHost, meta, episode]);
 
   const isRoomGuest = inSession && foreignHost;
   const hostSourceForMedia =

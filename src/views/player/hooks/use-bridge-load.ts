@@ -9,6 +9,7 @@ import { playbackStartupProfile } from "@/lib/player/startup-profile";
 import { isLivePlaybackSrc } from "@/lib/player/live-src";
 import { releaseStreamProxy, retainStreamProxy } from "@/lib/stream-proxy";
 import { playerLoadIdentity } from "@/lib/player/load-identity";
+import { setPlaybackClock } from "@/lib/player/playback-clock";
 
 const RESUME_PROMPT_MIN_SEC = 30;
 const RESTART_THRESHOLD = 0.8;
@@ -76,6 +77,7 @@ export function useBridgeLoad(params: {
     const playUrl = transcodedUrl ?? src.url;
     const loadKey = sourceKey;
     if (lastLoadedUrlRef.current === loadKey) return;
+    setPlaybackClock(0, 0);
     setPendingResumeSec(null);
     setPendingSeekSec(null);
     ackRef.current = null;
@@ -94,9 +96,9 @@ export function useBridgeLoad(params: {
         imdbId: src.imdbId ?? null,
         imdbVerified: src.imdbIdVerified === true,
       };
+      const forceZero = isLive || Boolean(src.startFromZero) || Boolean(inRoomRef.current);
       const shouldResolveResume =
-        !isLive &&
-        !src.startFromZero &&
+        !forceZero &&
         src.startPositionMs == null &&
         (resumePlaybackRef.current || resumePromptRef.current);
       const resumePromise = !shouldResolveResume
@@ -126,15 +128,15 @@ export function useBridgeLoad(params: {
       // progress when opening an item normally.
       const hasExplicitStart = src.startPositionMs != null;
       const startSec =
-        isLive || src.startFromZero
+        forceZero
           ? 0
           : (hasExplicitStart ? startMs : !resumePlaybackRef.current || finishedNearEnd ? 0 : startMs) /
             1000;
       const guestInRoom = inRoomRef.current && !isHostRef.current;
       const eligibleForPrompt =
+        !forceZero &&
         isFirstLoad &&
         !isAutoRetry &&
-        !isLive &&
         !src.resume &&
         resumePromptRef.current &&
         startSec > RESUME_PROMPT_MIN_SEC &&

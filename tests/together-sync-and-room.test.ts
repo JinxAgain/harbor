@@ -1551,4 +1551,370 @@ test("worker Room enforces guestControl on commands and resets started/ready on 
   assert.ok(guestMsgs.some((m) => m.t === "participant-ready" && m.clientId === "guest1" && m.ready === false));
 });
 
+test("worker Room handleClaimHost clears syncState and resets started when msg.fresh is true", () => {
+  const storageMap = new Map();
+  const mockStorage = {
+    get: async () => new Map(),
+    put: (k: string, v: any) => storageMap.set(k, v),
+    delete: (k: string) => storageMap.delete(k),
+  };
+  const mockState = {
+    storage: mockStorage,
+    getWebSockets: () => [],
+    blockConcurrencyWhile: (fn: any) => fn(),
+    acceptWebSocket: () => {},
+  };
+
+  const room = new Room(mockState);
+  const sHost: any = { send: () => {}, close: () => {}, serializeAttachment: () => {} };
+  room.handleHello(sHost, { clientId: "host1", name: "Host" });
+  room.handleClaimHost(sHost, { t: "claim-host", fresh: false });
+  room.syncState = { mediaId: "tt123", positionSeconds: 1410, playing: false };
+  room.started = true;
+  assert.ok(room.syncState !== null);
+  assert.equal(room.started, true);
+
+  // When claimHost is called with fresh: true (e.g. switching episode), syncState must be cleared
+  room.handleClaimHost(sHost, { t: "claim-host", fresh: true });
+  assert.equal(room.syncState, null, "syncState must be cleared on fresh claimHost");
+  assert.equal(room.started, false, "started must be reset to false on fresh claimHost");
+});
+
+test("useRoomInvite allows guest with roomGuestControl to send invite without claiming host", () => {
+  const inviteSource = readFileSync(new URL("../src/views/play-picker/use-room-invite.ts", import.meta.url), "utf8");
+  const inviteCode = ts.transpileModule(inviteSource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+
+  const createRunner = () => {
+    const refs: any[] = [];
+    let refIdx = 0;
+    const lastDeps: any[][] = [];
+    const effectFns: any[] = [];
+
+    const mockReact = {
+      useRef: (init: any) => {
+        const idx = refIdx++;
+        if (refs[idx] === undefined) refs[idx] = { current: init };
+        return refs[idx];
+      },
+      useEffect: (fn: any, deps?: any[]) => {
+        const idx = effectFns.length;
+        const prev = lastDeps[idx];
+        const changed = !prev || !deps || deps.some((d, i) => d !== prev[i]);
+        if (changed) {
+          lastDeps[idx] = deps ? [...deps] : [];
+          effectFns.push(fn);
+        }
+      },
+    };
+
+    const activeExports: any = {};
+    new Function("require", "exports", inviteCode)(
+      (name: string) => {
+        if (name === "react") return mockReact;
+        if (name.includes("build-invite")) {
+          return {
+            buildPlayInvite: (meta: any, ep: any) => ({
+              mediaId: meta.id,
+              episode: ep,
+            }),
+          };
+        }
+        if (name.includes("room-derive")) {
+          return { hostSourceMatchesMedia: () => false };
+        }
+        return {};
+      },
+      activeExports,
+    );
+
+    return {
+      run: (params: any) => {
+        refIdx = 0;
+        effectFns.length = 0;
+        const res = activeExports.useRoomInvite(params);
+        for (const fn of effectFns) fn();
+        return res;
+      },
+    };
+  };
+
+  // Case 1: Guest with roomGuestControl: false cannot invite
+  const runner1 = createRunner();
+  let invitesSent: any[] = [];
+  let hostClaimed = false;
+  const res1 = runner1.run({
+    meta: { id: "series1", type: "series", name: "Show" },
+    episode: { season: 1, episode: 2 },
+    inSession: true,
+    roomSnapshot: { hostClientId: "host1", participants: [] },
+    clientId: "guest1",
+    hostSource: null,
+    lastInviteProto: 2,
+    roomGuestControl: false,
+    wasInvitedTo: () => false,
+    claimHost: () => { hostClaimed = true; },
+    sendInvite: (inv: any) => invitesSent.push(inv),
+  });
+  assert.equal(res1.canInvite, false);
+  assert.equal(invitesSent.length, 0);
+  assert.equal(hostClaimed, false);
+
+  // Case 2: Guest with roomGuestControl: true CAN invite and does NOT claim host
+  const runner2 = createRunner();
+  invitesSent = [];
+  hostClaimed = false;
+  const res2 = runner2.run({
+    meta: { id: "series1", type: "series", name: "Show" },
+    episode: { season: 1, episode: 2 },
+    inSession: true,
+    roomSnapshot: { hostClientId: "host1", participants: [] },
+    clientId: "guest1",
+    hostSource: null,
+    lastInviteProto: 2,
+    roomGuestControl: true,
+    wasInvitedTo: () => false,
+    claimHost: () => { hostClaimed = true; },
+    sendInvite: (inv: any) => invitesSent.push(inv),
+  });
+  assert.equal(res2.canInvite, true);
+  assert.equal(invitesSent.length, 1);
+  assert.equal(invitesSent[0].episode.episode, 2);
+  assert.equal(hostClaimed, false, "Guest must not usurp hostClientId");
+
+  // Case 3: Host following guest invite calls claimHost(true) to reset readiness
+  const runner3 = createRunner();
+  invitesSent = [];
+  let freshHostClaim = false;
+  runner3.run({
+    meta: { id: "series1", type: "series", name: "Show" },
+    episode: { season: 1, episode: 2 },
+    inSession: true,
+    roomSnapshot: { hostClientId: "host1", participants: [] },
+    clientId: "host1",
+    hostSource: null,
+    lastInviteProto: 2,
+    roomGuestControl: true,
+    wasInvitedTo: (key: string) => key === "series1|1|2",
+    claimHost: (fresh: boolean) => { freshHostClaim = fresh; },
+    sendInvite: (inv: any) => invitesSent.push(inv),
+  });
+  assert.equal(freshHostClaim, true, "Host must claimHost(true) when following guest episode invite");
+});
+
+test("useLobbyGate automatically triggers startHost once when everyoneReady and selfFrameReadyRef is true", () => {
+  const lobbySource = readFileSync(new URL("../src/views/player/hooks/use-lobby-gate.ts", import.meta.url), "utf8");
+  const lobbyCode = ts.transpileModule(lobbySource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+
+  const createRunner = () => {
+    const refs: any[] = [];
+    const states: any[] = [];
+    const lastDeps: any[][] = [];
+    let refIdx = 0;
+    let stateIdx = 0;
+    let effectFns: any[] = [];
+
+    const mockReact = {
+      useRef: (init: any) => {
+        const idx = refIdx++;
+        if (refs[idx] === undefined) refs[idx] = { current: init };
+        return refs[idx];
+      },
+      useState: (init: any) => {
+        const idx = stateIdx++;
+        if (states[idx] === undefined) states[idx] = typeof init === "function" ? init() : init;
+        return [states[idx], (v: any) => { states[idx] = typeof v === "function" ? v(states[idx]) : v; }];
+      },
+      useCallback: (fn: any) => fn,
+      useEffect: (fn: any, deps?: any[]) => {
+        const idx = effectFns.length;
+        const prev = lastDeps[idx];
+        const changed = !prev || !deps || deps.some((d, i) => d !== prev[i]);
+        if (changed) {
+          lastDeps[idx] = deps ? [...deps] : [];
+          effectFns.push(fn);
+        }
+      },
+    };
+
+    const activeExports: any = {};
+    new Function("require", "exports", lobbyCode)(
+      (name: string) => {
+        if (name === "react") return mockReact;
+        if (name.includes("player-utils")) {
+          return { GUEST_ESCAPE_MS: 15000, READY_STALE_MS: 30000 };
+        }
+        return {};
+      },
+      activeExports,
+    );
+
+    return {
+      run: (params: any) => {
+        refIdx = 0;
+        stateIdx = 0;
+        effectFns = [];
+        const res = activeExports.useLobbyGate(params);
+        for (const fn of effectFns) fn();
+        return res;
+      },
+    };
+  };
+
+  let startRoomCalled = 0;
+  let hasStartedVal = false;
+  const runner = createRunner();
+
+  // Step 1: Not everyone ready (guest is ready: false) -> should NOT startHost
+  runner.run({
+    inRoom: true,
+    isHost: true,
+    hasStarted: hasStartedVal,
+    setHasStarted: (v: boolean) => { hasStartedVal = v; },
+    roomSnapshot: {
+      started: false,
+      participants: [
+        { id: "host1", ready: true },
+        { id: "guest1", ready: false },
+      ],
+    },
+    startRoom: () => { startRoomCalled++; },
+    suppressOutgoingFor: () => {},
+    bridgeRef: { current: { play: async () => {} } },
+    initialSyncDoneRef: { current: false },
+    selfFrameReadyRef: { current: true },
+    mediaKey: "series1|1|2",
+  });
+  assert.equal(startRoomCalled, 0);
+  assert.equal(hasStartedVal, false);
+
+  // Step 2: All participants ready and selfFrameReadyRef is true -> auto-startHost fires!
+  runner.run({
+    inRoom: true,
+    isHost: true,
+    hasStarted: hasStartedVal,
+    setHasStarted: (v: boolean) => { hasStartedVal = v; },
+    roomSnapshot: {
+      started: false,
+      participants: [
+        { id: "host1", ready: true },
+        { id: "guest1", ready: true },
+      ],
+    },
+    startRoom: () => { startRoomCalled++; },
+    suppressOutgoingFor: () => {},
+    bridgeRef: { current: { play: async () => {} } },
+    initialSyncDoneRef: { current: false },
+    selfFrameReadyRef: { current: true },
+    mediaKey: "series1|1|2",
+  });
+  assert.equal(startRoomCalled, 1, "startRoom must be called once when everyoneReady");
+  assert.equal(hasStartedVal, true, "hasStarted must be set to true when everyoneReady");
+
+  // Step 3: Second pass on same mediaKey -> does not call startRoom again
+  runner.run({
+    inRoom: true,
+    isHost: true,
+    hasStarted: hasStartedVal,
+    setHasStarted: (v: boolean) => { hasStartedVal = v; },
+    roomSnapshot: {
+      started: true,
+      participants: [
+        { id: "host1", ready: true },
+        { id: "guest1", ready: true },
+      ],
+    },
+    startRoom: () => { startRoomCalled++; },
+    suppressOutgoingFor: () => {},
+    bridgeRef: { current: { play: async () => {} } },
+    initialSyncDoneRef: { current: false },
+    selfFrameReadyRef: { current: true },
+    mediaKey: "series1|1|2",
+  });
+  assert.equal(startRoomCalled, 1, "startRoom must not be called repeatedly");
+});
+
+test("TogetherClient optimistically resets started, syncState, and participant readiness on episode transitions", () => {
+  const clientSource = readFileSync(new URL("../src/lib/together/client.ts", import.meta.url), "utf8")
+    .replace(/import\.meta\.env\?\.DEV/g, "false");
+  const clientCode = ts.transpileModule(clientSource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+
+  const clientExports: any = {};
+  new Function("require", "exports", clientCode)(
+    (name: string) => {
+      if (name.includes("protocol")) {
+        return { WT_PROTO: 2 };
+      }
+      if (name.includes("client-types")) {
+        return { diagnoseRelayFailure: () => null };
+      }
+      return {};
+    },
+    clientExports,
+  );
+  const { TogetherClient } = clientExports;
+
+  const client = new TogetherClient("wss://pub.harbor.site", "host1", "Host");
+  (client as any).room = "ROOM12";
+  (client as any).send = () => {};
+
+  // Seed snapshot with active playing state from previous episode
+  (client as any).snapshot = {
+    state: "joined",
+    room: "ROOM12",
+    hostClientId: "host1",
+    started: true,
+    syncState: { mediaId: "tt123", positionSeconds: 1410, playing: true, updatedAt: Date.now(), updatedBy: "host1", speed: 1 },
+    participants: [
+      { id: "host1", name: "Host", ready: true, joinedAt: 1, pingMs: 10, avatar: null, color: null, location: null },
+      { id: "guest1", name: "Guest", ready: true, joinedAt: 2, pingMs: 15, avatar: null, color: null, location: null },
+    ],
+    lastError: null,
+  };
+
+  // 1. sendInvite optimistically resets started, syncState, and readiness
+  client.sendInvite({ mediaId: "tt123", mediaType: "series", episode: { season: 1, episode: 2 } });
+  let snap = client.getSnapshot();
+  assert.equal(snap.started, false);
+  assert.equal(snap.syncState, null);
+  assert.equal(snap.participants.every((p: any) => p.ready === false), true);
+
+  // Restore active state
+  (client as any).snapshot.started = true;
+  (client as any).snapshot.syncState = { mediaId: "tt123", positionSeconds: 1410 };
+  (client as any).snapshot.participants[0].ready = true;
+  (client as any).snapshot.participants[1].ready = true;
+
+  // 2. claimHost(true) optimistically resets started, syncState, and readiness
+  client.claimHost(true);
+  snap = client.getSnapshot();
+  assert.equal(snap.started, false);
+  assert.equal(snap.syncState, null);
+  assert.equal(snap.participants.every((p: any) => p.ready === false), true);
+
+  // Restore active state
+  (client as any).snapshot.started = true;
+  (client as any).snapshot.syncState = { mediaId: "tt123", positionSeconds: 1410 };
+  (client as any).snapshot.participants[0].ready = true;
+  (client as any).snapshot.participants[1].ready = true;
+
+  // 3. incoming invite message from peer resets started, syncState, and readiness
+  (client as any).handleServer({
+    t: "invite",
+    from: "guest1",
+    name: "Guest",
+    invite: { mediaId: "tt123", episode: { season: 1, episode: 2 } },
+    at: Date.now(),
+  });
+  snap = client.getSnapshot();
+  assert.equal(snap.started, false);
+  assert.equal(snap.syncState, null);
+  assert.equal(snap.participants.every((p: any) => p.ready === false), true);
+});
+
 

@@ -95,6 +95,7 @@ export function BpUpNext({
   remainingSec,
   leadSec,
   visible,
+  canPlay = true,
   onPlay,
   onCancel,
   seedFocus = true,
@@ -104,6 +105,7 @@ export function BpUpNext({
   remainingSec: number;
   leadSec: number;
   visible: boolean;
+  canPlay?: boolean;
   onPlay: () => void;
   onCancel?: () => void;
   seedFocus?: boolean;
@@ -205,20 +207,22 @@ export function BpUpNext({
                 inherit the content-visibility:auto rule from the re-emitted
                 sheet and turn both unfocusable the moment the ring left. */}
             <div className="mt-[clamp(8px,1vh,16px)] flex flex-wrap items-center gap-[clamp(9px,0.9vw,16px)]">
-              <button
-                type="button"
-                data-bp-focusable={focusable ? "" : undefined}
-                data-bp-chip
-                onKeyDown={blockSpaceActivate}
-                onClick={() => {
-                  SFX.click();
-                  onPlay();
-                }}
-                className={`${ACTION} bg-[var(--bp-on)] text-ink`}
-              >
-                <Play size={20} className="fill-current" strokeWidth={0} />
-                {t("Play now")}
-              </button>
+              {canPlay && (
+                <button
+                  type="button"
+                  data-bp-focusable={focusable ? "" : undefined}
+                  data-bp-chip
+                  onKeyDown={blockSpaceActivate}
+                  onClick={() => {
+                    SFX.click();
+                    onPlay();
+                  }}
+                  className={`${ACTION} bg-[var(--bp-on)] text-ink`}
+                >
+                  <Play size={20} className="fill-current" strokeWidth={0} />
+                  {t("Play now")}
+                </button>
+              )}
 
               {/* The seed sits on cancel, never on play. It only decides where a
                   first deliberate direction press lands, and the two outcomes

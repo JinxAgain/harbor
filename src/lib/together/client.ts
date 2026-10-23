@@ -195,6 +195,11 @@ export class TogetherClient {
   sendInvite(invite: PlayInvite): void {
     if (!this.room || !invite.mediaId) return;
     this.send({ t: "invite", room: this.room, clientId: this.clientId, invite });
+    this.update({
+      started: false,
+      syncState: null,
+      participants: this.snapshot.participants.map((p) => ({ ...p, ready: false })),
+    });
   }
 
   clearInvite(): void {
@@ -210,6 +215,13 @@ export class TogetherClient {
     if (!this.room) return;
     this.claimedHost = true;
     this.send({ t: "claim-host", room: this.room, clientId: this.clientId, fresh });
+    if (fresh) {
+      this.update({
+        started: false,
+        syncState: null,
+        participants: this.snapshot.participants.map((p) => ({ ...p, ready: false })),
+      });
+    }
   }
 
   private reconcileHostClaim(hostClientId: string | null): void {
@@ -459,6 +471,11 @@ export class TogetherClient {
         return;
       case "invite":
         if (msg.from === this.clientId) return;
+        this.update({
+          started: false,
+          syncState: null,
+          participants: this.snapshot.participants.map((p) => ({ ...p, ready: false })),
+        });
         this.emit({ kind: "invite", from: msg.from, name: msg.name, invite: msg.invite, at: msg.at });
         return;
       case "host-leaving":

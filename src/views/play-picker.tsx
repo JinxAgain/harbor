@@ -119,6 +119,7 @@ export function PlayPicker({
   seasonEpisodes,
   resume,
   startPositionMs,
+  startFromZero,
   playerActive,
 }: {
   meta: Meta;
@@ -129,6 +130,7 @@ export function PlayPicker({
   seasonEpisodes?: PlayEpisode[];
   resume?: boolean;
   startPositionMs?: number;
+  startFromZero?: boolean;
   playerActive?: boolean;
 }) {
   const t = useT();
@@ -151,6 +153,7 @@ export function PlayPicker({
     clientId,
     hostSource,
     roomGuestPick,
+    roomGuestControl,
     lastInviteProto,
   } = useTogether();
   const inSession = roomSnapshot.state === "joined";
@@ -297,6 +300,7 @@ export function PlayPicker({
       clientId,
       hostSource,
       lastInviteProto,
+      roomGuestControl,
       wasInvitedTo,
       claimHost,
       sendInvite,
@@ -634,6 +638,8 @@ export function PlayPicker({
     attempt,
     resume,
     startPositionMs,
+    startFromZero,
+    foreignHost: !!roomSnapshot.hostClientId && roomSnapshot.hostClientId !== clientId,
     debrids,
     isCached,
     seasonLock,
@@ -741,6 +747,7 @@ export function PlayPicker({
       autoFired: true,
       resume,
       startPositionMs,
+      startFromZero: Boolean(startFromZero || inSession) || undefined,
     });
   }, [
     downloadMatch,
@@ -758,6 +765,7 @@ export function PlayPicker({
     openPlayerGated,
     resume,
     startPositionMs,
+    startFromZero,
   ]);
 
   useAutoFire({

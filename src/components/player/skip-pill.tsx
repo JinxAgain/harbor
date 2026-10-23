@@ -14,6 +14,7 @@ export function SkipPill({
   engine,
   segment,
   hasNextEp,
+  canPlayNext = true,
   nextEp,
   nextEpMask,
   remainingSec,
@@ -28,6 +29,7 @@ export function SkipPill({
   engine: "html5" | "mpv";
   segment: SkipSegment | null;
   hasNextEp: boolean;
+  canPlayNext?: boolean;
   nextEp: PlayEpisode | null;
   nextEpMask?: SpoilerMask;
   remainingSec: number;
@@ -100,6 +102,7 @@ export function SkipPill({
         remainingSec={remainingSec}
         leadSec={finalLeadSec}
         visible={visible && show}
+        canPlay={canPlayNext}
         onPlay={onNextEpisode}
         onCancel={onCancelAutoNext}
       />
@@ -107,17 +110,18 @@ export function SkipPill({
   }
 
   const isAd = mounted.kind === "ad";
+  const canTriggerOutroNext = isOutroNext && canPlayNext;
   const label = isAd
     ? t("Skip injected ad?")
     : mounted.kind === "intro"
       ? t("Skip Intro")
       : mounted.kind === "recap"
         ? t("Skip Recap")
-        : isOutroNext
+        : canTriggerOutroNext
           ? t("Next Episode")
           : t("Skip Credits");
-  const action = isOutroNext ? onNextEpisode : onSkip;
-  const Icon = isOutroNext ? ChevronsRight : FastForward;
+  const action = canTriggerOutroNext ? onNextEpisode : onSkip;
+  const Icon = canTriggerOutroNext ? ChevronsRight : FastForward;
   const isMpv = engine === "mpv";
   const countdownProgress = shouldCountdown
     ? Math.max(0, Math.min(1, 1 - timeLeft / countdownSec))
@@ -222,6 +226,7 @@ function UpNextCard({
   remainingSec,
   leadSec,
   visible,
+  canPlay = true,
   onPlay,
   onCancel,
 }: {
@@ -230,6 +235,7 @@ function UpNextCard({
   remainingSec: number;
   leadSec: number;
   visible: boolean;
+  canPlay?: boolean;
   onPlay: () => void;
   onCancel?: () => void;
 }) {
@@ -291,14 +297,16 @@ function UpNextCard({
               </button>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onPlay}
-            className="mt-auto inline-flex h-9 items-center justify-center gap-1.5 self-start rounded-full bg-white px-4 text-[12.5px] font-semibold text-black transition-opacity hover:opacity-90"
-          >
-            <Play size={12} strokeWidth={2.4} className="fill-current" />
-            {t("Play now")}
-          </button>
+          {canPlay && (
+            <button
+              type="button"
+              onClick={onPlay}
+              className="mt-auto inline-flex h-9 items-center justify-center gap-1.5 self-start rounded-full bg-white px-4 text-[12.5px] font-semibold text-black transition-opacity hover:opacity-90"
+            >
+              <Play size={12} strokeWidth={2.4} className="fill-current" />
+              {t("Play now")}
+            </button>
+          )}
         </div>
         <div
           dir="ltr"

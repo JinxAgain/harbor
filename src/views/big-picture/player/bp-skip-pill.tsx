@@ -44,6 +44,7 @@ const PILL_H = "clamp(56px,6.4vh,86px)";
 export function BpSkipPill({
   segment,
   hasNextEp,
+  canPlayNext = true,
   nextEp,
   nextEpMask,
   remainingSec,
@@ -57,6 +58,7 @@ export function BpSkipPill({
 }: {
   segment: SkipSegment | null;
   hasNextEp: boolean;
+  canPlayNext?: boolean;
   nextEp: PlayEpisode | null;
   nextEpMask?: SpoilerMask;
   remainingSec: number;
@@ -96,6 +98,7 @@ export function BpSkipPill({
   }, [segment?.kind, segment?.startSec, segment?.endSec]);
 
   const isOutroNext = mounted?.kind === "outro" && hasNextEp && Boolean(nextEp);
+  const canTriggerOutroNext = isOutroNext && canPlayNext;
   const finalLeadSec = typeof leadSec === "number" && leadSec > 0 ? leadSec : 15;
   const asUpNext =
     isOutroNext && Boolean(nextEp) && remainingSec > 0 && remainingSec <= finalLeadSec;
@@ -105,7 +108,7 @@ export function BpSkipPill({
   const fireRef = useRef<() => void>(onSkip);
   fireRef.current = () => {
     SFX.click();
-    if (isOutroNext) onNextEpisode();
+    if (canTriggerOutroNext) onNextEpisode();
     else onSkip();
     // A blind skip lands somewhere the viewer cannot see. The scrub readout is
     // the cheapest way to show them where, without raising the full chrome.
@@ -138,6 +141,7 @@ export function BpSkipPill({
         remainingSec={remainingSec}
         leadSec={finalLeadSec}
         visible={visible && show}
+        canPlay={canPlayNext}
         seedFocus={seedFocus}
         onPlay={onNextEpisode}
         onCancel={onCancelAutoNext}
@@ -152,10 +156,10 @@ export function BpSkipPill({
       ? t("Skip Intro")
       : mounted.kind === "recap"
         ? t("Skip Recap")
-        : isOutroNext
+        : canTriggerOutroNext
           ? t("Next Episode")
           : t("Skip Credits");
-  const Icon = isOutroNext ? ChevronsRight : FastForward;
+  const Icon = canTriggerOutroNext ? ChevronsRight : FastForward;
 
   return (
     <div

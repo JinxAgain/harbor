@@ -176,6 +176,18 @@ export function useRoomSync(params: {
   const guestSeekGraceRef = useRef<{ targetPos: number; until: number } | null>(null);
   const guestPlayGraceRef = useRef<{ playing: boolean; until: number } | null>(null);
   const mediaKey = `${src.meta.id}|${src.episode?.season ?? ""}|${src.episode?.episode ?? ""}`;
+  const prevMediaKeyRef = useRef(mediaKey);
+  if (prevMediaKeyRef.current !== mediaKey) {
+    prevMediaKeyRef.current = mediaKey;
+    if (inRoomRef.current) {
+      hasStartedRef.current = false;
+      lastHostPosRef.current = 0;
+      lastHostTickAtRef.current = 0;
+    }
+  }
+  useEffect(() => {
+    if (inRoomRef.current) setHasStarted(false);
+  }, [mediaKey, setHasStarted]);
 
   const selectedAudioId = snap.audioTracks?.find((t) => t.selected)?.id ?? null;
   const selectedSubId = snap.subtitleTracks?.find((t) => t.selected)?.id ?? null;
@@ -258,8 +270,9 @@ export function useRoomSync(params: {
       pos = hostPendingSeekRef.current.targetPos;
     }
     if (!Number.isFinite(pos) || pos < 0) pos = 0;
-    if (
-      !hasStartedRef.current &&
+    if (!hasStartedRef.current || (curSrc.startFromZero && !hasStartedRef.current)) {
+      pos = 0;
+    } else if (
       durationRef.current > 0 &&
       pos >= Math.max(0, durationRef.current - 20)
     ) {
@@ -914,13 +927,6 @@ export function useRoomSync(params: {
     return () => window.clearInterval(id);
   }, [inRoom, isHost, cast, publishState, src.meta.id, src.meta.name, src.meta.poster, src.episode]);
 
-  const prevMediaKeyRef = useRef(mediaKey);
-  useEffect(() => {
-    if (prevMediaKeyRef.current === mediaKey) return;
-    prevMediaKeyRef.current = mediaKey;
-    if (inRoomRef.current) setHasStarted(false);
-  }, [mediaKey, setHasStarted]);
-
   useEffect(() => {
     selfFrameReadyRef.current = false;
     markReady(false);
@@ -985,11 +991,7 @@ export function useRoomSync(params: {
   useEffect(() => {
     if (!inRoom || !isHost || hasStarted) return;
     if (snap.durationSec <= 0) return;
-    const rawPos = getPlaybackPosition();
-    const safePos =
-      Number.isFinite(rawPos) && rawPos >= 0 && rawPos < Math.max(0, snap.durationSec - 20)
-        ? rawPos
-        : 0;
+    const safePos = 0;
     if (
       lobbySeededRef.current &&
       lastLobbySeedPosRef.current != null &&
@@ -1028,8 +1030,14 @@ export function useRoomSync(params: {
 
   useEffect(() => {
     if (!inRoom || isHost || hasStarted) return;
-    if (roomSnapshot.started) setHasStarted(true);
-  }, [inRoom, isHost, hasStarted, roomSnapshot.started]);
+    if (
+      roomSnapshot.started &&
+      roomSnapshot.syncState &&
+      !isDifferentMedia(roomSnapshot.syncState, src)
+    ) {
+      setHasStarted(true);
+    }
+  }, [inRoom, isHost, hasStarted, roomSnapshot.started, roomSnapshot.syncState, src]);
 
   useEffect(() => {
     initialSyncDoneRef.current = false;
