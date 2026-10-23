@@ -53,13 +53,25 @@ export async function resolveSimklEpisodeTarget(
   if (fallbackImdb && /^tt\d+$/.test(fallbackImdb)) {
     return { kind: "episode", show: { ids: { imdb: fallbackImdb } }, season, number };
   }
+  const animeSeason = episode.season || 1;
+  const animeNumber = episode.episode;
   const mal = await animeIdToMal(harborId);
   if (mal != null) {
-    return { kind: "anime-episode", anime: { ids: { mal } }, season, number };
+    return {
+      kind: "anime-episode",
+      anime: { ids: { mal } },
+      season: animeSeason,
+      number: animeNumber,
+    };
   }
   const native = nativeAnimeIds(harborId);
   if (native) {
-    return { kind: "anime-episode", anime: { ids: native }, season, number };
+    return {
+      kind: "anime-episode",
+      anime: { ids: native },
+      season: animeSeason,
+      number: animeNumber,
+    };
   }
   return null;
 }

@@ -3,7 +3,7 @@ import { useSimkl } from "./provider";
 import { simklScrobble, buildBody, type ScrobbleInfo } from "./scrobble";
 import { recordPendingWatch, removePendingWatch } from "./pending-sync";
 import { recordWatchedFallback } from "./record-watched";
-import { getPlaybackPosition } from "@/lib/player/playback-clock";
+import { getPlaybackPosition, subscribePlaybackClock } from "@/lib/player/playback-clock";
 import { isPlaybackFinished } from "@/lib/player/playback-finished";
 import { useSettings } from "@/lib/settings";
 import type { PlayerSrc } from "@/lib/view";
@@ -55,6 +55,7 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
     durationSec: snap.durationSec,
   });
   const progressRef = useRef(0);
+  const finishedRef = useRef(false);
   const loadResetSeenRef = useRef(true);
 
   const metaId = src.meta.id;
@@ -73,9 +74,10 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       if (lastActionRef.current !== "start" && lastActionRef.current !== "pause") return;
       const livePos = getPlaybackPosition();
       const live = (livePos / a.snap.durationSec) * 100;
-      const progress = Math.min(100, Math.max(0, live > 0 ? live : progressRef.current));
+      const progress = Math.min(100, Math.max(0, progressRef.current, live > 0 ? live : 0));
       const posSec = livePos > 0 ? livePos : (progress / 100) * a.snap.durationSec;
       const finished =
+        finishedRef.current ||
         progress >= thresholdRef.current ||
         isPlaybackFinished(posSec, a.snap.durationSec, thresholdRef.current);
       const action = finished ? "stop" : "pause";
@@ -98,6 +100,7 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       const prevProgress = progressRef.current;
       if (enabled && lastActionRef.current !== "stop") {
         const finished =
+          finishedRef.current ||
           prevProgress >= thresholdRef.current ||
           (prev.durationSec > 0 &&
             isPlaybackFinished(
@@ -117,6 +120,7 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       }
       lastActionRef.current = null;
       progressRef.current = 0;
+      finishedRef.current = false;
       loadResetSeenRef.current = false;
     }
     lastKeyRef.current = key;
@@ -144,6 +148,7 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
               )
             : 100;
         const finished =
+          finishedRef.current ||
           endPct >= thresholdRef.current ||
           isPlaybackFinished(livePos, snap.durationSec, thresholdRef.current);
         sendBeacon(metaId, src.episode, finished ? 100 : endPct, "stop", infoRef.current);
@@ -164,8 +169,16 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       return;
     }
     if (snap.durationSec < STUB_MAX_SEC) return;
-    const progress = Math.min(100, Math.max(0, (getPlaybackPosition() / snap.durationSec) * 100));
-    if (progress > 0) progressRef.current = progress;
+    const livePos = getPlaybackPosition();
+    const progress = Math.min(100, Math.max(0, (livePos / snap.durationSec) * 100));
+    if (progress > progressRef.current) progressRef.current = progress;
+    if (
+      !finishedRef.current &&
+      (progress >= thresholdRef.current ||
+        isPlaybackFinished(livePos, snap.durationSec, thresholdRef.current))
+    ) {
+      finishedRef.current = true;
+    }
 
     if (lastActionRef.current === "stop") return;
 
@@ -181,10 +194,23 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
   useEffect(() => {
     if (!enabled) return;
     if (snap.durationSec < STUB_MAX_SEC) return;
-    if (key !== lastKeyRef.current) return;
-    if (lastActionRef.current !== "start" && lastActionRef.current !== "pause") return;
-    const pct = Math.min(100, Math.max(0, (snap.positionSec / snap.durationSec) * 100));
-    if (pct > 0) progressRef.current = pct;
+    const updateFromPos = (posSec: number) => {
+      if (key !== lastKeyRef.current) return;
+      if (lastActionRef.current !== "start" && lastActionRef.current !== "pause") return;
+      const pct = Math.min(100, Math.max(0, (posSec / snap.durationSec) * 100));
+      if (pct > progressRef.current) progressRef.current = pct;
+      if (
+        !finishedRef.current &&
+        (pct >= thresholdRef.current ||
+          isPlaybackFinished(posSec, snap.durationSec, thresholdRef.current))
+      ) {
+        finishedRef.current = true;
+      }
+    };
+    updateFromPos(getPlaybackPosition() || snap.positionSec);
+    return subscribePlaybackClock(() => {
+      updateFromPos(getPlaybackPosition());
+    });
   }, [enabled, key, snap.positionSec, snap.durationSec]);
 
   useEffect(() => {
@@ -194,9 +220,10 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
       if (a.snap.durationSec >= STUB_MAX_SEC) {
         const livePos = getPlaybackPosition();
         const live = (livePos / a.snap.durationSec) * 100;
-        const progress = Math.min(100, Math.max(0, live > 0 ? live : progressRef.current));
+        const progress = Math.min(100, Math.max(0, progressRef.current, live > 0 ? live : 0));
         const posSec = livePos > 0 ? livePos : (progress / 100) * a.snap.durationSec;
         const finished =
+          finishedRef.current ||
           progress >= thresholdRef.current ||
           isPlaybackFinished(posSec, a.snap.durationSec, thresholdRef.current);
         const action = finished ? "stop" : "pause";

@@ -51,6 +51,8 @@ function snapChangedIgnoringClock(a: PlayerSnapshot, b: PlayerSnapshot): boolean
   );
 }
 
+let activeBridgeCount = 0;
+
 export function usePlayerBridge(params: {
   bridgeRef: RefObject<PlayerBridge | null>;
   videoMountRef: RefObject<HTMLDivElement | null>;
@@ -105,6 +107,7 @@ export function usePlayerBridge(params: {
     if (svpPending) return;
     const host = videoMountRef.current;
     if (!host) return;
+    activeBridgeCount += 1;
     let cancelled = false;
     let off: (() => void) | null = null;
     let bridge: PlayerBridge | null = null;
@@ -163,8 +166,13 @@ export function usePlayerBridge(params: {
       off?.();
       bridge?.destroy();
       bridgeRef.current = null;
-      setPlaybackClock(0, 0);
-      setPlaybackStatus("idle");
+      activeBridgeCount = Math.max(0, activeBridgeCount - 1);
+      queueMicrotask(() => {
+        if (activeBridgeCount === 0) {
+          setPlaybackClock(0, 0);
+          setPlaybackStatus("idle");
+        }
+      });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bridgeKey, svpPending]);

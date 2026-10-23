@@ -43,3 +43,49 @@ test("Simkl ID resolution supports direct simkl: IDs and anime episode show IDs"
   assert.deepEqual(simklShowIdsForMeta("anilist:101"), { anilist: 101 });
   assert.deepEqual(simklShowIdsForMeta("tt0903747"), { imdb: "tt0903747" });
 });
+
+test("Simkl anime episode target keeps cour-local season and episode when no fallback IMDb is used", async () => {
+  assert.deepEqual(
+    await resolveSimklEpisodeTarget("mal:54865", {
+      season: 1,
+      episode: 3,
+      imdbSeason: 5,
+      imdbEpisode: 3,
+    }),
+    {
+      kind: "anime-episode",
+      anime: { ids: { mal: 54865 } },
+      season: 1,
+      number: 3,
+    },
+  );
+  assert.deepEqual(
+    await resolveSimklEpisodeTarget("kitsu:47640", {
+      season: 1,
+      episode: 3,
+      imdbSeason: 5,
+      imdbEpisode: 3,
+    }),
+    {
+      kind: "anime-episode",
+      anime: { ids: { mal: 51191 } },
+      season: 1,
+      number: 3,
+    },
+  );
+  assert.deepEqual(
+    await resolveSimklEpisodeTarget("kitsu:999999999", {
+      season: 1,
+      episode: 3,
+      imdbSeason: 5,
+      imdbEpisode: 3,
+    }),
+    {
+      kind: "anime-episode",
+      anime: { ids: { kitsu: 999999999 } },
+      season: 1,
+      number: 3,
+    },
+  );
+});
+

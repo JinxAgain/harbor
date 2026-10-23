@@ -387,6 +387,102 @@ test("Simkl fallback returns actual outcomes and stops after its account changes
   assert.equal(resolutions, 1);
 });
 
+test("Simkl fallback retries with cour-scoped anime target when IMDb show season is split on Simkl", async () => {
+  const session = { username: "a" };
+  const calls: Array<{ ids: any; season: number; eps: number[] }> = [];
+  const api = load("src/lib/simkl/record-watched.ts", {
+    "@/lib/active-profile-id": { activeProfileId: () => "a" },
+    "./session": { getSession: () => session },
+    "./ids": {
+      stremioIdToSimklTarget: (id: string, ep: any) =>
+        id.startsWith("tt") && ep
+          ? {
+              ok: true,
+              target: {
+                kind: "episode",
+                show: { ids: { imdb: id } },
+                season: ep.season,
+                number: ep.episode,
+              },
+            }
+          : { ok: false, reason: "anime" },
+      resolveSimklEpisodeTarget: async (id: string, ep: any, fallbackImdb?: string) => {
+        if (fallbackImdb) {
+          return {
+            kind: "episode",
+            show: { ids: { imdb: fallbackImdb } },
+            season: ep.imdbSeason ?? ep.season,
+            number: ep.imdbEpisode ?? ep.episode,
+          };
+        }
+        return {
+          kind: "anime-episode",
+          anime: { ids: { kitsu: Number(id.split(":")[1]) } },
+          season: ep.season || 1,
+          number: ep.episode,
+        };
+      },
+    },
+    "./history": {
+      markEpisodesWatched: async (ids: any, season: number, eps: number[]) => {
+        calls.push({ ids, season, eps });
+        return Boolean(ids.kitsu);
+      },
+      addToHistory: async () => false,
+    },
+    "@/lib/tracker-resolve": {
+      resolveForMeta: async () => ({ ok: false, reason: "not-found" }),
+    },
+  });
+  const ok = await api.recordWatchedFallback(
+    "kitsu:47640",
+    { season: 1, episode: 3, imdbSeason: 5, imdbEpisode: 3 },
+    { imdb: "tt0388629" },
+  );
+  assert.equal(ok, true);
+  assert.deepEqual(calls, [
+    { ids: { imdb: "tt0388629" }, season: 5, eps: [3] },
+    { ids: { kitsu: 47640 }, season: 1, eps: [3] },
+  ]);
+
+  calls.length = 0;
+  const parentCourOk = await api.recordWatchedFallback(
+    "kitsu:45398",
+    { season: 1, episode: 3, sourceMetaId: "kitsu:45619", imdbSeason: 5, imdbEpisode: 3 },
+    { imdb: "tt0388629" },
+  );
+  assert.equal(parentCourOk, true);
+  assert.deepEqual(calls, [
+    { ids: { imdb: "tt0388629" }, season: 5, eps: [3] },
+    { ids: { kitsu: 45619 }, season: 1, eps: [3] },
+  ]);
+
+  calls.length = 0;
+  const streamCourOk = await api.recordWatchedFallback("tt0388629", {
+    season: 5,
+    episode: 3,
+    kitsuStreamId: "kitsu:47640:3",
+  });
+  assert.equal(streamCourOk, true);
+  assert.deepEqual(calls, [
+    { ids: { imdb: "tt0388629" }, season: 5, eps: [3] },
+    { ids: { kitsu: 47640 }, season: 1, eps: [3] },
+  ]);
+
+  calls.length = 0;
+  const longRunningStreamOk = await api.recordWatchedFallback("tt0388629", {
+    season: 21,
+    episode: 45,
+    kitsuStreamId: "kitsu:12:1089",
+  });
+  assert.equal(longRunningStreamOk, true);
+  assert.deepEqual(calls, [
+    { ids: { imdb: "tt0388629" }, season: 21, eps: [45] },
+    { ids: { kitsu: 12 }, season: 1, eps: [1089] },
+  ]);
+});
+
+
 for (const service of ["anilist", "mal"]) {
   test(`${service}: legacy sent cache expires, unconfirmed writes retry, confirmed ticks deduplicate`, async () => {
     const data = new Map();
