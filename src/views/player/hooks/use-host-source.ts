@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import type { PlayerSnapshot } from "@/lib/player/bridge";
-import { getPlaybackPosition } from "@/lib/player/playback-clock";
 import type { PartialSyncState } from "@/lib/together/provider";
 import type { SourceDescriptor } from "@/lib/together/protocol";
 import { buildSourceDescriptor, descriptorsEqual } from "@/lib/together/source-descriptor";
@@ -71,9 +70,7 @@ export function useHostSource(params: {
     if (!descriptor) return;
     if (descriptorsEqual(lastSeedRef.current, descriptor)) return;
     lastSeedRef.current = descriptor;
-    const rawPos = Math.max(0, getPlaybackPosition());
-    const safePos =
-      snap.durationSec > 0 && rawPos >= Math.max(0, snap.durationSec - 20) ? 0 : rawPos;
+    const safePos = 0;
     publishState({
       mediaId: src.meta.id,
       mediaTitle: src.meta.name ?? null,

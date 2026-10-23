@@ -237,6 +237,7 @@ export type Frame =
       seasonEpisodes?: PlayEpisode[];
       resume?: boolean;
       startPositionMs?: number;
+      startFromZero?: boolean;
     }
   | { kind: "player"; src: PlayerSrc }
   | { kind: "match-detail"; game: SportsGame; eventGames?: SportsGame[] };
@@ -351,6 +352,7 @@ type ViewValue = {
     seasonEpisodes?: PlayEpisode[];
     resume?: boolean;
     startPositionMs?: number;
+    startFromZero?: boolean;
   } | null;
   openPicker: (
     meta: Meta,
@@ -362,6 +364,7 @@ type ViewValue = {
       seasonEpisodes?: PlayEpisode[];
       resume?: boolean;
       startPositionMs?: number;
+      startFromZero?: boolean;
     },
   ) => void;
   player: PlayerSrc | null;
@@ -694,6 +697,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
           seasonEpisodes: top.seasonEpisodes,
           resume: top.resume,
           startPositionMs: top.startPositionMs,
+          startFromZero: top.startFromZero,
         }
       : null;
   const player = playbackTop.kind === "player" ? playbackTop.src : null;
@@ -1311,6 +1315,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
         seasonEpisodes?: PlayEpisode[];
         resume?: boolean;
         startPositionMs?: number;
+        startFromZero?: boolean;
       },
     ) => {
       if (m.id?.startsWith("magnet:")) {
@@ -1343,6 +1348,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
           seasonEpisodes: opts?.seasonEpisodes,
           resume: opts?.resume,
           startPositionMs: opts?.startPositionMs,
+          startFromZero: opts?.startFromZero,
         });
       });
     },

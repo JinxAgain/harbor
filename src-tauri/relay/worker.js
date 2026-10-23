@@ -363,6 +363,8 @@ export class Room {
     if (msg.fresh) {
       this.started = false;
       this.saveStarted();
+      this.syncState = null;
+      this.saveSync();
       this.broadcast({ t: "started", started: false });
       for (const [s, p] of this.peers) {
         p.ready = false;

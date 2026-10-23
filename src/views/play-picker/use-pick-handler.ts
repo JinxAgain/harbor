@@ -74,6 +74,8 @@ export function usePickHandler({
   attempt,
   resume,
   startPositionMs,
+  startFromZero,
+  foreignHost,
   debrids,
   isCached,
   seasonLock,
@@ -105,6 +107,8 @@ export function usePickHandler({
   attempt?: number;
   resume?: boolean;
   startPositionMs?: number;
+  startFromZero?: boolean;
+  foreignHost?: boolean;
   debrids: DebridStore[];
   isCached: (s: ScoredStream) => boolean;
   seasonLock: boolean;
@@ -361,7 +365,9 @@ export function usePickHandler({
         return;
       }
       if (inSession && canInvite && inviteSentRef.current == null) {
-        claimHost(true);
+        if (!foreignHost) {
+          claimHost(true);
+        }
         sendInvite(buildPlayInvite(meta, episode));
         inviteSentRef.current = `${meta.id}|${episode?.season ?? ""}|${episode?.episode ?? ""}`;
       }
@@ -396,6 +402,7 @@ export function usePickHandler({
         autoFired: autoPickRef.current,
         resume: !!resume,
         startPositionMs: startPositionMs ?? undefined,
+        startFromZero: Boolean(startFromZero || inSession) || undefined,
         playbackTraceId,
         proxySessionId,
         historyUrl: r.data.url,

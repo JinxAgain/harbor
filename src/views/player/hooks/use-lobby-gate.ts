@@ -20,6 +20,7 @@ export function useLobbyGate(params: {
   suppressOutgoingFor: (ms: number) => void;
   bridgeRef: RefObject<PlayerBridge | null>;
   initialSyncDoneRef: RefObject<boolean>;
+  selfFrameReadyRef?: RefObject<boolean>;
   mediaKey: string;
   sendCommand?: (command: RoomCommand) => void;
   notifyHostPlayPause?: (playing: boolean) => void;
@@ -39,10 +40,22 @@ export function useLobbyGate(params: {
     suppressOutgoingFor,
     bridgeRef,
     initialSyncDoneRef,
+    selfFrameReadyRef,
     mediaKey,
     sendCommand,
     notifyHostPlayPause,
   } = params;
+
+  const autoStartedForMediaRef = useRef<string | null>(null);
+  useEffect(() => {
+    autoStartedForMediaRef.current = null;
+  }, [mediaKey]);
+
+  const everyoneReady =
+    inRoom &&
+    roomSnapshot.participants.length >= 2 &&
+    roomSnapshot.participants.every((p) => p.ready) &&
+    (selfFrameReadyRef ? Boolean(selfFrameReadyRef.current) : true);
 
   const startHost = useCallback(() => {
     if (!isHost) {
@@ -63,6 +76,13 @@ export function useLobbyGate(params: {
     bridgeRef,
     notifyHostPlayPause,
   ]);
+
+  useEffect(() => {
+    if (!inRoom || !isHost || hasStarted || !everyoneReady) return;
+    if (autoStartedForMediaRef.current === mediaKey) return;
+    autoStartedForMediaRef.current = mediaKey;
+    startHost();
+  }, [inRoom, isHost, hasStarted, everyoneReady, mediaKey, startHost]);
 
   useEffect(() => {
     if (!inRoom || !isHost || !hasStarted || roomSnapshot.started) return;

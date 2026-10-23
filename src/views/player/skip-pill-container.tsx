@@ -49,7 +49,7 @@ export function SkipPillContainer({
   const leadSec = nextEpisodeLead(settings.nextEpisodeLeadSec, durationSec);
   const syntheticOutro = useMemo(() => {
     if (realActiveSkip) return null;
-    if (!hasNextEpisode) return null;
+    if (!hasNextEpisode && !hasNextEpDisplay) return null;
     if (durationSec <= 0) return null;
     if (leadSec <= 0) return null;
     const remaining = durationSec - positionSec;
@@ -62,7 +62,7 @@ export function SkipPillContainer({
       endSec: durationSec,
       source: "chapters" as const,
     };
-  }, [realActiveSkip, hasNextEpisode, durationSec, positionSec, skipSegments, leadSec]);
+  }, [realActiveSkip, hasNextEpisode, hasNextEpDisplay, durationSec, positionSec, skipSegments, leadSec]);
   const remainingSec = Math.max(0, durationSec - positionSec);
 
   const autoSkippedRef = useRef<SkipSegment | null>(null);
@@ -129,6 +129,7 @@ export function SkipPillContainer({
   const shared = {
     segment: activeSkip,
     hasNextEp: hasNextEpDisplay && leadSec > 0,
+    canPlayNext: hasNextEpisode,
     nextEp,
     nextEpMask,
     remainingSec,

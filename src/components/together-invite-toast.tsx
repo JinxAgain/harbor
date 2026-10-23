@@ -29,11 +29,24 @@ export function TogetherInviteToast() {
       const activeEp = player?.meta.id === invite.mediaId ? player.episode : picker?.episode;
       const sameSeason = (activeEp?.season ?? null) === (invite.episode?.season ?? null);
       const sameEpisode = (activeEp?.episode ?? null) === (invite.episode?.episode ?? null);
-      if (sameSeason && sameEpisode) {
-        handledRef.current = incomingInvite.at;
-        dismissInvite();
-        return;
+      handledRef.current = incomingInvite.at;
+      if (!sameSeason || !sameEpisode) {
+        const meta: Meta = {
+          id: invite.mediaId,
+          type: invite.mediaType,
+          name: invite.mediaTitle,
+          poster: invite.posterUrl,
+          background: invite.backgroundUrl,
+          logo: invite.logoUrl,
+          releaseInfo: invite.releaseInfo,
+        };
+        openPicker(meta, invite.episode, {
+          autoPlay: invite.guestPick !== true,
+          startFromZero: true,
+        });
       }
+      dismissInvite();
+      return;
     }
     if (handledRef.current === incomingInvite.at) return;
     setProgress(0);
@@ -70,7 +83,7 @@ export function TogetherInviteToast() {
         logo: invite.logoUrl,
         releaseInfo: invite.releaseInfo,
       };
-      openPicker(meta, invite.episode, { autoPlay: invite.guestPick !== true });
+      openPicker(meta, invite.episode, { autoPlay: invite.guestPick !== true, startFromZero: true });
       dismissInvite();
     }
   }, [incomingInvite, openPicker, dismissInvite, player, picker]);
@@ -81,12 +94,7 @@ export function TogetherInviteToast() {
   const sameMedia =
     (player && player.meta.id === invite.mediaId) ||
     (picker && picker.meta.id === invite.mediaId);
-  if (sameMedia) {
-    const activeEp = player?.meta.id === invite.mediaId ? player.episode : picker?.episode;
-    const sameSeason = (activeEp?.season ?? null) === (invite.episode?.season ?? null);
-    const sameEpisode = (activeEp?.episode ?? null) === (invite.episode?.episode ?? null);
-    if (sameSeason && sameEpisode) return null;
-  }
+  if (sameMedia) return null;
   const guestPick = invite.guestPick === true;
   const subtitle = invite.episode
     ? `S${invite.episode.imdbSeason ?? invite.episode.season} · E${String(invite.episode.imdbEpisode ?? invite.episode.episode).padStart(2, "0")}`
@@ -103,7 +111,7 @@ export function TogetherInviteToast() {
       logo: invite.logoUrl,
       releaseInfo: invite.releaseInfo,
     };
-    openPicker(meta, invite.episode, { autoPlay: !guestPick });
+    openPicker(meta, invite.episode, { autoPlay: !guestPick, startFromZero: true });
     dismissInvite();
   };
 

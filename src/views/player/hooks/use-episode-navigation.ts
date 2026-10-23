@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { PlayInvite } from "@/lib/together/protocol";
+import { buildPlayInvite } from "@/lib/together/build-invite";
 import type { PlayerSrc, PlayEpisode } from "@/lib/view";
 import { isAddonNativeMeta, type Meta } from "@/lib/cinemeta";
 import type { Settings } from "@/lib/settings";
@@ -15,7 +16,7 @@ import { downloadPlayerSrc } from "@/lib/download/player-src";
 type OpenPicker = (
   meta: Meta,
   episode?: PlayEpisode,
-  opts?: { autoPlay?: boolean; attempt?: number },
+  opts?: { autoPlay?: boolean; attempt?: number; startFromZero?: boolean },
 ) => void;
 
 type MetaVideo = NonNullable<Meta["videos"]>[number];
@@ -73,12 +74,23 @@ export function useEpisodeNavigation(params: {
   authKey: string | null;
   inRoom: boolean;
   isHost: boolean;
+  roomGuestControl?: boolean;
   sendInvite: (invite: PlayInvite) => void;
   claimHost: (fresh: boolean) => void;
   replacePlayerSrc: (src: PlayerSrc) => void;
   openPicker: OpenPicker;
 }) {
-  const { src, settings, inRoom, isHost, openPicker, replacePlayerSrc } = params;
+  const {
+    src,
+    settings,
+    inRoom,
+    isHost,
+    roomGuestControl,
+    sendInvite,
+    claimHost,
+    openPicker,
+    replacePlayerSrc,
+  } = params;
 
   const [adjacent, setAdjacent] = useState<{ prev: PlayEpisode | null; next: PlayEpisode | null }>({
     prev: null,
@@ -144,27 +156,34 @@ export function useEpisodeNavigation(params: {
   const goToEpisode = useCallback(
     (ep: PlayEpisode | null) => {
       if (!ep) return;
-      if (inRoom && !isHost) return;
-      if (localShowKey) {
-        const local = findLocalEpisode(localShowKey, ep.season, ep.episode);
-        if (local) {
-          replacePlayerSrc(localPlayerSrc(local, undefined, ep));
-          return;
-        }
-      }
+      if (inRoom && !isHost && !roomGuestControl) return;
       const carried =
         src.meta.id.startsWith("tt") && src.episode?.sourceMetaId && !ep.sourceMetaId
           ? { ...ep, sourceMetaId: src.episode.sourceMetaId }
           : ep;
+      const announceRoomEpisode = (targetEp: PlayEpisode) => {
+        if (!inRoom || (!isHost && !roomGuestControl)) return;
+        if (isHost) claimHost(true);
+        sendInvite(buildPlayInvite(src.meta, targetEp));
+      };
+      if (localShowKey) {
+        const local = findLocalEpisode(localShowKey, ep.season, ep.episode);
+        if (local) {
+          announceRoomEpisode(carried);
+          replacePlayerSrc({ ...localPlayerSrc(local, undefined, ep), startFromZero: true });
+          return;
+        }
+      }
       const withoutDownload = () => {
         if (localShowKey) {
           const local = findLocalEpisode(localShowKey, ep.season, ep.episode);
           if (local) {
-            replacePlayerSrc(localPlayerSrc(local));
+            announceRoomEpisode(carried);
+            replacePlayerSrc({ ...localPlayerSrc(local), startFromZero: true });
             return;
           }
         }
-        openPicker(src.meta, carried, { autoPlay: true });
+        openPicker(src.meta, carried, { autoPlay: true, startFromZero: true });
       };
       if (inRoom || settings.localPlaybackMode === "stream") {
         withoutDownload();
@@ -175,9 +194,11 @@ export function useEpisodeNavigation(params: {
           withoutDownload();
           return;
         }
-        replacePlayerSrc(
-          downloadPlayerSrc(src.meta, ep, item, { imdbId: src.imdbId, isAnime: src.isAnime }),
-        );
+        announceRoomEpisode(carried);
+        replacePlayerSrc({
+          ...downloadPlayerSrc(src.meta, ep, item, { imdbId: src.imdbId, isAnime: src.isAnime }),
+          startFromZero: true,
+        });
       }, withoutDownload);
     },
     [
@@ -191,6 +212,9 @@ export function useEpisodeNavigation(params: {
       settings.localPlaybackMode,
       inRoom,
       isHost,
+      roomGuestControl,
+      claimHost,
+      sendInvite,
     ],
   );
 
