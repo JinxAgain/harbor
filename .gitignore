@@ -127,5 +127,9 @@ gemini.key
 # Rotated dev-server logs: *.log covers dev.log but not its .prev rotation.
 dev.log*
 
+# .NET build / restore artifacts
+**/[Bb]in/
+**/[Oo]bj/
+
 #reference repo
 syncplay/
