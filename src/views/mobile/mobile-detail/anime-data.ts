@@ -95,6 +95,9 @@ type ExtrasPatch = {
   cinematography?: TmdbDetail["cinematography"];
   editor?: TmdbDetail["editor"];
   cast?: CastEntry[];
+  productionCompanies?: string[];
+  recommendations?: Meta[];
+  similar?: Meta[];
 };
 
 function mergeExtras(detail: TmdbDetail, extras: ExtrasPatch): TmdbDetail {
@@ -114,6 +117,9 @@ function mergeExtras(detail: TmdbDetail, extras: ExtrasPatch): TmdbDetail {
     cinematography: extras.cinematography ?? detail.cinematography,
     editor: extras.editor ?? detail.editor,
     cast: extras.cast && extras.cast.length > 0 ? extras.cast : detail.cast,
+    productionCompanies: extras.productionCompanies ?? detail.productionCompanies,
+    recommendations: extras.recommendations ?? detail.recommendations,
+    similar: extras.similar ?? detail.similar,
   };
 }
 

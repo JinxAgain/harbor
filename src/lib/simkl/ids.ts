@@ -160,7 +160,7 @@ export async function resolveAnimeAliasKeys(
   for (const r of related) {
     if (r) keys.add(r);
   }
-  if (imdbId) {
+  if (imdbId && !/^(kitsu|mal|anilist|anidb):/.test(harborId)) {
     const imdbRelated = await relatedLibraryIds(imdbId).catch(() => []);
     for (const r of imdbRelated) {
       if (r) keys.add(r);

@@ -100,3 +100,25 @@ test("syncSimklWatchedMany groups episodes by season and calls Simkl history dis
   assert.deepEqual(unmarkCalls[0], { ids: { kitsu: 47640, mal: 51191 }, season: 1, episodes: [1, 2] });
   assert.deepEqual(unmarkCalls[1], { ids: { kitsu: 47640, mal: 51191 }, season: 2, episodes: [1] });
 });
+
+test("computeSimklAnimeWatched translates franchise keys using imdbSeason/imdbEpisode and ignores franchise-only completed status", () => {
+  const candidateKeys = ["kitsu:47640", "tt0388629"];
+  // Simkl stores Season 2 Ep 1 under IMDb TVDB coords "2:1", and Season 1 Ep 1 under "1:1"
+  const watchedMap = new Map<string, Set<string>>([
+    ["tt0388629", new Set(["1:1", "2:1"])],
+  ]);
+  // Franchise IMDb key has "completed" from Season 1 completion
+  const statusMap = new Map([["tt0388629", "completed" as const]]);
+
+  // Season 2 episodes: seasonNumber 1, but imdbSeason 2
+  const episodes: KitsuEpisode[] = [
+    { id: 201, number: 1, seasonNumber: 1, imdbSeason: 2, imdbEpisode: 1, airdate: "2023-01-01" },
+    { id: 202, number: 2, seasonNumber: 1, imdbSeason: 2, imdbEpisode: 2, airdate: "2023-01-08" },
+  ];
+
+  const result = computeSimklAnimeWatched(candidateKeys, watchedMap, statusMap, episodes);
+  // Only "2:1" matches episode 1 (imdbSeason: 2, imdbEpisode: 1 -> 1:1), "1:1" (Season 1 Ep 1) does NOT match Season 2
+  assert.deepEqual(Array.from(result.watchedKeys), ["1:1"]);
+  // Franchise status "completed" does NOT mark Season 2 completed because kitsu:47640 is present
+  assert.equal(result.completed, false);
+});

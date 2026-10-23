@@ -36,10 +36,36 @@ export function selectAnimePreferredSeason(args: SelectAnimePreferredSeasonArgs)
   const partScoped =
     splitFranchiseDisplaySeason(parseKitsuId(metaId)) != null ||
     (trackId ? splitFranchiseDisplaySeason(parseKitsuId(trackId)) != null : false);
-  const played =
-    args.lastPlayed ?? (lastPlayedEpisode(metaId) ?? (trackId ? lastPlayedEpisode(trackId) : null));
+  const playedFromMeta =
+    args.lastPlayed !== undefined ? args.lastPlayed : lastPlayedEpisode(metaId);
+  const playedFromTrack =
+    args.lastPlayed !== undefined
+      ? null
+      : playedFromMeta == null && trackId
+        ? lastPlayedEpisode(trackId)
+        : null;
+  const played = playedFromMeta ?? playedFromTrack;
+  const playedId =
+    playedFromMeta != null ? metaId : playedFromTrack != null ? (trackId ?? null) : null;
+  // Merged franchise lists (e.g. Bleach 2004 + TYBW cours) collide on `number`,
+  // so prefer the episode from the entry the resume was saved under before
+  // falling back to the plain number match.
   const playedEp =
-    played != null ? episodes.find((e) => e.number === played.episode) : undefined;
+    played != null
+      ? ((playedId != null
+          ? episodes.find(
+              (e) => e.number === played.episode && (e.sourceMetaId ?? metaId) === playedId,
+            )
+          : undefined) ??
+        (partScoped && played.displaySeason != null
+          ? (episodes.find(
+              (e) =>
+                e.number === played.episode &&
+                splitFranchiseDisplaySeason(parseKitsuId(e.sourceMetaId ?? "")) ===
+                  played.displaySeason,
+            ) ?? episodes.find((e) => e.number === played.episode))
+          : episodes.find((e) => e.number === played.episode)))
+      : undefined;
   const playedSeason = partScoped
     ? (playedEp?.seasonNumber ?? playedEp?.imdbSeason ?? null)
     : (playedEp?.imdbSeason ?? playedEp?.seasonNumber ?? null);
@@ -174,6 +200,7 @@ export function computeAnimeLastPlay(args: {
     pct: number,
     dur?: number,
   ) => boolean;
+  now?: number;
 }): { season: number; episode: number; displaySeason?: number } | null {
   const {
     metaId,
@@ -198,19 +225,34 @@ export function computeAnimeLastPlay(args: {
     };
   }
 
+  const now = args.now ?? Date.now();
+  const idAnime = /^(kitsu|mal|anilist|anidb):/.test(metaId);
+
+  const isAired = (ep: KitsuEpisode): boolean => {
+    if (!ep.airdate) return true;
+    const t = Date.parse(ep.airdate);
+    return !Number.isFinite(t) || t <= now;
+  };
+  const isRegularAired = (ep: KitsuEpisode): boolean => {
+    const s = ep.imdbSeason ?? 1;
+    if (s < 1) return false;
+    return isAired(ep);
+  };
+
   const isEpDone = (ep: KitsuEpisode): boolean => {
     const s = ep.seasonNumber ?? 1;
     const e = ep.number;
     const ds = ep.imdbSeason ?? undefined;
     const key = `${s}:${e}`;
+    const providerKey = ds != null ? `${ds}:${ep.imdbEpisode ?? e}` : null;
     const durSec = ep.length && ep.length > 0 ? ep.length * 60 : undefined;
 
-    if (simklWatched?.has(key)) return true;
-    if (anilistWatched?.has(key)) return true;
-    if (malWatched?.has(key)) return true;
-    if (stremioWatched?.has(key)) return true;
-
     const ids = [metaId, animeCanonicalId].filter((x): x is string => Boolean(x));
+    for (const id of ids) {
+      if (manualWatched(id, s, e) === false) return false;
+      if (ds != null && manualWatched(id, ds, e) === false) return false;
+    }
+
     for (const id of ids) {
       if (manualWatched(id, s, e) === true) return true;
       if (ds != null && manualWatched(id, ds, e) === true) return true;
@@ -218,7 +260,32 @@ export function computeAnimeLastPlay(args: {
       if (ds != null && isFinished(id, { season: ds, episode: e }, watchedThreshold, durSec))
         return true;
     }
+
+    if (simklWatched?.has(key)) return true;
+    if (providerKey && simklWatched?.has(providerKey)) return true;
+    if (anilistWatched?.has(key)) return true;
+    if (malWatched?.has(key)) return true;
+    if (stremioWatched?.has(key)) return true;
+    if (providerKey && stremioWatched?.has(providerKey)) return true;
+
     return false;
+  };
+
+  const formatEp = (
+    ep: KitsuEpisode,
+    baseDisplaySeason?: number,
+  ): { season: number; episode: number; displaySeason?: number } => {
+    const s = idAnime ? (ep.seasonNumber ?? 1) : (ep.imdbSeason ?? ep.seasonNumber ?? 1);
+    const e = idAnime ? ep.number : (ep.imdbEpisode ?? ep.number);
+    const ds =
+      baseDisplaySeason ??
+      splitFranchiseDisplaySeason(parseKitsuId(metaId)) ??
+      (ep.imdbSeason != null && ep.imdbSeason >= 1 ? ep.imdbSeason : undefined);
+    return {
+      season: s,
+      episode: e,
+      ...(ds != null ? { displaySeason: ds } : {}),
+    };
   };
 
   if (localBase) {
@@ -233,15 +300,8 @@ export function computeAnimeLastPlay(args: {
     if (matchEp && isEpDone(matchEp)) {
       for (let i = matchIdx + 1; i < animeEpisodes.length; i++) {
         const nextEp = animeEpisodes[i];
-        if (!isEpDone(nextEp)) {
-          const nextS = nextEp.seasonNumber ?? 1;
-          const nextE = nextEp.number;
-          const nextDs = nextEp.imdbSeason ?? undefined;
-          return {
-            season: nextS,
-            episode: nextE,
-            ...(nextDs != null ? { displaySeason: nextDs } : {}),
-          };
+        if (isRegularAired(nextEp) && !isEpDone(nextEp)) {
+          return formatEp(nextEp, localBase.displaySeason ?? undefined);
         }
       }
     }
@@ -262,23 +322,11 @@ export function computeAnimeLastPlay(args: {
   if (highestWatchedIdx >= 0) {
     for (let i = highestWatchedIdx + 1; i < animeEpisodes.length; i++) {
       const nextEp = animeEpisodes[i];
-      if (!isEpDone(nextEp)) {
-        const nextS = nextEp.seasonNumber ?? 1;
-        const nextE = nextEp.number;
-        const nextDs = nextEp.imdbSeason ?? undefined;
-        return {
-          season: nextS,
-          episode: nextE,
-          ...(nextDs != null ? { displaySeason: nextDs } : {}),
-        };
+      if (isRegularAired(nextEp) && !isEpDone(nextEp)) {
+        return formatEp(nextEp);
       }
     }
-    const lastEp = animeEpisodes[animeEpisodes.length - 1];
-    return {
-      season: lastEp.seasonNumber ?? 1,
-      episode: lastEp.number,
-      ...(lastEp.imdbSeason != null ? { displaySeason: lastEp.imdbSeason } : {}),
-    };
+    return null;
   }
 
   return null;

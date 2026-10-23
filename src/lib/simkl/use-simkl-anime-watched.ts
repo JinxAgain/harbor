@@ -21,6 +21,8 @@ const EMPTY: SimklAnimeWatched = {
   simklMap: new Map(),
 };
 
+const ANIME_KEY = /^(kitsu|mal|anilist|anidb):/;
+
 export function computeSimklAnimeWatched(
   candidateKeys: Array<string | null | undefined>,
   watchedMap: Map<string, Set<string>>,
@@ -28,8 +30,11 @@ export function computeSimklAnimeWatched(
   episodes: KitsuEpisode[],
 ): { watchedKeys: Set<string>; completed: boolean } {
   const watchedKeys = new Set<string>();
-  for (const k of candidateKeys) {
-    if (!k) continue;
+  const validKeys = candidateKeys.filter((k): k is string => Boolean(k));
+  const animeKeys = validKeys.filter((k) => ANIME_KEY.test(k));
+  const franchiseKeys = validKeys.filter((k) => !ANIME_KEY.test(k));
+
+  for (const k of animeKeys) {
     const eps = watchedMap.get(k);
     if (eps) {
       for (const ep of eps) {
@@ -38,9 +43,27 @@ export function computeSimklAnimeWatched(
     }
   }
 
-  const statusCompleted = candidateKeys.some((k) =>
-    k ? statusMap.get(k) === "completed" : false,
-  );
+  const hasMappedSeasons = episodes.some((e) => e.imdbSeason != null && e.imdbSeason >= 1);
+  for (const k of franchiseKeys) {
+    const eps = watchedMap.get(k);
+    if (!eps) continue;
+    if (!hasMappedSeasons) {
+      for (const ep of eps) {
+        watchedKeys.add(ep);
+      }
+      continue;
+    }
+    for (const ep of episodes) {
+      if (ep.imdbSeason == null) continue;
+      const providerKey = `${ep.imdbSeason}:${ep.imdbEpisode ?? ep.number}`;
+      if (eps.has(providerKey)) {
+        watchedKeys.add(`${ep.seasonNumber ?? 1}:${ep.number}`);
+      }
+    }
+  }
+
+  const statusKeys = animeKeys.length > 0 ? animeKeys : validKeys;
+  const statusCompleted = statusKeys.some((k) => statusMap.get(k) === "completed");
 
   const sortedAired = airedOnly([...episodes], (e) => e.airdate).sort(
     (a, b) => (a.seasonNumber ?? 1) - (b.seasonNumber ?? 1) || a.number - b.number,

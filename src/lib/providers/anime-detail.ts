@@ -755,6 +755,30 @@ export async function animeDetails(
       }
       if (fallback) patch.cast = fallback;
     }
+    Object.assign(detail, {
+      ...(patch.logo !== undefined ? { logo: patch.logo } : {}),
+      ...(patch.backdrop !== undefined ? { backdrop: patch.backdrop } : {}),
+      ...(patch.poster !== undefined ? { poster: patch.poster } : {}),
+      ...(patch.imdbId !== undefined ? { imdbId: patch.imdbId } : {}),
+      ...(patch.overview !== undefined ? { overview: patch.overview } : {}),
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.seasonOverviews !== undefined ? { seasonOverviews: patch.seasonOverviews } : {}),
+      extraVideos: patch.extraVideos ?? detail.extraVideos,
+      gallery: patch.gallery ?? detail.gallery,
+      crew: patch.crew ?? detail.crew,
+      directors: patch.directors ?? detail.directors,
+      writers: patch.writers ?? detail.writers,
+      creators: patch.creators ?? detail.creators,
+      producers: patch.producers ?? detail.producers,
+      composer: patch.composer ?? detail.composer,
+      cinematography: patch.cinematography ?? detail.cinematography,
+      editor: patch.editor ?? detail.editor,
+      keywords: patch.keywords ?? detail.keywords,
+      cast: patch.cast && patch.cast.length > 0 ? patch.cast : detail.cast,
+      productionCompanies: patch.productionCompanies ?? detail.productionCompanies,
+      recommendations: patch.recommendations ?? detail.recommendations,
+      similar: patch.similar ?? detail.similar,
+    });
     return patch;
   })().catch(() => ({}) as AnimeDetailExtras);
 

@@ -104,3 +104,81 @@ test("computeAnimeLastPlay advances to next unwatched episode from Simkl watched
   assert.equal(lp?.episode, 3, "Advances to Episode 3");
 });
 
+test("computeAnimeLastPlay respects manual unwatched overrides over tracker progress", () => {
+  const episodes: KitsuEpisode[] = [
+    { id: 101, number: 1, seasonNumber: 1, airdate: "2023-01-01" },
+    { id: 102, number: 2, seasonNumber: 1, airdate: "2023-01-08" },
+    { id: 103, number: 3, seasonNumber: 1, airdate: "2023-01-15" },
+  ];
+
+  // Tracker says 1:1 and 1:2 are watched, but user explicitly unmarked 1:1
+  const simklWatched = new Set(["1:1", "1:2"]);
+  const manualWatched = (id: string, s: number, e: number) => {
+    if (s === 1 && e === 1) return false; // unmarked
+    return undefined;
+  };
+
+  const lp = computeAnimeLastPlay({
+    metaId: "kitsu:47640",
+    animeEpisodes: episodes,
+    simklWatched,
+    manualWatched,
+  });
+
+  // Because ep 1 was unmarked, the earliest unwatched after progress or from start:
+  // highestWatchedIdx was 1 (ep 2), next unwatched after ep 2 is ep 3.
+  assert.ok(lp);
+  assert.equal(lp?.episode, 3);
+
+  // If ep 2 was unmarked, highest watched is none or ep 1:
+  const manualWatched2 = (id: string, s: number, e: number) => {
+    if (s === 1 && e === 2) return false;
+    return undefined;
+  };
+  const lp2 = computeAnimeLastPlay({
+    metaId: "kitsu:47640",
+    animeEpisodes: episodes,
+    simklWatched,
+    manualWatched: manualWatched2,
+  });
+  // Highest watched is ep 1, next unwatched is ep 2
+  assert.ok(lp2);
+  assert.equal(lp2?.episode, 2);
+});
+
+test("computeAnimeLastPlay returns null when all aired episodes are watched and no local base exists", () => {
+  const episodes: KitsuEpisode[] = [
+    { id: 101, number: 1, seasonNumber: 1, airdate: "2023-01-01" },
+    { id: 102, number: 2, seasonNumber: 1, airdate: "2023-01-08" },
+  ];
+
+  const simklWatched = new Set(["1:1", "1:2"]);
+
+  const lp = computeAnimeLastPlay({
+    metaId: "kitsu:47640",
+    animeEpisodes: episodes,
+    simklWatched,
+  });
+
+  assert.equal(lp, null, "All aired episodes are watched; should show Play instead of Resume");
+});
+
+test("selectAnimePreferredSeason disambiguates franchise collisions using sourceMetaId and playedId", () => {
+  // Merged franchise list where Bleach 2004 has ep 1 and TYBW has ep 1
+  const episodes: KitsuEpisode[] = [
+    { id: 101, number: 1, seasonNumber: 1, sourceMetaId: undefined },
+    { id: 201, number: 1, seasonNumber: 2, sourceMetaId: "kitsu:47640" },
+  ];
+
+  // Resume saved under kitsu:47640 for ep 1
+  const selected = selectAnimePreferredSeason({
+    episodes,
+    metaId: "kitsu:1",
+    trackId: "kitsu:47640",
+    traktWatched: new Set(),
+    lastPlayed: { episode: 1 },
+  });
+
+  assert.ok(selected);
+});
+

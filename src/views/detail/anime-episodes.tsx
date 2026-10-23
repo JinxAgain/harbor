@@ -481,14 +481,29 @@ export function AnimeEpisodes({
   );
 
   const didJumpRef = useRef("");
+  const userScrolledRef = useRef(false);
+  useEffect(() => {
+    didJumpRef.current = "";
+    userScrolledRef.current = false;
+    const el = scrollRef.current;
+    if (!el) return;
+    const markUserScroll = () => {
+      userScrolledRef.current = true;
+    };
+    el.addEventListener("wheel", markUserScroll, { passive: true });
+    el.addEventListener("touchmove", markUserScroll, { passive: true });
+    return () => {
+      el.removeEventListener("wheel", markUserScroll);
+      el.removeEventListener("touchmove", markUserScroll);
+    };
+  }, [meta.id, scrollRef]);
+
   useEffect(() => {
     if (!focusTarget) return;
-    if (pickedKeyRef.current != null) return;
+    if (pickedKeyRef.current != null || userScrolledRef.current) return;
 
     const jumpKey = `${meta.id}:${focusTarget.id}`;
     if (didJumpRef.current === jumpKey) return;
-
-    if (didJumpRef.current !== "" && (scrollRef.current?.scrollTop ?? 0) > 240) return;
 
     didJumpRef.current = jumpKey;
     reveal(focusTarget.number, focusTarget.id);
