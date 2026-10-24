@@ -258,13 +258,18 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
   let host: HTMLElement | null = null;
   let snap: PlayerSnapshot = initialPlayerSnapshot();
   let profileAf = "";
+  let lastAppliedAf: string | null = null;
   let hdrToSdr = mpvOptions?.hdrToSdr ?? true;
   const applyAudioFilters = () => {
+    if (!mpvStarted) return;
     const parts: string[] = [];
     if (snap.audioNormalize) parts.push("dynaudnorm=f=500:g=31:p=0.9:m=4:b=1");
     if (profileAf) parts.push(profileAf);
     if (parts.length > 0) parts.push("lavfi=[alimiter=limit=0.97]");
-    invoke("mpv_command", { cmd: ["af", "set", parts.join(",")] }).catch(() => {});
+    const target = parts.join(",");
+    if (target === lastAppliedAf) return;
+    lastAppliedAf = target;
+    invoke("mpv_command", { cmd: ["af", "set", target] }).catch(() => {});
   };
   const listeners = new Set<(s: PlayerSnapshot) => void>();
   let unlistenEvent: UnlistenFn | null = null;
@@ -640,6 +645,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
   };
   const onWindowFocusRestore = () => {
     if (Date.now() - lastWindowBlur < FOCUS_RELOAD_MIN_ABSENT_MS) return;
+    if (snap.status === "playing") return;
     scheduleAudioDeviceReload();
   };
   if (typeof window !== "undefined") {
@@ -944,6 +950,8 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
         retainedMpv.isLive === nextIsLive
       ) {
         mpvStarted = true;
+        lastAppliedAf = null;
+        applyAudioFilters();
         currentIsLive = nextIsLive;
         currentStartupProfile = nextStartupProfile;
         retainedMpv = null;
@@ -1065,6 +1073,8 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
         preparedSubtitleCleanups.clearBefore(activeLoadId);
         markPlaybackTrace(activeTraceId, "loadfile-accepted");
         mpvStarted = true;
+        lastAppliedAf = "";
+        applyAudioFilters();
         currentIsLive = nextIsLive;
         currentStartupProfile = nextStartupProfile;
         void addSeedSubtitles(src.subtitles, activeLoadId);

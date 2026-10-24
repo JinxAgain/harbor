@@ -18,7 +18,11 @@ import {
   type StreamHints,
 } from "./search";
 import type { GeneratedSubtitleGroup, SubResult } from "./types";
-import { prepareRankedSubtitleCandidates, prepareSubtitle } from "./prepare";
+import {
+  prepareRankedSubtitleCandidates,
+  prepareSubtitle,
+  type PreparedCandidateResult,
+} from "./prepare";
 import {
   choosePreparedCandidate,
   orderPreparedCandidates,
@@ -373,26 +377,51 @@ export async function fetchSubtitlesIntoPlayer(
       AUTO_SELECTION_CANDIDATE_LIMIT,
     );
     for (const result of preparedResults) attemptedUrls.add(result.candidate.url);
-    const preflights = await preflightPreparedCandidates(
-      preparedResults,
-      {
-        mediaUrl: p.src.url,
-        headers: p.src.headers,
-        durationSec: p.durationSec ?? 0,
-      },
-      {
-        probe: dependencies.preflightProbe,
-        compatibilityPercent: (result) => {
-          const match = streamMatchDetail(result, hints);
-          return releaseCompatibilityPercent(match.confidence, match.score);
-        },
-        releaseConfidence: (result) => streamMatchDetail(result, hints).confidence,
-        reasons: (result) => [
-          ...(result.providerMatch?.reasons ?? []).map((reason) => `Provider: ${reason}`),
-          ...streamMatchDetail(result, hints).reasons.map((reason) => `Local: ${reason}`),
-        ],
-      },
-    );
+    const shouldAutoSelectCandidate =
+      p.autoSelect !== false && (p.shouldAutoSelect ? p.shouldAutoSelect() : true);
+    const preflights = shouldAutoSelectCandidate
+      ? await preflightPreparedCandidates(
+          preparedResults,
+          {
+            mediaUrl: p.src.url,
+            headers: p.src.headers,
+            durationSec: p.durationSec ?? 0,
+          },
+          {
+            probe: dependencies.preflightProbe,
+            compatibilityPercent: (result) => {
+              const match = streamMatchDetail(result, hints);
+              return releaseCompatibilityPercent(match.confidence, match.score);
+            },
+            releaseConfidence: (result) => streamMatchDetail(result, hints).confidence,
+            reasons: (result) => [
+              ...(result.providerMatch?.reasons ?? []).map((reason) => `Provider: ${reason}`),
+              ...streamMatchDetail(result, hints).reasons.map((reason) => `Local: ${reason}`),
+            ],
+          },
+        )
+      : preparedResults
+          .filter(
+            (
+              result,
+            ): result is Extract<PreparedCandidateResult<SubResult>, { status: "prepared" }> =>
+              result.status === "prepared",
+          )
+          .map((result) => ({
+          candidate: result.candidate,
+          prepared: result.prepared,
+          rank: result.rank,
+          measurement: { status: "unknown" as const, reason: "not-supported" as const },
+          timingStatus: "not-tested" as const,
+          cueSpanSane: true,
+          outputFormatSafe: true,
+          explanation: {
+            compatibilityPercent: 0,
+            releaseConfidence: "unknown",
+            timingStatus: "not-tested" as const,
+            reasons: ["Preflight skipped (embedded track active or auto-selection disabled)"],
+          },
+        }));
     const rerankEntries = preflights.map((item) => ({
       item,
       candidate: { ...item.candidate, timingStatus: item.timingStatus },

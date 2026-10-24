@@ -225,6 +225,8 @@ const OBSERVED_PROPS: &[(&str, u64, PropertyKind)] = &[
     ("path", 20, PropertyKind::String),
     ("audio-device-list", 21, PropertyKind::Node),
     ("demuxer-cache-state", 22, PropertyKind::Node),
+    #[cfg(windows)]
+    ("user-data/display-info/hdr-status", 23, PropertyKind::String),
 ];
 
 #[derive(Clone, Copy)]
@@ -1087,7 +1089,12 @@ pub async fn mpv_start(
                 "30"
             },
         );
-        let _ = mpv.set_property("cache-on-disk", "yes");
+        let is_local_file = source_kind(&args.url) == "local-file";
+        if full_dl || !is_local_file {
+            let _ = mpv.set_property("cache-on-disk", "yes");
+        } else {
+            let _ = mpv.set_property("cache-on-disk", "no");
+        }
         let _ = mpv.set_property("network-timeout", network_timeout_for(&args.url));
         // No reconnect_streamed: on AES-128 HLS every segment ends in a normal
         // EOF that ffmpeg then retries from offset 0, gets an empty body, and
@@ -1325,22 +1332,6 @@ fn spawn_event_loop(
         #[cfg(windows)]
         let mut last_hdr_status: Option<String> = None;
         loop {
-            // display-info publishes user-data/display-info/hdr-status only
-            // after the vo window exists, so observing it at init misses the
-            // value; poll it and surface changes so the frontend can react to
-            // the script's display flips.
-            #[cfg(windows)]
-            {
-                let status = mpv_keepalive
-                    .get_property::<String>("user-data/display-info/hdr-status")
-                    .ok();
-                if status != last_hdr_status {
-                    last_hdr_status = status.clone();
-                    if let Some(s) = &status {
-                        let _ = app.emit("hdr-stage://display-status", s.as_str());
-                    }
-                }
-            }
             let res = ctx.wait_event(0.5);
             match res {
                 Some(Ok(event)) => {
@@ -1352,7 +1343,30 @@ fn spawn_event_loop(
                     if let Event::EndFile(reason) = &event {
                         eprintln!("[harbor::mpv] end-file reason={:?}", reason);
                     }
-                    if let Event::PropertyChange { name, .. } = &event {
+                    #[cfg(windows)]
+                    if matches!(event, Event::PlaybackRestart) {
+                        if let Ok(s) = mpv_keepalive.get_property::<String>("user-data/display-info/hdr-status") {
+                            if last_hdr_status.as_deref() != Some(s.as_str()) {
+                                last_hdr_status = Some(s.clone());
+                                let _ = app.emit("hdr-stage://display-status", s.as_str());
+                            }
+                        }
+                    }
+                    if let Event::PropertyChange { name, change, .. } = &event {
+                        #[cfg(windows)]
+                        if *name == "user-data/display-info/hdr-status" {
+                            let status_str = match change {
+                                PropertyData::Str(s) => Some(*s),
+                                PropertyData::OsdStr(s) => Some(*s),
+                                _ => None,
+                            };
+                            if let Some(s) = status_str {
+                                if last_hdr_status.as_deref() != Some(s) {
+                                    last_hdr_status = Some(s.to_string());
+                                    let _ = app.emit("hdr-stage://display-status", s);
+                                }
+                            }
+                        }
                         if *name == "time-pos" {
                             let now = std::time::Instant::now();
                             if let Some(prev) = last_timepos {
@@ -2470,9 +2484,9 @@ pub async fn mpv_screenshot_data_url(state: State<'_, MpvState>) -> Result<Strin
     let _ = mpv.set_property("screenshot-format", "jpg");
     let _ = mpv.set_property("screenshot-jpeg-quality", "72");
     let _ = mpv.set_property("screenshot-high-bit-depth", "no");
-    // X-Ray samples frequently. Software screenshots avoid reinitializing the
-    // live video renderer for every sample, which can retain large 4K surfaces.
-    let _ = mpv.set_property("screenshot-sw", "yes");
+    // Hardware/VO screenshots avoid cplayer thread stalls from synchronous
+    // multi-threaded CPU zimg HDR-to-SDR tone-mapping conversions.
+    let _ = mpv.set_property("screenshot-sw", "no");
     mpv_argv_command(&mpv, &["screenshot-to-file", path_str.as_str(), "video"])
         .map_err(|e| format!("screenshot-to-file: {}", e))?;
     let mut waited = 0u64;
