@@ -975,6 +975,8 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       secondarySid = null;
       snap.positionSec = 0;
       snap.durationSec = 0;
+      snap.videoWidth = 0;
+      snap.videoHeight = 0;
       lastCachedEnd = null;
       lastSeekableRanges = [];
       snap.bufferedSec = 0;

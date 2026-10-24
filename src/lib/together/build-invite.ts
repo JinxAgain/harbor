@@ -13,13 +13,14 @@ export function toEpisodeRef(ep: PlayEpisode): EpisodeRef {
     imdbEpisode: ep.imdbEpisode,
     absoluteNumber: ep.absoluteNumber,
     tvdbEpisodeId: ep.tvdbEpisodeId,
+    sourceMetaId: ep.sourceMetaId,
   };
 }
 
 export function buildPlayInvite(meta: Meta, episode?: PlayEpisode): PlayInvite {
   return {
     mediaId: meta.id,
-    mediaType: meta.type === "series" ? "series" : "movie",
+    mediaType: meta.type === "series" || meta.type === "anime" || Boolean(episode) ? "series" : "movie",
     mediaTitle: meta.name,
     releaseInfo: meta.releaseInfo,
     posterUrl: meta.poster,

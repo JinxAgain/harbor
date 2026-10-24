@@ -300,6 +300,7 @@ export function PlayPicker({
       clientId,
       hostSource,
       lastInviteProto,
+      roomGuestPick,
       roomGuestControl,
       wasInvitedTo,
       claimHost,
@@ -492,11 +493,30 @@ export function PlayPicker({
   );
 
   const seasonLock = settings.seasonSourceLock && (meta.type === "series" || isAnimeMetaId);
-  const seasonLockEntry = useMemo(
-    () =>
-      seasonLock ? readSeasonLock(meta.id, isAnimeMetaId ? null : (episode?.season ?? null)) : null,
-    [seasonLock, meta.id, episode?.season, isAnimeMetaId],
-  );
+  const seasonLockEntry = useMemo(() => {
+    if (!seasonLock) return null;
+    const seasonKeyVal = isAnimeMetaId ? null : (episode?.season ?? null);
+    const direct =
+      readSeasonLock(meta.id, seasonKeyVal) ?? (imdbId ? readSeasonLock(imdbId, seasonKeyVal) : null);
+    if (direct) return direct;
+    if (seasonLock && wasInvitedTo(inviteKey)) {
+      return readLastSeriesPlayback(meta.id, {
+        altIds: [imdbId, episode?.sourceMetaId],
+        title: meta.name,
+      });
+    }
+    return null;
+  }, [
+    seasonLock,
+    meta.id,
+    meta.name,
+    episode?.season,
+    episode?.sourceMetaId,
+    isAnimeMetaId,
+    imdbId,
+    wasInvitedTo,
+    inviteKey,
+  ]);
   const lastSeriesSource = useMemo(
     () =>
       seasonLockEntry ??
@@ -550,12 +570,16 @@ export function PlayPicker({
   const [autoCancelled, setAutoCancelled] = useState(false);
   const isLiveLikeContent = isLivePlaybackSrc({ meta });
   const seasonLockAutoEligible = settings.instantPlay || !seasonLock || seasonLockEntry != null;
+  const guestSeasonLockReady = seasonLock && seasonLockEntry != null;
   const autoActive =
-    !!((autoPlay && !isLiveLikeContent && seasonLockAutoEligible) || wasInvitedTo(inviteKey)) &&
+    !!(
+      (autoPlay && !isLiveLikeContent && seasonLockAutoEligible) ||
+      (wasInvitedTo(inviteKey) && (!roomGuestPick || guestSeasonLockReady))
+    ) &&
     !autoCancelled &&
     !autoExhausted &&
     !isDownload &&
-    !roomGuestPick;
+    (!roomGuestPick || guestSeasonLockReady);
   useEffect(() => {
     if (!autoActive) return;
     const t = window.setTimeout(() => setAutoCancelled(true), 45_000);
@@ -583,9 +607,13 @@ export function PlayPicker({
 
   const sameSourceMatch: ScoredStream | null = useMemo(() => {
     if (!filteredPicker || !lastSeriesSource || previousMatch) return null;
-    const matches = lastSeriesSourceIsLineage ? streamMatchesReleaseLineage : streamMatchesSource;
-    return filteredPicker.allRaw.find((s) => matches(s, lastSeriesSource)) ?? null;
-  }, [filteredPicker, lastSeriesSource, lastSeriesSourceIsLineage, previousMatch]);
+    const directMatch =
+      filteredPicker.allRaw.find((s) => streamMatchesSource(s, lastSeriesSource)) ?? null;
+    if (directMatch) return directMatch;
+    return (
+      filteredPicker.allRaw.find((s) => streamMatchesReleaseLineage(s, lastSeriesSource)) ?? null
+    );
+  }, [filteredPicker, lastSeriesSource, previousMatch]);
 
   const currentPick: ScoredStream | null = useMemo(() => {
     if (!filteredPicker) return null;
@@ -787,7 +815,8 @@ export function PlayPicker({
     hostSource: hostSourceForMedia,
     preferredSourceEntry: lastSeriesSource,
     preferredSourceMatched: sameSourceMatch != null || previousMatch != null,
-    seasonLockOnly: !settings.instantPlay && seasonLock,
+    seasonLockOnly:
+      !settings.instantPlay && seasonLock && !(wasInvitedTo(inviteKey) && !roomGuestPick),
     season: !isAnimeMetaId ? (episode?.season ?? null) : null,
     episode: !isAnimeMetaId ? (episode?.episode ?? null) : null,
     addonQuorum,

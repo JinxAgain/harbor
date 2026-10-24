@@ -19,6 +19,7 @@ import type {
 import {
   readPlayback,
   streamMatchesEntry,
+  streamMatchesReleaseLineage,
   streamMatchesSource,
   type PlaybackEntry,
 } from "@/lib/playback-history";
@@ -235,7 +236,9 @@ export function useBpStreams(params: { meta: Meta; episode?: PlayEpisode }): BpS
     const match =
       rememberedEntry.kind === "playback"
         ? (pool.find((s) => streamMatchesEntry(s, rememberedEntry.entry)) ?? null)
-        : (pool.find((s) => streamMatchesSource(s, rememberedEntry.entry)) ?? null);
+        : (pool.find((s) => streamMatchesSource(s, rememberedEntry.entry)) ??
+           pool.find((s) => streamMatchesReleaseLineage(s, rememberedEntry.entry)) ??
+           null);
     if (!match || isAnimeMetaId || !episode || rememberedEntry.kind === "source") return match;
     if (match.episode != null && match.episode !== episode.episode) return null;
     if (

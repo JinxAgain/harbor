@@ -1,6 +1,7 @@
 import { ArrowRight, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n";
+import { useSettings } from "@/lib/settings";
 import { useTogether } from "@/lib/together/provider";
 import { useView } from "@/lib/view";
 import type { Meta } from "@/lib/cinemeta";
@@ -11,6 +12,7 @@ const TICK_MS = 60;
 export function TogetherInviteToast() {
   const { incomingInvite, dismissInvite } = useTogether();
   const { openPicker, player, picker } = useView();
+  const { settings } = useSettings();
   const t = useT();
   const handledRef = useRef<number | null>(null);
   const [progress, setProgress] = useState(0);
@@ -25,23 +27,38 @@ export function TogetherInviteToast() {
     const sameMedia =
       (player && player.meta.id === invite.mediaId) ||
       (picker && picker.meta.id === invite.mediaId);
+    const autoPlayForInvite =
+      invite.guestPick !== true || (Boolean(invite.episode) && settings.seasonSourceLock);
     if (sameMedia) {
       const activeEp = player?.meta.id === invite.mediaId ? player.episode : picker?.episode;
       const sameSeason = (activeEp?.season ?? null) === (invite.episode?.season ?? null);
       const sameEpisode = (activeEp?.episode ?? null) === (invite.episode?.episode ?? null);
       handledRef.current = incomingInvite.at;
       if (!sameSeason || !sameEpisode) {
-        const meta: Meta = {
-          id: invite.mediaId,
-          type: invite.mediaType,
-          name: invite.mediaTitle,
-          poster: invite.posterUrl,
-          background: invite.backgroundUrl,
-          logo: invite.logoUrl,
-          releaseInfo: invite.releaseInfo,
-        };
+        const existingMeta =
+          player?.meta.id === invite.mediaId
+            ? player.meta
+            : picker?.meta.id === invite.mediaId
+              ? picker.meta
+              : null;
+        const meta: Meta = existingMeta
+          ? {
+              ...existingMeta,
+              poster: invite.posterUrl || existingMeta.poster,
+              background: invite.backgroundUrl || existingMeta.background,
+              logo: invite.logoUrl || existingMeta.logo,
+            }
+          : {
+              id: invite.mediaId,
+              type: invite.mediaType,
+              name: invite.mediaTitle,
+              poster: invite.posterUrl,
+              background: invite.backgroundUrl,
+              logo: invite.logoUrl,
+              releaseInfo: invite.releaseInfo,
+            };
         openPicker(meta, invite.episode, {
-          autoPlay: invite.guestPick !== true,
+          autoPlay: autoPlayForInvite,
         });
       }
       dismissInvite();
@@ -73,19 +90,32 @@ export function TogetherInviteToast() {
         dismissInvite();
         return;
       }
-      const meta: Meta = {
-        id: invite.mediaId,
-        type: invite.mediaType,
-        name: invite.mediaTitle,
-        poster: invite.posterUrl,
-        background: invite.backgroundUrl,
-        logo: invite.logoUrl,
-        releaseInfo: invite.releaseInfo,
-      };
-      openPicker(meta, invite.episode, { autoPlay: invite.guestPick !== true });
+      const existingMeta =
+        player?.meta.id === invite.mediaId
+          ? player.meta
+          : picker?.meta.id === invite.mediaId
+            ? picker.meta
+            : null;
+      const meta: Meta = existingMeta
+        ? {
+            ...existingMeta,
+            poster: invite.posterUrl || existingMeta.poster,
+            background: invite.backgroundUrl || existingMeta.background,
+            logo: invite.logoUrl || existingMeta.logo,
+          }
+        : {
+            id: invite.mediaId,
+            type: invite.mediaType,
+            name: invite.mediaTitle,
+            poster: invite.posterUrl,
+            background: invite.backgroundUrl,
+            logo: invite.logoUrl,
+            releaseInfo: invite.releaseInfo,
+          };
+      openPicker(meta, invite.episode, { autoPlay: autoPlayForInvite });
       dismissInvite();
     }
-  }, [incomingInvite, openPicker, dismissInvite, player, picker]);
+  }, [incomingInvite, openPicker, dismissInvite, player, picker, settings.seasonSourceLock]);
 
   if (!incomingInvite) return null;
   if (handledRef.current === incomingInvite.at) return null;
@@ -95,22 +125,36 @@ export function TogetherInviteToast() {
     (picker && picker.meta.id === invite.mediaId);
   if (sameMedia) return null;
   const guestPick = invite.guestPick === true;
+  const autoPlayForInvite = !guestPick || (Boolean(invite.episode) && settings.seasonSourceLock);
   const subtitle = invite.episode
     ? `S${invite.episode.imdbSeason ?? invite.episode.season} · E${String(invite.episode.imdbEpisode ?? invite.episode.episode).padStart(2, "0")}`
     : null;
 
   const onJoin = () => {
     handledRef.current = incomingInvite.at;
-    const meta: Meta = {
-      id: invite.mediaId,
-      type: invite.mediaType,
-      name: invite.mediaTitle,
-      poster: invite.posterUrl,
-      background: invite.backgroundUrl,
-      logo: invite.logoUrl,
-      releaseInfo: invite.releaseInfo,
-    };
-    openPicker(meta, invite.episode, { autoPlay: !guestPick });
+    const existingMeta =
+      player?.meta.id === invite.mediaId
+        ? player.meta
+        : picker?.meta.id === invite.mediaId
+          ? picker.meta
+          : null;
+    const meta: Meta = existingMeta
+      ? {
+          ...existingMeta,
+          poster: invite.posterUrl || existingMeta.poster,
+          background: invite.backgroundUrl || existingMeta.background,
+          logo: invite.logoUrl || existingMeta.logo,
+        }
+      : {
+          id: invite.mediaId,
+          type: invite.mediaType,
+          name: invite.mediaTitle,
+          poster: invite.posterUrl,
+          background: invite.backgroundUrl,
+          logo: invite.logoUrl,
+          releaseInfo: invite.releaseInfo,
+        };
+    openPicker(meta, invite.episode, { autoPlay: autoPlayForInvite });
     dismissInvite();
   };
 

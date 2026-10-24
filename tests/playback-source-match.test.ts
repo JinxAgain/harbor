@@ -181,3 +181,111 @@ test("auto-play does not wait once the remembered source already matched", () =>
 
   assert.equal(preferredSourceAddonPending(entry, true, false, progress), false);
 });
+
+test("buildPlayInvite preserves sourceMetaId and tags series/anime/episodes as series mediaType", async () => {
+  const { buildPlayInvite, toEpisodeRef } = await import("../src/lib/together/build-invite.ts");
+  const ep = {
+    season: 1,
+    episode: 2,
+    name: "Ep 2",
+    sourceMetaId: "kitsu:12345",
+  };
+  const epRef = toEpisodeRef(ep);
+  assert.equal(epRef.sourceMetaId, "kitsu:12345");
+
+  const animeInvite = buildPlayInvite({ id: "kitsu:123", type: "anime", name: "Anime Show" } as any, ep);
+  assert.equal(animeInvite.mediaType, "series");
+  assert.equal(animeInvite.episode?.sourceMetaId, "kitsu:12345");
+
+  const movieWithEpInvite = buildPlayInvite({ id: "tt123", type: "movie", name: "Movie Mini" } as any, ep);
+  assert.equal(movieWithEpInvite.mediaType, "series");
+
+  const pureMovieInvite = buildPlayInvite({ id: "tt999", type: "movie", name: "Movie Alone" } as any);
+  assert.equal(pureMovieInvite.mediaType, "movie");
+});
+
+test("useAutoCandidates falls back to release lineage and respects preferPacks when hostSource is present", async () => {
+  // Mock react useMemo to execute directly
+  const origUseMemo = (await import("react")).useMemo;
+  // Transpile useAutoCandidates or test with node
+  const { readFileSync } = await import("node:fs");
+  const ts = (await import("typescript")).default;
+  const source = readFileSync(new URL("../src/views/play-picker/use-auto-candidates.ts", import.meta.url), "utf8");
+  const code = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const modExports: any = {};
+  new Function("require", "exports", code)(
+    (name: string) => {
+      if (name === "react") return { useMemo: (fn: any) => fn() };
+      if (name.includes("playback-history")) {
+        return {
+          streamMatchesEntry: () => false,
+          streamMatchesSource: (s: any, e: any) => s.infoHash === e.infoHash,
+          streamMatchesReleaseLineage: (s: any, e: any) => s.releaseGroupNormalized === e.releaseGroup,
+        };
+      }
+      if (name.includes("source-match")) return { buildMatchScores: () => new Map() };
+      if (name.includes("host-stream")) return { hostSourceStream: () => [] };
+      if (name.includes("dead-streams")) return { isStreamDead: () => false };
+      if (name.includes("stremio-stream")) return { engineP2pEligible: () => true };
+      if (name.includes("picker-utils")) return { hasInstantMarker: () => false, isWatchHub: () => false, needsDownload: () => false, streamMatchesLangs: () => true };
+      if (name.includes("trust")) return { titleTokensPresent: () => true };
+      if (name.includes("episode-span")) return { episodeSpanContains: () => true };
+      return {};
+    },
+    modExports,
+  );
+  const { useAutoCandidates } = modExports;
+
+  const lockedSourceEntry = {
+    infoHash: "hash-ep1",
+    addonId: "torrentio",
+    resolution: "1080p",
+    releaseGroup: "SUBSPLEASE",
+    source: "WEB-DL",
+  };
+
+  const ep2LineageStream: any = {
+    infoHash: "hash-ep2", // different hash!
+    addonId: "torrentio",
+    resolution: "1080p",
+    releaseGroupNormalized: "SUBSPLEASE",
+    source: "WEB-DL",
+    tier: "tier_1080p",
+  };
+
+  const hostPickedStream: any = {
+    infoHash: "hash-host",
+    addonId: "other",
+    resolution: "1080p",
+    releaseGroupNormalized: "OTHER",
+    source: "WEB-DL",
+    tier: "tier_1080p",
+  };
+
+  const candidates = useAutoCandidates({
+    filteredPicker: {
+      all: [hostPickedStream, ep2LineageStream],
+      allRaw: [hostPickedStream, ep2LineageStream],
+      primary: hostPickedStream,
+    },
+    previousPlayback: null,
+    sourceEntry: lockedSourceEntry,
+    sourceEntryLineage: false, // seasonLockEntry was non-null, so lineage was false!
+    isCached: () => true,
+    addons: [],
+    hasStrongAddon: false,
+    isTorrentioStream: () => true,
+    preferredLangs: [],
+    hostSource: { infoHash: "hash-host" }, // hostSource present!
+    preferPacks: true, // seasonLock active!
+  });
+
+  assert.ok(candidates.length > 0, "Candidates must not be empty");
+  assert.equal(
+    candidates[0].releaseGroupNormalized,
+    "SUBSPLEASE",
+    "Must select locked season release lineage as candidate 0 even when hostSource is present",
+  );
+});

@@ -954,9 +954,16 @@ export function useRoomSync(params: {
   useEffect(() => {
     selfFrameReadyRef.current = false;
     markReady(false);
+    return () => {
+      selfFrameReadyRef.current = false;
+      if (inRoomRef.current) markReady(false);
+    };
   }, [src.url, mediaKey, inRoom, markReady, selfFrameReadyRef]);
   useEffect(() => {
-    if (!inRoom || !resumeReady) return;
+    if (!inRoom || !resumeReady || hasStarted) return;
+    if (!isHost && roomSnapshot.syncState && isDifferentMedia(roomSnapshot.syncState, src)) {
+      return;
+    }
     if (selfFrameReadyRef.current) {
       const self = roomSnapshot.participants.find((p) => p.id === clientId);
       if (self && self.ready === false) {
@@ -964,14 +971,43 @@ export function useRoomSync(params: {
       }
       return;
     }
-    if (snap.videoWidth > 0 && snap.videoHeight > 0 && snap.durationSec > 0) {
+    const isFirstFrameReady =
+      snap.firstFrameReady !== undefined ? Boolean(snap.firstFrameReady) : true;
+    if (
+      snap.videoWidth > 0 &&
+      snap.videoHeight > 0 &&
+      snap.durationSec > 0 &&
+      snap.status !== "loading" &&
+      snap.status !== "idle" &&
+      isFirstFrameReady
+    ) {
       selfFrameReadyRef.current = true;
       markReady(true);
     }
-  }, [inRoom, resumeReady, snap.videoWidth, snap.videoHeight, snap.durationSec, markReady, selfFrameReadyRef, roomSnapshot.participants, clientId]);
+  }, [
+    inRoom,
+    resumeReady,
+    isHost,
+    hasStarted,
+    roomSnapshot.syncState,
+    src,
+    snap.videoWidth,
+    snap.videoHeight,
+    snap.durationSec,
+    snap.status,
+    snap.firstFrameReady,
+    markReady,
+    selfFrameReadyRef,
+    roomSnapshot.participants,
+    clientId,
+  ]);
 
   useEffect(() => {
-    if (!inRoom || hasStarted || roomSnapshot.started) return;
+    const startedForCurrentMedia =
+      roomSnapshot.started &&
+      !!roomSnapshot.syncState &&
+      !isDifferentMedia(roomSnapshot.syncState, src);
+    if (!inRoom || hasStarted || (!isHost && startedForCurrentMedia)) return;
     const seed = roomSnapshot.syncState;
     const hostId = roomSnapshot.hostClientId;
     const isReady = Boolean(snap.firstFrameReady || selfFrameReadyRef.current);
@@ -1004,6 +1040,7 @@ export function useRoomSync(params: {
     roomSnapshot.started,
     roomSnapshot.syncState,
     roomSnapshot.hostClientId,
+    src,
   ]);
 
   const lobbySeededRef = useRef(false);

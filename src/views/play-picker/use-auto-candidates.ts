@@ -172,12 +172,17 @@ export function useAutoCandidates(args: {
       seen.add(k);
       out.push(s);
     };
-    const matchSource = sourceEntryLineage ? streamMatchesReleaseLineage : streamMatchesSource;
+    const matchStreamSource = (s: ScoredStream) =>
+      !isStreamDead(s) && !episodeConflict(s) && streamMatchesSource(s, sourceEntry!);
+    const matchStreamLineage = (s: ScoredStream) =>
+      !isStreamDead(s) && !episodeConflict(s) && streamMatchesReleaseLineage(s, sourceEntry!);
     const sourceMatch = sourceEntry
-      ? (filteredPicker.allRaw.find((s) => matchSource(s, sourceEntry)) ?? null)
+      ? (filteredPicker.allRaw.find(matchStreamSource) ??
+         filteredPicker.allRaw.find(matchStreamLineage) ??
+         null)
       : null;
     const instantPlayable = (s: ScoredStream | null) => !!s && isCached(s);
-    if (!matchScores) {
+    if (!matchScores || preferPacks) {
       if (instantPlayable(sourceMatch)) push(sourceMatch);
       if (instantPlayable(previousMatch)) push(previousMatch);
     }

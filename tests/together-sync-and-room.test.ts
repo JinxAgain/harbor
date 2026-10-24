@@ -2187,5 +2187,226 @@ test("useRoomSync seeds 0 when Host has no playback history for episode", () => 
   assert.ok(seeded, "Lobby seed should publish 0s when host has no history");
 });
 
+test("Regression Test: Guest Episode 1 useRoomSync does not re-assert markReady(true) on episode reset and calls markReady(false) on unmount", () => {
+  const localExports: any = {};
+  const refs: any[] = [];
+  const effects: any[] = [];
+  let refIndex = 0;
+  let effectIndex = 0;
+
+  new Function("require", "exports", "window", syncCode)(
+    (name: string) => {
+      if (name.includes("player-utils")) return utilsExports;
+      if (name === "react") {
+        return {
+          useRef: (init: any) => {
+            const index = refIndex++;
+            if (!refs[index]) refs[index] = { current: init };
+            return refs[index];
+          },
+          useEffect: (fn: any, deps: any[]) => {
+            const index = effectIndex++;
+            const prev = effects[index];
+            let changed = true;
+            if (prev && prev.deps && deps) {
+              changed = deps.length !== prev.deps.length || deps.some((d, i) => !Object.is(d, prev.deps[i]));
+            }
+            if (changed) {
+              if (prev?.cleanup && typeof prev.cleanup === "function") prev.cleanup();
+              effects[index] = { deps, cleanup: fn() };
+            }
+          },
+        };
+      }
+      return {
+        getPlaybackPosition: () => 0,
+        usePlaybackFlag: () => false,
+        useSettings: () => ({ settings: {} }),
+        isDifferentMedia: (a: any, b: any) => {
+          if (!a || !b) return true;
+          if (a.mediaId !== b.meta?.id) return true;
+          const aSeason = a.episode?.season ?? null;
+          const bSeason = b.episode?.season ?? null;
+          const aEp = a.episode?.episode ?? null;
+          const bEp = b.episode?.episode ?? null;
+          return aSeason !== bSeason || aEp !== bEp;
+        },
+      };
+    },
+    localExports,
+    {
+      setInterval: () => 1,
+      clearInterval: () => {},
+      setTimeout: (cb: any) => cb(),
+      clearTimeout: () => {},
+    },
+  );
+  const { useRoomSync: hook } = localExports;
+
+  const markReadyCalls: boolean[] = [];
+  const markReady = (ready: boolean) => markReadyCalls.push(ready);
+  const selfFrameReadyRef = { current: true };
+
+  // Step 1: Guest is playing Episode 1 (hasStarted: true, selfFrameReady: true)
+  refIndex = 0;
+  effectIndex = 0;
+  hook({
+    inRoom: true,
+    isHost: false,
+    hasStarted: true,
+    setHasStarted: () => {},
+    selfFrameReadyRef,
+    resumeReady: true,
+    resolvedStartSec: 0,
+    roomSnapshot: {
+      participants: [{ id: "host", ready: true }, { id: "guest1", ready: true }],
+      started: true,
+      hostClientId: "host",
+      syncState: {
+        mediaId: "tt123",
+        episode: { season: 1, episode: 1 },
+      },
+    },
+    clientId: "guest1",
+    src: {
+      url: "http://127.0.0.1:7000/play/ep1",
+      meta: { id: "tt123", name: "Show" },
+      episode: { season: 1, episode: 1 },
+    },
+    snap: {
+      status: "playing",
+      durationSec: 1500,
+      rate: 1.0,
+      buffering: false,
+      videoWidth: 1920,
+      videoHeight: 1080,
+    },
+    bridgeRef: { current: null },
+    hostSourceRef: { current: null },
+    guestPickRef: { current: false },
+    publishState: () => {},
+    onIncomingState: () => () => {},
+    onIncomingCommand: () => () => {},
+    markReady,
+    suppressOutgoingFor: () => {},
+    setForeignNotice: () => {},
+  });
+
+  markReadyCalls.length = 0;
+
+  // Step 2: Host advances to Episode 2 -> room reset (started: false, guest1.ready = false)
+  // Re-render guest's Episode 1 PlayerView before it gets unmounted
+  refIndex = 0;
+  effectIndex = 0;
+  hook({
+    inRoom: true,
+    isHost: false,
+    hasStarted: true,
+    setHasStarted: () => {},
+    selfFrameReadyRef,
+    resumeReady: true,
+    resolvedStartSec: 0,
+    roomSnapshot: {
+      participants: [{ id: "host", ready: true }, { id: "guest1", ready: false }],
+      started: false,
+      hostClientId: "host",
+      syncState: null,
+    },
+    clientId: "guest1",
+    src: {
+      url: "http://127.0.0.1:7000/play/ep1",
+      meta: { id: "tt123", name: "Show" },
+      episode: { season: 1, episode: 1 },
+    },
+    snap: {
+      status: "playing",
+      durationSec: 1500,
+      rate: 1.0,
+      buffering: false,
+      videoWidth: 1920,
+      videoHeight: 1080,
+    },
+    bridgeRef: { current: null },
+    hostSourceRef: { current: null },
+    guestPickRef: { current: false },
+    publishState: () => {},
+    onIncomingState: () => () => {},
+    onIncomingCommand: () => () => {},
+    markReady,
+    suppressOutgoingFor: () => {},
+    setForeignNotice: () => {},
+  });
+
+  // Verify: guest Episode 1 should NOT call markReady(true)
+  assert.equal(
+    markReadyCalls.includes(true),
+    false,
+    "Guest Episode 1 PlayerView must not re-assert markReady(true) when room resets readiness",
+  );
+
+  // Step 3: PlayerView unmounts -> run all effect cleanups
+  markReadyCalls.length = 0;
+  for (const eff of effects) {
+    if (eff?.cleanup && typeof eff.cleanup === "function") {
+      eff.cleanup();
+    }
+  }
+
+  // Verify: unmount must call markReady(false)
+  assert.ok(
+    markReadyCalls.includes(false),
+    "Guest PlayerView unmount must call markReady(false)",
+  );
+});
+
+test("worker Room handleInvite resets started, syncState, and peer readiness", () => {
+  const storageMap = new Map();
+  const mockStorage = {
+    get: async () => new Map(),
+    put: (k: string, v: any) => storageMap.set(k, v),
+    delete: (k: string) => storageMap.delete(k),
+  };
+  const mockState = {
+    storage: mockStorage,
+    getWebSockets: () => [],
+    blockConcurrencyWhile: (fn: any) => fn(),
+    acceptWebSocket: () => {},
+  };
+  const room = new Room(mockState);
+  room.started = true;
+  room.syncState = { mediaId: "tt123", positionSeconds: 100, playing: true };
+  const s1: any = { send: () => {}, close: () => {}, serializeAttachment: () => {} };
+  const s2: any = { send: () => {}, close: () => {}, serializeAttachment: () => {} };
+  const p1 = { clientId: "host", name: "Host", ready: true, socket: s1 };
+  const p2 = { clientId: "guest", name: "Guest", ready: true, socket: s2 };
+  room.peers.set(s1, p1);
+  room.peers.set(s2, p2);
+
+  const broadcasts: any[] = [];
+  room.broadcast = (msg: any) => broadcasts.push(msg);
+
+  room.handleInvite(s1, {
+    invite: {
+      mediaId: "tt123",
+      mediaType: "series",
+      episode: { season: 1, episode: 2 },
+    },
+  });
+
+  assert.equal(room.started, false, "Room.started must be reset to false on invite");
+  assert.equal(room.syncState, null, "Room.syncState must be cleared on invite");
+  assert.equal(p1.ready, false, "Host peer.ready must be reset to false");
+  assert.equal(p2.ready, false, "Guest peer.ready must be reset to false");
+  assert.ok(
+    broadcasts.some((b) => b.t === "started" && b.started === false),
+    "Must broadcast started: false on invite",
+  );
+  assert.ok(
+    broadcasts.some((b) => b.t === "participant-ready" && b.clientId === "guest" && b.ready === false),
+    "Must broadcast guest readiness reset on invite",
+  );
+});
+
+
 
 

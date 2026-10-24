@@ -19,6 +19,7 @@ export type EpisodeRef = {
   imdbEpisode?: number;
   absoluteNumber?: number;
   tvdbEpisodeId?: number;
+  sourceMetaId?: string;
 };
 
 export type SourceDescriptor = {

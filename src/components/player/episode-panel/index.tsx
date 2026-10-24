@@ -119,7 +119,7 @@ export function EpisodePanel({
       setResolvingFor(null);
     }
   }, [open]);
-  const manualMode = !settings.instantPlay;
+  const manualMode = !settings.instantPlay && !settings.seasonSourceLock;
   const handlePlay = (ep: PlayEpisode) => {
     if (roomGuest) return;
     const streamFlow = () => {

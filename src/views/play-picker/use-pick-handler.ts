@@ -457,6 +457,9 @@ export function usePickHandler({
         if (seasonLock && episode) {
           const animeId = /^(kitsu|mal|anilist|anidb):/.test(meta.id);
           saveSeasonLock(meta.id, entry, animeId ? null : (episode.season ?? null), animeId);
+          if (imdbId && imdbId !== meta.id) {
+            saveSeasonLock(imdbId, entry, animeId ? null : (episode.season ?? null), animeId);
+          }
         }
       }
     } finally {

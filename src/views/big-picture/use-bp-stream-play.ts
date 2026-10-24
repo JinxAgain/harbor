@@ -103,7 +103,7 @@ export function useBpStreamPlay(params: {
     !!((autoPlay && !isLiveLike) || wasInvitedTo(inviteKey)) &&
     !autoCancelled &&
     !autoExhausted &&
-    !roomGuestPick;
+    (!roomGuestPick || (seasonLock && s.sourceEntry != null));
 
   const hasStrongAddon = useMemo(
     () => (s.addons ?? []).some((a) => /mediafusion|comet/i.test(a.manifest?.name ?? "")),

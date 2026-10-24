@@ -725,6 +725,16 @@ export class Room {
     if (inv.guestPick !== true) delete inv.guestPick;
     if (typeof inv.guestControl !== "boolean") delete inv.guestControl;
     if (!Number.isInteger(inv.proto) || inv.proto < 0 || inv.proto > 99) delete inv.proto;
+    this.started = false;
+    this.saveStarted();
+    this.syncState = null;
+    this.saveSync();
+    this.broadcast({ t: "started", started: false });
+    for (const [s, p] of this.peers) {
+      p.ready = false;
+      this.attach(s, p);
+      this.broadcast({ t: "participant-ready", clientId: p.clientId, ready: false });
+    }
     this.broadcast(
       { t: "invite", from: peer.clientId, name: peer.name, invite: inv, at: Date.now() },
       socket,

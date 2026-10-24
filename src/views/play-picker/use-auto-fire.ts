@@ -106,7 +106,11 @@ export function useAutoFire(args: {
     const t = window.setTimeout(() => setHostWaitElapsed(true), HOST_SOURCE_WAIT_MS);
     return () => window.clearTimeout(t);
   }, [autoActive, expectHostSource, hostSource, hostWaitElapsed]);
-  const waitingForHostSource = !!expectHostSource && !hostSource && !hostWaitElapsed;
+  const waitingForHostSource =
+    !!expectHostSource &&
+    !hostSource &&
+    !hostWaitElapsed &&
+    !(preferredSourceEntry && preferredSourceMatched);
 
   const preferredAddonPending = preferredSourceAddonPending(
     preferredSourceEntry ?? null,
