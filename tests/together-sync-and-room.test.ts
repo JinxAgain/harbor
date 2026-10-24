@@ -2357,6 +2357,62 @@ test("Regression Test: Guest Episode 1 useRoomSync does not re-assert markReady(
     markReadyCalls.includes(false),
     "Guest PlayerView unmount must call markReady(false)",
   );
+
+  // Step 4: Mid-play joining guest on Episode 2 (hasStarted: true, selfFrameReadyRef.current: false)
+  // must still emit markReady(true) once the first frame decodes.
+  markReadyCalls.length = 0;
+  effects.length = 0;
+  const ep2FrameReadyRef = { current: false };
+  refIndex = 0;
+  effectIndex = 0;
+  hook({
+    inRoom: true,
+    isHost: false,
+    hasStarted: true,
+    setHasStarted: () => {},
+    selfFrameReadyRef: ep2FrameReadyRef,
+    resumeReady: true,
+    resolvedStartSec: 0,
+    roomSnapshot: {
+      participants: [{ id: "host", ready: true }, { id: "guest1", ready: false }],
+      started: true,
+      hostClientId: "host",
+      syncState: {
+        mediaId: "tt123",
+        episode: { season: 1, episode: 2 },
+      },
+    },
+    clientId: "guest1",
+    src: {
+      url: "http://127.0.0.1:7000/play/ep2",
+      meta: { id: "tt123", name: "Show" },
+      episode: { season: 1, episode: 2 },
+    },
+    snap: {
+      status: "paused",
+      durationSec: 1500,
+      rate: 1.0,
+      buffering: false,
+      videoWidth: 1920,
+      videoHeight: 1080,
+      firstFrameReady: true,
+    },
+    bridgeRef: { current: null },
+    hostSourceRef: { current: null },
+    guestPickRef: { current: false },
+    publishState: () => {},
+    onIncomingState: () => () => {},
+    onIncomingCommand: () => () => {},
+    markReady,
+    suppressOutgoingFor: () => {},
+    setForeignNotice: () => {},
+  });
+
+  assert.equal(ep2FrameReadyRef.current, true, "Mid-play joining guest must set selfFrameReadyRef.current = true on first frame");
+  assert.ok(
+    markReadyCalls.includes(true),
+    "Mid-play joining guest must call markReady(true) once first frame is ready",
+  );
 });
 
 test("worker Room handleInvite resets started, syncState, and peer readiness", () => {

@@ -4,7 +4,8 @@ import { getPlaybackPosition, usePlaybackFlag } from "@/lib/player/playback-cloc
 import { pinPickerCache, unpinPickerCache } from "@/lib/picker-cache";
 import { readResumeMs } from "@/lib/resume";
 import { SHORT_PLAYBACK_SEC } from "@/lib/dead-streams";
-import { savePlayback, saveSeasonLock } from "@/lib/playback-history";
+import { savePlayback } from "@/lib/playback-history";
+import { saveSeasonLock } from "@/lib/season-lock";
 import { useSettings } from "@/lib/settings";
 import { resolveStream } from "@/lib/streams/resolve";
 import type { ScoredStream } from "@/lib/streams/types";
@@ -213,9 +214,11 @@ export function useStreamSwitcher(params: {
         }
         if (settings.seasonSourceLock && src.episode) {
           const animeId = /^(kitsu|mal|anilist|anidb):/.test(src.meta.id);
-          saveSeasonLock(src.meta.id, entry, animeId ? null : (src.episode.season ?? null), animeId);
-          if (src.imdbId && src.imdbId !== src.meta.id) {
-            saveSeasonLock(src.imdbId, entry, animeId ? null : (src.episode.season ?? null), animeId);
+          if (src.meta.type === "series" || animeId) {
+            saveSeasonLock(src.meta.id, entry, animeId ? null : (src.episode.season ?? null), animeId);
+            if (src.imdbId && src.imdbId !== src.meta.id) {
+              saveSeasonLock(src.imdbId, entry, animeId ? null : (src.episode.season ?? null), animeId);
+            }
           }
         }
       }

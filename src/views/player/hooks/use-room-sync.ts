@@ -960,14 +960,16 @@ export function useRoomSync(params: {
     };
   }, [src.url, mediaKey, inRoom, markReady, selfFrameReadyRef]);
   useEffect(() => {
-    if (!inRoom || !resumeReady || hasStarted) return;
+    if (!inRoom || !resumeReady) return;
     if (!isHost && roomSnapshot.syncState && isDifferentMedia(roomSnapshot.syncState, src)) {
       return;
     }
     if (selfFrameReadyRef.current) {
-      const self = roomSnapshot.participants.find((p) => p.id === clientId);
-      if (self && self.ready === false) {
-        markReady(true);
+      if (!hasStarted) {
+        const self = roomSnapshot.participants.find((p) => p.id === clientId);
+        if (self && self.ready === false) {
+          markReady(true);
+        }
       }
       return;
     }

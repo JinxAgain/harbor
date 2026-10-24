@@ -289,3 +289,70 @@ test("useAutoCandidates falls back to release lineage and respects preferPacks w
     "Must select locked season release lineage as candidate 0 even when hostSource is present",
   );
 });
+
+test("PlayPicker autoActive and useRoomInvite respect roomGuestPick and guestSeasonLockReady", async () => {
+  const { readFileSync } = await import("node:fs");
+  const ts = (await import("typescript")).default;
+
+  // 1. Verify PlayPicker autoActive expression allows guestSeasonLockReady when roomGuestPick is true
+  const pickerSource = readFileSync(new URL("../src/views/play-picker.tsx", import.meta.url), "utf8");
+  assert.match(
+    pickerSource,
+    /const guestSeasonLockReady = seasonLock && seasonLockEntry != null;/,
+  );
+  assert.match(
+    pickerSource,
+    /\(wasInvitedTo\(inviteKey\) && \(!roomGuestPick \|\| guestSeasonLockReady\)\)/,
+  );
+  assert.match(
+    pickerSource,
+    /\(!roomGuestPick \|\| guestSeasonLockReady\);/,
+  );
+
+  // 2. Verify useRoomInvite suppresses hostSourceForMedia and expectHostSource when roomGuestPick is true
+  const roomInviteSource = readFileSync(
+    new URL("../src/views/play-picker/use-room-invite.ts", import.meta.url),
+    "utf8",
+  );
+  const code = ts.transpileModule(roomInviteSource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const modExports: any = {};
+  new Function("require", "exports", code)(
+    (name: string) => {
+      if (name === "react") {
+        return {
+          useRef: (init: any) => ({ current: init }),
+          useEffect: () => {},
+        };
+      }
+      if (name.includes("room-derive")) {
+        return { hostSourceMatchesMedia: () => true };
+      }
+      if (name.includes("build-invite")) {
+        return { buildPlayInvite: () => ({}) };
+      }
+      return {};
+    },
+    modExports,
+  );
+
+  const { useRoomInvite } = modExports;
+  const resGuestPick = useRoomInvite({
+    meta: { id: "tt123", type: "series", name: "Show" },
+    episode: { season: 1, episode: 2 },
+    inSession: true,
+    roomSnapshot: { hostClientId: "host-id" },
+    clientId: "guest-id",
+    hostSource: { descriptor: { infoHash: "host-hash" } },
+    lastInviteProto: 2,
+    roomGuestPick: true,
+    roomGuestControl: false,
+    wasInvitedTo: () => true,
+    claimHost: () => {},
+    sendInvite: () => {},
+  });
+
+  assert.equal(resGuestPick.hostSourceForMedia, null, "hostSourceForMedia must be null when roomGuestPick is true");
+  assert.equal(resGuestPick.expectHostSource, false, "expectHostSource must be false when roomGuestPick is true");
+});
