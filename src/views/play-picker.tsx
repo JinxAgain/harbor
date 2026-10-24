@@ -747,7 +747,7 @@ export function PlayPicker({
       autoFired: true,
       resume,
       startPositionMs,
-      startFromZero: Boolean(startFromZero || inSession) || undefined,
+      startFromZero: startFromZero || undefined,
     });
   }, [
     downloadMatch,

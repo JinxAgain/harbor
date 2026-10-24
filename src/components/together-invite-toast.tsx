@@ -42,7 +42,6 @@ export function TogetherInviteToast() {
         };
         openPicker(meta, invite.episode, {
           autoPlay: invite.guestPick !== true,
-          startFromZero: true,
         });
       }
       dismissInvite();
@@ -83,7 +82,7 @@ export function TogetherInviteToast() {
         logo: invite.logoUrl,
         releaseInfo: invite.releaseInfo,
       };
-      openPicker(meta, invite.episode, { autoPlay: invite.guestPick !== true, startFromZero: true });
+      openPicker(meta, invite.episode, { autoPlay: invite.guestPick !== true });
       dismissInvite();
     }
   }, [incomingInvite, openPicker, dismissInvite, player, picker]);
@@ -111,7 +110,7 @@ export function TogetherInviteToast() {
       logo: invite.logoUrl,
       releaseInfo: invite.releaseInfo,
     };
-    openPicker(meta, invite.episode, { autoPlay: !guestPick, startFromZero: true });
+    openPicker(meta, invite.episode, { autoPlay: !guestPick });
     dismissInvite();
   };
 

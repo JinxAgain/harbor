@@ -287,6 +287,10 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   const episode = src.episode?.episode;
   const inRoom = roomSnapshot.state === "joined" && roomSnapshot.participants.length >= 2;
   const isHost = inRoom && roomSnapshot.hostClientId === clientId;
+  const inRoomLoadRef = useRef(inRoom);
+  inRoomLoadRef.current = inRoom;
+  const isHostLoadRef = useRef(isHost);
+  isHostLoadRef.current = isHost;
   const canControl = !inRoom || hasStarted;
   const guestPickRef = useRef(settings.togetherGuestsPick);
   guestPickRef.current = settings.togetherGuestsPick;
@@ -472,6 +476,38 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     [activeMediaSrc, liveUrl, src.url, transcodedUrl],
   );
   const cast = usePlayerCast({ src: castSource, debrids, snapRef, bridgeRef, settings });
+
+  const {
+    pendingResumeSec,
+    acknowledgeResume,
+    pendingSeekSec,
+    clearPendingSeek,
+    sourceKey,
+    resumeReady,
+    resolvedStartSec,
+  } = useBridgeLoad({
+    bridgeRef,
+    inRoomRef: inRoomLoadRef,
+    isHostRef: isHostLoadRef,
+    bridgeReady,
+    bridgeKey,
+    src,
+    transcodedUrl,
+    season,
+    episode,
+    authKey,
+  });
+
+  usePendingSeekApply({
+    pendingSeekSec,
+    sourceKey,
+    startPaused: src.startPaused,
+    clearPendingSeek,
+    durationSec: snap.durationSec,
+    bridgeRef,
+    inRoomRef: inRoomLoadRef,
+  });
+
   const {
     resolvedImdbId,
     subAssNative,
@@ -506,6 +542,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     inRoom,
     isHost,
     hasStarted,
+    resumeReady,
+    resolvedStartSec,
     src,
     liveUrl,
     liveStreamRef,
@@ -724,6 +762,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     inRoom,
     isHost,
     hasStarted,
+    resumeReady,
+    resolvedStartSec,
     setHasStarted,
     selfFrameReadyRef,
     roomSnapshot,
@@ -1120,29 +1160,6 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     hasPrevEpisode: hasPrevEpisodeNow,
     hasNextEpisode: hasNextEpisodeNow,
     onVolumeFeedback: showVolumeFeedback,
-  });
-
-  const { pendingResumeSec, acknowledgeResume, pendingSeekSec, clearPendingSeek, sourceKey, resumeReady } = useBridgeLoad({
-    bridgeRef,
-    inRoomRef,
-    isHostRef,
-    bridgeReady,
-    bridgeKey,
-    src,
-    transcodedUrl,
-    season,
-    episode,
-    authKey,
-  });
-
-  usePendingSeekApply({
-    pendingSeekSec,
-    sourceKey,
-    startPaused: src.startPaused,
-    clearPendingSeek,
-    durationSec: snap.durationSec,
-    bridgeRef,
-    inRoomRef,
   });
 
   useStubDetection({ src, snap, onStub: onStubEject, instantPlay: settings.instantPlay });

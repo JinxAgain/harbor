@@ -1766,6 +1766,7 @@ test("useLobbyGate automatically triggers startHost once when everyoneReady and 
 
   let startRoomCalled = 0;
   let hasStartedVal = false;
+  const callOrder: string[] = [];
   const runner = createRunner();
 
   // Step 1: Not everyone ready (guest is ready: false) -> should NOT startHost
@@ -1781,7 +1782,8 @@ test("useLobbyGate automatically triggers startHost once when everyoneReady and 
         { id: "guest1", ready: false },
       ],
     },
-    startRoom: () => { startRoomCalled++; },
+    startRoom: () => { callOrder.push("startRoom"); startRoomCalled++; },
+    notifyHostPlayPause: (playing: boolean) => { callOrder.push(`notifyHost:${playing}`); },
     suppressOutgoingFor: () => {},
     bridgeRef: { current: { play: async () => {} } },
     initialSyncDoneRef: { current: false },
@@ -1804,7 +1806,8 @@ test("useLobbyGate automatically triggers startHost once when everyoneReady and 
         { id: "guest1", ready: true },
       ],
     },
-    startRoom: () => { startRoomCalled++; },
+    startRoom: () => { callOrder.push("startRoom"); startRoomCalled++; },
+    notifyHostPlayPause: (playing: boolean) => { callOrder.push(`notifyHost:${playing}`); },
     suppressOutgoingFor: () => {},
     bridgeRef: { current: { play: async () => {} } },
     initialSyncDoneRef: { current: false },
@@ -1813,6 +1816,11 @@ test("useLobbyGate automatically triggers startHost once when everyoneReady and 
   });
   assert.equal(startRoomCalled, 1, "startRoom must be called once when everyoneReady");
   assert.equal(hasStartedVal, true, "hasStarted must be set to true when everyoneReady");
+  assert.deepEqual(
+    callOrder,
+    ["notifyHost:true", "startRoom"],
+    "Host must notify playing state before startRoom so position arrives before started",
+  );
 
   // Step 3: Second pass on same mediaKey -> does not call startRoom again
   runner.run({
@@ -1890,12 +1898,20 @@ test("TogetherClient optimistically resets started, syncState, and participant r
   (client as any).snapshot.participants[0].ready = true;
   (client as any).snapshot.participants[1].ready = true;
 
-  // 2. claimHost(true) optimistically resets started, syncState, and readiness
+  // 2. claimHost(true) optimistically resets started, syncState, readiness, and updates hostClientId
+  (client as any).snapshot.hostClientId = "guest1";
   client.claimHost(true);
   snap = client.getSnapshot();
+  assert.equal(snap.hostClientId, "host1", "claimHost(true) must optimistically set hostClientId to this.clientId");
   assert.equal(snap.started, false);
   assert.equal(snap.syncState, null);
   assert.equal(snap.participants.every((p: any) => p.ready === false), true);
+
+  // claimHost(false) also optimistically sets hostClientId
+  (client as any).snapshot.hostClientId = "guest1";
+  client.claimHost(false);
+  snap = client.getSnapshot();
+  assert.equal(snap.hostClientId, "host1", "claimHost(false) must optimistically set hostClientId to this.clientId");
 
   // Restore active state
   (client as any).snapshot.started = true;
@@ -1915,6 +1931,169 @@ test("TogetherClient optimistically resets started, syncState, and participant r
   assert.equal(snap.started, false);
   assert.equal(snap.syncState, null);
   assert.equal(snap.participants.every((p: any) => p.ready === false), true);
+});
+
+test("useRoomSync suppresses heartbeat and lobby seed with stale pos when resumeReady is false on episode switch, and seeds Host's resume position once resumeReady", () => {
+  let livePos = 0;
+  const refs: any[] = [];
+  const effects: any[] = [];
+  let refIndex = 0;
+  let effectIndex = 0;
+  const publishedStates: any[] = [];
+  let intervalCb: (() => void) | null = null;
+
+  const localExports: any = {};
+  new Function("require", "exports", "window", syncCode)(
+    (name: string) => {
+      if (name.includes("player-utils")) return utilsExports;
+      if (name.includes("playback-clock")) {
+        return {
+          getPlaybackPosition: () => livePos,
+          getPlaybackBuffered: () => 5,
+        };
+      }
+      return {
+        useRef: (init: any) => refs[refIndex++] ?? (refs[refIndex - 1] = { current: init }),
+        useEffect: (fn: any, deps?: any[]) => {
+          const index = effectIndex++;
+          const old = effects[index];
+          if (
+            old &&
+            deps &&
+            old.deps &&
+            deps.length === old.deps.length &&
+            deps.every((v, i) => Object.is(v, old.deps[i]))
+          ) {
+            return;
+          }
+          old?.cleanup?.();
+          effects[index] = { deps, cleanup: fn() };
+        },
+      };
+    },
+    localExports,
+    {
+      setInterval: (cb: any) => { intervalCb = cb; return 123; },
+      clearInterval: () => {},
+      setTimeout: () => 123,
+      clearTimeout: () => {},
+    },
+  );
+  const { useRoomSync: hook } = localExports;
+
+  const selfFrameReadyRef = { current: true };
+  const mockBridge = {
+    seek: () => {},
+    setRate: () => {},
+    play: async () => {},
+    pause: () => {},
+  };
+
+  const render = (params: {
+    episode: { season: number; episode: number };
+    hasStarted: boolean;
+    resumeReady: boolean;
+    resolvedStartSec: number | null;
+    snap: any;
+  }) => {
+    refIndex = 0;
+    effectIndex = 0;
+    return hook({
+      inRoom: true,
+      isHost: true,
+      hasStarted: params.hasStarted,
+      resumeReady: params.resumeReady,
+      resolvedStartSec: params.resolvedStartSec,
+      setHasStarted: () => {},
+      selfFrameReadyRef,
+      roomSnapshot: {
+        participants: [{ id: "host1", ready: true }, { id: "guest1", ready: true }],
+        started: params.hasStarted,
+        hostClientId: "host1",
+      },
+      clientId: "host1",
+      src: {
+        url: "http://127.0.0.1:7000/play/test",
+        meta: { id: "tt123", name: "Test Show" },
+        episode: params.episode,
+      },
+      snap: params.snap,
+      bridgeRef: { current: mockBridge },
+      hostSourceRef: { current: null },
+      guestPickRef: { current: false },
+      publishState: (state: any) => publishedStates.push(state),
+      onIncomingState: () => () => {},
+      onIncomingCommand: () => () => {},
+      markReady: () => {},
+      suppressOutgoingFor: () => {},
+      setForeignNotice: () => {},
+      syncSettings: { togetherSlowOnDesync: true, togetherRewindThresholdSec: 4.0 },
+    });
+  };
+
+  // Phase 1: Playing Episode 1 near end (1410s)
+  livePos = 1410;
+  render({
+    episode: { season: 1, episode: 1 },
+    hasStarted: true,
+    resumeReady: true,
+    resolvedStartSec: 0,
+    snap: { status: "playing", durationSec: 1500, positionSec: 1410, rate: 1 },
+  });
+  assert.ok(intervalCb);
+  intervalCb();
+  assert.ok(publishedStates.some((s) => s.episode?.episode === 1 && s.positionSeconds === 1410));
+
+  // Phase 2: Episode transition to Episode 2 triggered!
+  // Bridge is loading, so hasStarted is false, resumeReady is false.
+  // livePos still reports 1410s temporarily from the previous mpv video frame.
+  publishedStates.length = 0;
+  render({
+    episode: { season: 1, episode: 2 },
+    hasStarted: false,
+    resumeReady: false,
+    resolvedStartSec: null,
+    snap: { status: "loading", durationSec: 0, positionSec: 0, rate: 1 },
+  });
+
+  // Tick the heartbeat interval while resumeReady is false and hasStarted is false
+  intervalCb();
+  // Ensure NO state was published with stale 1410s for episode 2!
+  assert.equal(
+    publishedStates.some((s) => s.episode?.episode === 2 && s.positionSeconds === 1410),
+    false,
+    "useRoomSync must NOT publish stale 1410s during episode switch while resumeReady is false",
+  );
+
+  // Phase 3: Host resolves playback history for Episode 2: timestamp is 420s (resumeReady becomes true)
+  livePos = 420;
+  render({
+    episode: { season: 1, episode: 2 },
+    hasStarted: false,
+    resumeReady: true,
+    resolvedStartSec: 420,
+    snap: { status: "paused", durationSec: 1500, positionSec: 420, rate: 1 },
+  });
+
+  // Verify lobby seed has published Episode 2 with positionSeconds: 420 and playing: false!
+  const ep2Seed = publishedStates.find((s) => s.episode?.episode === 2 && s.positionSeconds === 420);
+  assert.ok(ep2Seed, "useRoomSync must seed Host's resume position (420s) for Episode 2 when resumeReady becomes true");
+  assert.equal(ep2Seed.playing, false);
+
+  // Phase 4: Next episode switch to Episode 3 where Host has NO history (resolvedStartSec = 0)
+  publishedStates.length = 0;
+  livePos = 0;
+  render({
+    episode: { season: 1, episode: 3 },
+    hasStarted: false,
+    resumeReady: true,
+    resolvedStartSec: 0,
+    snap: { status: "paused", durationSec: 1500, positionSec: 0, rate: 1 },
+  });
+
+  const ep3Seed = publishedStates.find((s) => s.episode?.episode === 3 && s.positionSeconds === 0);
+  assert.ok(ep3Seed, "useRoomSync must seed positionSeconds: 0 when Host has no history for Episode 3");
+  assert.equal(ep3Seed.playing, false);
 });
 
 

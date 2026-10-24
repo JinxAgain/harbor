@@ -57,6 +57,8 @@ export function useRoomSync(params: {
   inRoom: boolean;
   isHost: boolean;
   hasStarted: boolean;
+  resumeReady?: boolean;
+  resolvedStartSec?: number | null;
   setHasStarted: (v: boolean) => void;
   selfFrameReadyRef: RefObject<boolean>;
   roomSnapshot: RoomSnapshot;
@@ -93,6 +95,8 @@ export function useRoomSync(params: {
     inRoom,
     isHost,
     hasStarted,
+    resumeReady = true,
+    resolvedStartSec = null,
     setHasStarted,
     selfFrameReadyRef,
     roomSnapshot,
@@ -137,6 +141,10 @@ export function useRoomSync(params: {
   isHostRef.current = isHost;
   const hasStartedRef = useRef(hasStarted);
   hasStartedRef.current = hasStarted;
+  const resumeReadyRef = useRef(resumeReady);
+  resumeReadyRef.current = resumeReady;
+  const resolvedStartSecRef = useRef(resolvedStartSec);
+  resolvedStartSecRef.current = resolvedStartSec;
   const srcRef = useRef(src);
   srcRef.current = src;
   const snapRef = useRef(snap);
@@ -183,6 +191,7 @@ export function useRoomSync(params: {
       hasStartedRef.current = false;
       lastHostPosRef.current = 0;
       lastHostTickAtRef.current = 0;
+      selfFrameReadyRef.current = false;
     }
   }
   useEffect(() => {
@@ -261,7 +270,17 @@ export function useRoomSync(params: {
     let pos =
       typeof opts?.positionSeconds === "number" && Number.isFinite(opts.positionSeconds)
         ? opts.positionSeconds
-        : getPlaybackPosition();
+        : resumeReadyRef.current
+          ? getPlaybackPosition()
+          : (resolvedStartSecRef.current ?? 0);
+    if (
+      opts?.positionSeconds == null &&
+      !hasStartedRef.current &&
+      pos <= 0.5 &&
+      (resolvedStartSecRef.current ?? 0) > 5
+    ) {
+      pos = resolvedStartSecRef.current ?? 0;
+    }
     if (
       opts?.positionSeconds == null &&
       hostPendingSeekRef.current &&
@@ -270,9 +289,8 @@ export function useRoomSync(params: {
       pos = hostPendingSeekRef.current.targetPos;
     }
     if (!Number.isFinite(pos) || pos < 0) pos = 0;
-    if (!hasStartedRef.current || (curSrc.startFromZero && !hasStartedRef.current)) {
-      pos = 0;
-    } else if (
+    if (
+      !hasStartedRef.current &&
       durationRef.current > 0 &&
       pos >= Math.max(0, durationRef.current - 20)
     ) {
@@ -317,6 +335,9 @@ export function useRoomSync(params: {
   const notifyHostPlayPause = (playing: boolean) => {
     const now = Date.now();
     hostPendingPlayRef.current = { playing, until: now + 1500 };
+    if (playing) {
+      hasStartedRef.current = true;
+    }
     if (!playing && hostSlowdownActiveRef.current) {
       bridgeRef.current?.setRate(hostBaseRateRef.current || 1);
       hostSlowdownActiveRef.current = false;
@@ -359,9 +380,10 @@ export function useRoomSync(params: {
   };
 
   useEffect(() => {
-    if (!inRoom || !isHost || !hasStarted) return;
+    if (!inRoom || !isHost || !hasStarted || !hasStartedRef.current || !resumeReady) return;
     if (cast?.activeRef.current) return;
     const tick = () => {
+      if (!hasStartedRef.current || !resumeReadyRef.current) return;
       if (cast?.activeRef.current) return;
       const now = Date.now();
       let status = statusRef.current;
@@ -546,6 +568,7 @@ export function useRoomSync(params: {
     inRoom,
     isHost,
     hasStarted,
+    resumeReady,
     publishState,
     src.meta.id,
     src.meta.name,
@@ -932,7 +955,7 @@ export function useRoomSync(params: {
     markReady(false);
   }, [src.url, mediaKey, inRoom, markReady, selfFrameReadyRef]);
   useEffect(() => {
-    if (!inRoom) return;
+    if (!inRoom || !resumeReady) return;
     if (selfFrameReadyRef.current) {
       const self = roomSnapshot.participants.find((p) => p.id === clientId);
       if (self && self.ready === false) {
@@ -944,7 +967,7 @@ export function useRoomSync(params: {
       selfFrameReadyRef.current = true;
       markReady(true);
     }
-  }, [inRoom, snap.videoWidth, snap.videoHeight, snap.durationSec, markReady, selfFrameReadyRef, roomSnapshot.participants, clientId]);
+  }, [inRoom, resumeReady, snap.videoWidth, snap.videoHeight, snap.durationSec, markReady, selfFrameReadyRef, roomSnapshot.participants, clientId]);
 
   useEffect(() => {
     if (!inRoom || hasStarted || roomSnapshot.started) return;
@@ -989,9 +1012,17 @@ export function useRoomSync(params: {
     lastLobbySeedPosRef.current = null;
   }, [src.url, mediaKey]);
   useEffect(() => {
-    if (!inRoom || !isHost || hasStarted) return;
+    if (!inRoom || !isHost || hasStarted || !resumeReady) return;
     if (snap.durationSec <= 0) return;
-    const safePos = 0;
+    const rawPos = getPlaybackPosition();
+    const effectivePos =
+      rawPos > 0.5 ? rawPos : Math.max(0, resolvedStartSecRef.current ?? 0);
+    const safePos =
+      Number.isFinite(effectivePos) &&
+      effectivePos >= 0 &&
+      effectivePos < Math.max(0, snap.durationSec - 20)
+        ? effectivePos
+        : 0;
     if (
       lobbySeededRef.current &&
       lastLobbySeedPosRef.current != null &&
@@ -1019,6 +1050,8 @@ export function useRoomSync(params: {
     inRoom,
     isHost,
     hasStarted,
+    resumeReady,
+    resolvedStartSec,
     snap.durationSec,
     snap.positionSec,
     publishState,

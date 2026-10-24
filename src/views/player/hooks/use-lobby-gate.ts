@@ -63,10 +63,10 @@ export function useLobbyGate(params: {
       return;
     }
     setHasStarted(true);
-    startRoom();
     suppressOutgoingFor(0);
-    bridgeRef.current?.play().catch(() => {});
     notifyHostPlayPause?.(true);
+    startRoom();
+    bridgeRef.current?.play().catch(() => {});
   }, [
     isHost,
     sendCommand,

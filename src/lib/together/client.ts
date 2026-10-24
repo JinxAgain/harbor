@@ -217,10 +217,13 @@ export class TogetherClient {
     this.send({ t: "claim-host", room: this.room, clientId: this.clientId, fresh });
     if (fresh) {
       this.update({
+        hostClientId: this.clientId,
         started: false,
         syncState: null,
         participants: this.snapshot.participants.map((p) => ({ ...p, ready: false })),
       });
+    } else {
+      this.update({ hostClientId: this.clientId });
     }
   }
 

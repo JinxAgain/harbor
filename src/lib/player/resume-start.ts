@@ -100,8 +100,12 @@ export async function resolveStartMs({
 }: ResolveStartArgs): Promise<{ ms: number; fromRemote: boolean; finished: boolean }> {
   const localEntry = readResumeEntry(metaId, season, episode);
   const local = localEntry?.ms ?? 0;
+  const localFinished =
+    typeof localEntry?.pct === "number" &&
+    Number.isFinite(localEntry.pct) &&
+    localEntry.pct >= RESTART_THRESHOLD;
   const isEpisode = typeof season === "number" && typeof episode === "number";
-  if (!authKey || privateCwProfileId()) return { ms: local, fromRemote: false, finished: false };
+  if (!authKey || privateCwProfileId()) return { ms: local, fromRemote: false, finished: localFinished };
   const matchesEpisode = (item: LibraryItem | null) => {
     if (!item) return false;
     if (typeof season !== "number" || typeof episode !== "number") return true;
@@ -145,7 +149,7 @@ export async function resolveStartMs({
       ]);
       return { ms: remoteMs, fromRemote: true, finished: finishedAt(remoteMs) };
     }
-    return { ms: effectiveLocal, fromRemote: false, finished: finishedAt(effectiveLocal) };
+    return { ms: effectiveLocal, fromRemote: false, finished: finishedAt(effectiveLocal) || localFinished };
   }
-  return { ms: local, fromRemote: false, finished: false };
+  return { ms: local, fromRemote: false, finished: localFinished };
 }

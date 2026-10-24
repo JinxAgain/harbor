@@ -1332,6 +1332,8 @@ export function ViewProvider({ children }: { children: ReactNode }) {
         if (
           t.kind === "picker" &&
           t.meta.id === m.id &&
+          (t.episode?.season ?? null) === (ep?.season ?? null) &&
+          (t.episode?.episode ?? null) === (ep?.episode ?? null) &&
           (t.attempt ?? 0) === (opts?.attempt ?? 0) &&
           (t.intent ?? "play") === (opts?.intent ?? "play") &&
           Boolean(t.seasonEpisodes?.length) === Boolean(opts?.seasonEpisodes?.length)
