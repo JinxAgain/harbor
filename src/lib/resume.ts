@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import type { ExternalCwSource } from "@/lib/stremio";
 import { privateCwProfileId } from "./cw-profile";
 
@@ -9,7 +10,23 @@ function readKey(): string {
   return profileId ? PRIVATE_PREFIX + profileId : KEY;
 }
 
-type Entry = { ms: number; t: number; s?: number; pct?: number; source?: ExternalCwSource };
+export type Entry = { ms: number; t: number; s?: number; pct?: number; source?: ExternalCwSource };
+
+export function pickPreferredResume(
+  current: Entry | null,
+  candidate: Entry | null,
+): Entry | null {
+  if (!candidate) return current;
+  if (!current) return candidate;
+  const curTracker = Boolean(current.source);
+  const candTracker = Boolean(candidate.source);
+  if (curTracker !== candTracker) {
+    const firstParty = curTracker ? candidate : current;
+    const tracker = curTracker ? current : candidate;
+    return tracker.t > firstParty.t + 60_000 ? tracker : firstParty;
+  }
+  return candidate.t > current.t ? candidate : current;
+}
 
 function entryKey(id: string, season?: number, episode?: number): string {
   if (typeof season === "number" && typeof episode === "number") {
@@ -27,12 +44,36 @@ function readAll(key = readKey()): Record<string, Entry> {
   }
 }
 
+const subs = new Set<() => void>();
+let version = 0;
+
+function emit(): void {
+  version += 1;
+  for (const fn of subs) fn();
+}
+
+export function subscribeResume(fn: () => void): () => void {
+  subs.add(fn);
+  return () => {
+    subs.delete(fn);
+  };
+}
+
+export function resumeVersion(): number {
+  return version;
+}
+
+export function useResumeVersion(): number {
+  return useSyncExternalStore(subscribeResume, resumeVersion, () => 0);
+}
+
 function writeAll(all: Record<string, Entry>, key: string): void {
   try {
     localStorage.setItem(key, JSON.stringify(all));
   } catch {
     /* noop */
   }
+  emit();
 }
 
 export function saveResumeMs(

@@ -50,6 +50,7 @@ import { publishResumeStates } from "@/lib/hover-preview/store";
 import { readResumeEntry, saveResumeBatch } from "@/lib/resume";
 import { dismissCw, isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { clearLocalCw, listLocalCw, localCwVersion, subscribeLocalCw } from "@/lib/local-cw";
+import { reconcileCwItem } from "@/lib/continue-watching";
 import {
   dismissManualWatched,
   manualWatchedLibraryItems,
@@ -64,13 +65,16 @@ import { franchiseRoot, franchiseRootSync } from "@/lib/providers/anime-franchis
 import { franchiseDedupKey } from "@/lib/providers/jikan";
 import {
   ANIME_CLOUD_ID,
+  cwMemberViaResume,
   cwSortKey,
   episodeFromVideoId,
   isAnimeCwItem,
   isCwMember,
   libraryIfChanged,
+  resumeSourceForItem,
   type LibraryItem,
 } from "@/lib/stremio";
+import { setExternalCwSources, useExternalCw } from "@/lib/feed/external-cw";
 import { useTrakt } from "@/lib/trakt/provider";
 import { buildTraktHomeRows } from "@/lib/trakt/home-rails";
 import { fetchWatchedKeySet } from "@/lib/trakt/history";
@@ -84,7 +88,6 @@ import {
   peekSimklWatchedMap,
   type WatchlistStatus,
 } from "@/lib/simkl/list-status";
-import { useExternalCw } from "@/lib/feed/external-cw";
 import { useSimkl } from "@/lib/simkl/provider";
 import { useAnilist } from "@/lib/anilist/provider";
 import { loadAnilistWatchedMap } from "@/lib/anilist/watched-map";
@@ -144,6 +147,9 @@ export function Home({
   const externalCw = useExternalCw(
     !hideSharedCw && (settings.cwSources.trakt || settings.cwSources.simkl),
   );
+  useEffect(() => {
+    setExternalCwSources({ trakt: settings.cwSources.trakt, simkl: settings.cwSources.simkl });
+  }, [settings.cwSources.trakt, settings.cwSources.simkl]);
   const [traktWatched, setTraktWatched] = useState<Set<string>>(() => peekTraktWatched());
   const [simklWatchedMap, setSimklWatchedMap] = useState<Map<string, Set<string>>>(() =>
     peekSimklWatchedMap(),
@@ -516,7 +522,10 @@ export function Home({
             t?: number;
           }[] = [];
           for (const i of libItems) {
-            const rawMt = i._mtime as unknown;
+            if (isCwDismissed(i)) continue;
+            const w = i.state?.lastWatched;
+            const lw = typeof w === "number" ? w : Date.parse(String(w ?? ""));
+            const rawMt = Number.isFinite(lw) && lw > 0 ? lw : (i as { _mtime?: unknown })._mtime;
             const mt = typeof rawMt === "number" ? rawMt : Date.parse(String(rawMt ?? ""));
             if (i.state?.timeOffset && i.state.timeOffset > 0) {
               const vid = i.state.video_id ?? "";
@@ -593,35 +602,43 @@ export function Home({
   }, [items]);
   const localCwItems = useMemo<LibraryItem[]>(() => {
     void localCwVer;
-    return listLocalCw(hideSharedCw).map((e) => ({
-      _id: e.id,
-      type: e.type,
-      name: e.name,
-      poster: e.poster,
-      background: e.background,
-      isAnime: e.isAnime,
-      state: {
-        timeOffset: e.positionMs,
-        duration: e.durationMs,
-        season: e.season,
-        episode: e.episode,
-        video_id:
-          e.videoId ??
-          (e.season != null && e.episode != null ? `${e.id}:${e.season}:${e.episode}` : undefined),
-        flaggedWatched: e.durationMs > 0 && e.positionMs / e.durationMs >= 0.9 ? 1 : 0,
-        lastWatched: new Date(e.t).toISOString(),
-      },
-      removed: false,
-      temp: false,
-      _ctime: new Date(e.t).toISOString(),
-      _mtime: new Date(e.t).toISOString(),
-      local: true,
-    }));
-  }, [localCwVer, hideSharedCw, activeProfile?.id]);
+    return listLocalCw(hideSharedCw)
+      .filter((e) => (e.source === "library" ? settings.cwSources.library : settings.cwSources.local))
+      .map((e) => ({
+        _id: e.id,
+        type: e.type,
+        name: e.name,
+        poster: e.poster,
+        background: e.background,
+        isAnime: e.isAnime,
+        state: {
+          timeOffset: e.positionMs,
+          duration: e.durationMs,
+          season: e.season,
+          episode: e.episode,
+          video_id:
+            e.videoId ??
+            (e.season != null && e.episode != null ? `${e.id}:${e.season}:${e.episode}` : undefined),
+          flaggedWatched: e.durationMs > 0 && e.positionMs / e.durationMs >= 0.9 ? 1 : 0,
+          lastWatched: new Date(e.t).toISOString(),
+        },
+        removed: false,
+        temp: false,
+        _ctime: new Date(e.t).toISOString(),
+        _mtime: new Date(e.t).toISOString(),
+        local: true,
+      }));
+  }, [localCwVer, hideSharedCw, settings.cwSources.library, settings.cwSources.local, activeProfile?.id]);
   const continueWatching = useMemo(() => {
+    const disabledSources = new Set<string>();
+    if (!settings.cwSources.trakt) disabledSources.add("trakt");
+    if (!settings.cwSources.simkl) disabledSources.add("simkl");
     const cwBase = hideSharedCw
       ? []
-      : [...items.filter((i) => !ANIME_CLOUD_ID.test(i._id)), ...externalCw];
+      : [
+          ...(settings.cwSources.library ? items.filter((i) => !ANIME_CLOUD_ID.test(i._id)) : []),
+          ...externalCw.filter((i) => !disabledSources.has(i.external ?? "")),
+        ];
     const lastWatchedOf = (i: LibraryItem) => {
       const lw = Date.parse(i.state?.lastWatched ?? "");
       if (Number.isFinite(lw) && lw > 0) return lw;
@@ -630,14 +647,17 @@ export function Home({
       return Number.isFinite(mt) ? mt : 0;
     };
     const eligible = [...cwBase, ...localCwItems]
-      .filter(
-        (i) =>
-          (i.type as string) !== "other" &&
-          !i._id.startsWith("iptv:") &&
-          !isCwDismissed(i) &&
-          isCwMember(i) &&
-          !((settings.animeOnlyInAnimeRoom || settings.hideContent.anime) && isAnimeCwItem(i)),
-      )
+      .filter((i) => {
+        if ((i.type as string) === "other" || i._id.startsWith("iptv:")) return false;
+        if (isCwDismissed(i)) return false;
+        if (!isCwMember(i)) return false;
+        if ((settings.animeOnlyInAnimeRoom || settings.hideContent.anime) && isAnimeCwItem(i)) return false;
+        if (disabledSources.size > 0 && cwMemberViaResume(i)) {
+          const src = resumeSourceForItem(i);
+          if (src && disabledSources.has(src)) return false;
+        }
+        return true;
+      })
       .map((i) => ({ i, k: cwSortKey(i) }))
       .sort(
         (a, b) =>
@@ -652,15 +672,13 @@ export function Home({
     for (const i of eligible) {
       const existing = byId.get(i._id);
       if (existing) {
-        if (
-          lastWatchedOf(i) > lastWatchedOf(existing) ||
-          (i.local && !existing.local && lastWatchedOf(i) >= lastWatchedOf(existing))
-        ) {
+        const winner = reconcileCwItem(existing, i, lastWatchedOf);
+        if (winner !== existing) {
           const oldNm = norm(existing.name ?? "");
           if (oldNm) byName.delete(`${existing.type}:${oldNm}`);
-          byId.set(i._id, i);
-          const nm = norm(i.name ?? "");
-          if (nm) byName.set(`${i.type}:${nm}`, i);
+          byId.set(i._id, winner);
+          const nm = norm(winner.name ?? "");
+          if (nm) byName.set(`${winner.type}:${nm}`, winner);
         }
         continue;
       }
@@ -669,10 +687,11 @@ export function Home({
       if (nm) {
         const held = byName.get(key);
         if (held) {
-          if (lastWatchedOf(i) > lastWatchedOf(held)) {
+          const winner = reconcileCwItem(held, i, lastWatchedOf);
+          if (winner !== held || lastWatchedOf(i) > lastWatchedOf(held)) {
             byId.delete(held._id);
-            byName.set(key, i);
-            byId.set(i._id, i);
+            byName.set(key, winner);
+            byId.set(winner._id, winner);
           }
           continue;
         }
@@ -695,6 +714,7 @@ export function Home({
     cwRootVersion,
     settings.animeOnlyInAnimeRoom,
     settings.hideContent.anime,
+    settings.cwSources,
     hideSharedCw,
     animeDetectVer,
   ]);

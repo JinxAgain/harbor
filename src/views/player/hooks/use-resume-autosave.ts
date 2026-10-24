@@ -175,10 +175,16 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
           : [];
     if (finished) {
       if (covered.length) {
-        for (const coveredEpisode of covered) clearResume(id, se, coveredEpisode, current.ownerId);
-      } else clearResume(id, se, ep, current.ownerId);
+        for (const coveredEpisode of covered) {
+          clearResume(id, se, coveredEpisode, current.ownerId);
+          if (rv && rid && rid !== id) clearResume(rid, se, coveredEpisode, current.ownerId);
+        }
+      } else {
+        clearResume(id, se, ep, current.ownerId);
+        if (rv && rid && rid !== id) clearResume(rid, se, ep, current.ownerId);
+      }
     } else if (covered.length) {
-      for (const coveredEpisode of covered)
+      for (const coveredEpisode of covered) {
         saveResumeMs(
           id,
           pos * 1000,
@@ -189,11 +195,42 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
           undefined,
           current.ownerId,
         );
+        if (rv && rid && rid !== id) {
+          saveResumeMs(
+            rid,
+            pos * 1000,
+            se,
+            coveredEpisode,
+            displaySeasonFor(s, se, cs, seasonForeign),
+            undefined,
+            undefined,
+            current.ownerId,
+          );
+        }
+      }
     } else {
       saveResumeMs(
-        id, pos * 1000, se, ep, displaySeasonFor(s, se, cs, seasonForeign),
-        undefined, undefined, current.ownerId,
+        id,
+        pos * 1000,
+        se,
+        ep,
+        displaySeasonFor(s, se, cs, seasonForeign),
+        undefined,
+        undefined,
+        current.ownerId,
       );
+      if (rv && rid && rid !== id) {
+        saveResumeMs(
+          rid,
+          pos * 1000,
+          se,
+          ep,
+          displaySeasonFor(s, se, cs, seasonForeign),
+          undefined,
+          undefined,
+          current.ownerId,
+        );
+      }
     }
     if (typeof cs === "number") setViewedSeason(id, cs);
     if (isExternalPlaylistId(id)) return;
@@ -287,7 +324,7 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
           t: Date.now(),
         },
         current.ownerId,
-        !CLOUD_OK.test(id) || isLocalUrl(s.url) || animeLocal || ttAnimeUnmapped || rewatchMovie,
+        Boolean(id) || isLocalUrl(s.url) || animeLocal || ttAnimeUnmapped || rewatchMovie,
       );
     }
     if (pos < TASTE_MIN_SEC) return;

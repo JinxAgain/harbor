@@ -9,6 +9,7 @@ import { anyProfileSharesStremioWith, useProfiles } from "@/lib/profiles";
 import { useHideAnime } from "@/lib/anime-hide";
 import { useHeroLogos } from "@/components/anime-hero/use-hero-logos";
 import { dismissCw, isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
+import { reconcileCwItem } from "@/lib/continue-watching";
 import { listLocalCw, subscribeLocalCw, type LocalCwEntry } from "@/lib/local-cw";
 import { useExternalCw } from "@/lib/feed/external-cw";
 import { readSnapshot, useSnapshotVersion } from "@/lib/snapshots";
@@ -165,11 +166,9 @@ export function useMobileCw(limit = 14): LibraryItem[] {
     for (const i of merged) {
       const existing = byId.get(i._id);
       if (existing) {
-        if (
-          lastWatchedOf(i) > lastWatchedOf(existing) ||
-          (i.local && !existing.local && lastWatchedOf(i) >= lastWatchedOf(existing))
-        ) {
-          byId.set(i._id, i);
+        const winner = reconcileCwItem(existing, i, lastWatchedOf);
+        if (winner !== existing) {
+          byId.set(i._id, winner);
         }
         continue;
       }

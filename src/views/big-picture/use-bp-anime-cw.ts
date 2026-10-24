@@ -17,8 +17,10 @@ import {
   subscribeManualWatched,
 } from "@/lib/manual-watched";
 import { useSettings } from "@/lib/settings";
+import { reconcileCwItem } from "@/lib/continue-watching";
 import {
   ANIME_CLOUD_ID,
+  cwSortKey,
   isAnimeCwItem,
   isCwMember,
   library,
@@ -145,22 +147,35 @@ export function useBpAnimeCwBase(): BpAnimeCwBase {
     void cwVersion;
     void animeDetectVer;
     void rootVersion;
-    const seen = new Set<string>();
+    const lastWatchedOf = (i: LibraryItem) => {
+      const w = i.state?.lastWatched;
+      const lw = typeof w === "number" ? w : Date.parse(String(w ?? ""));
+      if (Number.isFinite(lw) && lw > 0) return lw;
+      const m = i._mtime as unknown;
+      const mt = typeof m === "number" ? m : Date.parse(String(m ?? ""));
+      return Number.isFinite(mt) ? mt : 0;
+    };
+    const eligible = pool.filter((i) => {
+      if (!isCwMember(i)) return false;
+      if (!i.local && !isAnimeCwItem(i)) return false;
+      if (isCwDismissed(i)) return false;
+      return true;
+    });
+    const byId = new Map<string, LibraryItem>();
+    for (const i of eligible) {
+      const existing = byId.get(i._id);
+      if (existing) {
+        const winner = reconcileCwItem(existing, i, lastWatchedOf);
+        if (winner !== existing) {
+          byId.set(i._id, winner);
+        }
+        continue;
+      }
+      byId.set(i._id, i);
+    }
     const seenRoot = new Set<string>();
-    return pool
-      .filter((i) => {
-        if (!isCwMember(i)) return false;
-        if (!i.local && !isAnimeCwItem(i)) return false;
-        if (isCwDismissed(i)) return false;
-        if (seen.has(i._id)) return false;
-        seen.add(i._id);
-        return true;
-      })
-      .sort(
-        (a, b) =>
-          Date.parse(b.state?.lastWatched ?? b._mtime) -
-          Date.parse(a.state?.lastWatched ?? a._mtime),
-      )
+    return [...byId.values()]
+      .sort((a, b) => cwSortKey(b) - cwSortKey(a) || lastWatchedOf(b) - lastWatchedOf(a))
       .filter((i) => {
         const root = franchiseRootSync(i._id);
         if (!root) return true;
@@ -198,14 +213,18 @@ export function useBpAnimeCwBase(): BpAnimeCwBase {
 
   const resurfaceLibrary = useMemo(() => {
     void manualWatchedVer;
+    const base = [
+      ...(hideSharedCw || !cwSources.library ? [] : libItems),
+      ...localAnimeCw,
+    ];
     const manual = manualWatchedLibraryItems().filter(isAnimeCwItem);
-    if (manual.length === 0) return libItems;
-    const memberIds = new Set(libItems.filter(isCwMember).map((i) => i._id));
+    if (manual.length === 0) return base;
+    const memberIds = new Set(base.filter(isCwMember).map((i) => i._id));
     const usable = manual.filter((i) => !memberIds.has(i._id));
-    if (usable.length === 0) return libItems;
+    if (usable.length === 0) return base;
     const overrideIds = new Set(usable.map((i) => i._id));
-    return [...libItems.filter((i) => !overrideIds.has(i._id)), ...usable];
-  }, [libItems, manualWatchedVer]);
+    return [...base.filter((i) => !overrideIds.has(i._id)), ...usable];
+  }, [libItems, localAnimeCw, manualWatchedVer, hideSharedCw, cwSources.library]);
 
   const sig = raw
     .map((i) => `${i._id}:${i.state?.season ?? ""}:${i.state?.episode ?? ""}`)

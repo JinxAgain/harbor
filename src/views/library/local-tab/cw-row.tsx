@@ -3,8 +3,8 @@ import { ContinueCard } from "@/components/continue-card";
 import { Row } from "@/components/row";
 import { useT } from "@/lib/i18n";
 import { useView } from "@/lib/view";
-import { clearLocalCw } from "@/lib/local-cw";
-import { readResumeEntry } from "@/lib/resume";
+import { clearLocalCw, localCwEntry } from "@/lib/local-cw";
+import { pickPreferredResume, readResumeEntry, useResumeVersion } from "@/lib/resume";
 import type { LibraryItem } from "@/lib/stremio";
 import type { LocalEntry } from "@/lib/local-library";
 import { localPlayerSrc } from "@/lib/local-library/player-src";
@@ -20,6 +20,7 @@ export function LocalCwRow() {
   const t = useT();
   const { openPlayer } = useView();
   const cards = useLocalContinueWatching();
+  useResumeVersion();
 
   const play = useCallback(
     (entry: LocalEntry, item: LibraryItem) => {
@@ -43,19 +44,43 @@ export function LocalCwRow() {
         let bestLocal: ReturnType<typeof readResumeEntry> = null;
         for (const cid of candidateIds) {
           const e = readResumeEntry(cid, target.season ?? undefined, target.episode ?? undefined);
-          if (e && (!bestLocal || e.t > bestLocal.t)) {
-            bestLocal = e;
-          }
+          bestLocal = pickPreferredResume(bestLocal, e);
         }
         const rawOff = item.state?.timeOffset ?? 0;
+        const rawDur = item.state?.duration ?? 0;
         const rawMtime = item.state?.lastWatched ?? (item as { _mtime?: unknown })._mtime;
         const remoteMtime =
           typeof rawMtime === "number" ? rawMtime : Date.parse(String(rawMtime ?? ""));
+        let localDur = rawDur > 0 && !item.external ? rawDur : 0;
+        for (const cid of candidateIds) {
+          const lcw = localCwEntry(cid, false) ?? localCwEntry(cid, true);
+          if (lcw && lcw.durationMs > 0 && localDur === 0) {
+            const matchesEp = target.type !== "show" || (lcw.season === target.season && lcw.episode === target.episode);
+            if (matchesEp) localDur = lcw.durationMs;
+          }
+        }
+        const isFirstParty = Boolean(bestLocal && !bestLocal.source);
+        const beatsRemote = !Number.isFinite(remoteMtime)
+          ? true
+          : Boolean(item.external) && isFirstParty
+            ? (bestLocal?.t ?? 0) + 60_000 >= remoteMtime
+            : !item.external && !isFirstParty
+              ? (bestLocal?.t ?? 0) > remoteMtime + 60_000
+              : (bestLocal?.t ?? 0) > remoteMtime;
+        const effectiveResume = bestLocal && beatsRemote ? bestLocal : null;
         const off =
-          bestLocal && (!Number.isFinite(remoteMtime) || bestLocal.t > remoteMtime) && bestLocal.ms > 0
-            ? bestLocal.ms
+          effectiveResume
+            ? (effectiveResume.source && localDur > 0 && effectiveResume.pct != null
+                ? Math.round(effectiveResume.pct * localDur)
+                : effectiveResume.ms > 0
+                  ? effectiveResume.ms
+                  : effectiveResume.pct != null && localDur > 0
+                    ? Math.round(effectiveResume.pct * localDur)
+                    : undefined)
             : rawOff > 0
-              ? rawOff
+              ? (item.external && localDur > 0 && rawDur > 0
+                  ? Math.round((rawOff / rawDur) * localDur)
+                  : rawOff)
               : undefined;
         openPlayer({
           ...src,

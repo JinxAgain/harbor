@@ -1,4 +1,4 @@
-import { libraryGetOneStrict, libraryPut, type LibraryItem } from "@/lib/stremio";
+import { invalidateLibraryCache, libraryGetOneStrict, libraryPut, type LibraryItem } from "@/lib/stremio";
 
 const KEY = "harbor.stremio.write-queue.v1";
 
@@ -53,6 +53,7 @@ export async function cloudLibraryPut(authKey: string, item: LibraryItem): Promi
   const id = item._id;
   try {
     await libraryPut(authKey, item);
+    invalidateLibraryCache();
     const queued = queue.get(id);
     if (queued && mtimeMs(queued.item) <= mtimeMs(item)) {
       queue.delete(id);

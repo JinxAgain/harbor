@@ -10,7 +10,12 @@ function harness(local: any, patch: any = {}, privateProfile: string | null = nu
     video_id: "tt100:1:1", season: 1, episode: 1, timeOffset: 600000, duration: 1800000, flaggedWatched: 1, ...state,
   } };
   const h = hookHarness("src/lib/player/resume-start.ts", "resolveStartMs", {
-    "@/lib/resume": { readResumeEntry: () => local, saveResumeBatch: (batch: any) => writes.push(...batch) },
+    "@/lib/resume": {
+      readResumeEntry: () => local,
+      saveResumeBatch: (batch: any) => writes.push(...batch),
+      pickPreferredResume: (curr: any, cand: any) => cand ?? curr,
+    },
+    "@/lib/local-cw": { localCwEntry: () => null },
     "@/lib/cw-profile": { privateCwProfileId: () => privateProfile },
     "@/lib/stremio": { libraryGetOne: async () => { reads++; return remote; }, episodeFromVideoId: () => ({ season: 1, episode: 1 }) },
   });

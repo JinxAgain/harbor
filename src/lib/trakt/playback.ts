@@ -1,7 +1,8 @@
 import { traktRequest, TraktApiError } from "./client";
 import { getSession } from "./session";
 import { isCwDismissed } from "@/lib/cw-dismiss";
-import { readResumeEntry, saveResumeMs } from "@/lib/resume";
+import { localCwEntry } from "@/lib/local-cw";
+import { readResumeEntry, saveResumeBatch } from "@/lib/resume";
 import type { LibraryItem } from "@/lib/stremio";
 import type { TraktIds } from "./types";
 
@@ -64,6 +65,20 @@ function buildItem(
   };
 }
 
+function resolveItemDuration(
+  id: string,
+  type: "movie" | "series",
+  season?: number,
+  episode?: number,
+): number {
+  const local = localCwEntry(id, false) ?? localCwEntry(id, true);
+  if (local && local.durationMs > 0) {
+    if (type === "movie") return local.durationMs;
+    if (local.season === season && local.episode === episode) return local.durationMs;
+  }
+  return type === "movie" ? DURATION_MS.movie : DURATION_MS.series;
+}
+
 function toLibraryItem(raw: RawPlayback): LibraryItem | null {
   const pct = Math.min(100, Math.max(0, raw.progress ?? 0));
   if (pct < 1 || pct > 98) return null;
@@ -71,21 +86,25 @@ function toLibraryItem(raw: RawPlayback): LibraryItem | null {
 
   if (raw.movie && !raw.episode) {
     const id = movieMetaId(raw.movie.ids);
-    return id ? buildItem(id, "movie", raw.movie, pct, DURATION_MS.movie, when) : null;
+    const durMs = id ? resolveItemDuration(id, "movie") : DURATION_MS.movie;
+    return id ? buildItem(id, "movie", raw.movie, pct, durMs, when) : null;
   }
 
   if (raw.show) {
     const id = seriesMetaId(raw.show.ids);
     if (!id) return null;
+    const season = raw.episode?.season;
+    const episode = raw.episode?.number;
+    const durMs = resolveItemDuration(id, "series", season, episode);
     return buildItem(
       id,
       "series",
       raw.show,
       pct,
-      DURATION_MS.series,
+      durMs,
       when,
-      raw.episode?.season,
-      raw.episode?.number,
+      season,
+      episode,
     );
   }
   return null;
@@ -119,24 +138,29 @@ export async function fetchTraktPlaybackItems(): Promise<LibraryItem[]> {
     const existing = readResumeEntry(item._id, item.state.season, item.state.episode);
     const remoteT = Date.parse(item.state.lastWatched ?? "");
     const remoteValid = Number.isFinite(remoteT) && remoteT > 0;
+    const isFirstParty = Boolean(existing && !existing.source);
     const shouldWrite =
       !existing ||
-      (remoteValid && remoteT >= existing.t) ||
-      (!existing.t && item.state.timeOffset > existing.ms);
+      (isFirstParty
+        ? remoteValid && remoteT > existing.t + 60_000
+        : (remoteValid && remoteT >= existing.t) ||
+          (!existing.t && item.state.timeOffset > existing.ms));
     if (shouldWrite) {
       // Persist the true remote percent alongside the synthetic ms so consumers
       // can prefer pct x real runtime once migrated; pct rides along with the
       // winning write and is never mixed with another entry's ms.
       const pct01 = Math.min(100, Math.max(0, r.progress ?? 0)) / 100;
-      saveResumeMs(
-        item._id,
-        item.state.timeOffset,
-        item.state.season,
-        item.state.episode,
-        undefined,
-        pct01,
-        "trakt",
-      );
+      saveResumeBatch([
+        {
+          id: item._id,
+          ms: item.state.timeOffset,
+          season: item.state.season,
+          episode: item.state.episode,
+          pct: pct01,
+          source: "trakt",
+          t: remoteValid ? remoteT : 0,
+        },
+      ]);
     }
   }
   return items;

@@ -24,7 +24,9 @@ import { useAuth } from "@/lib/auth";
 import { useSettings } from "@/lib/settings";
 import { useView, type PlayEpisode } from "@/lib/view";
 import { getWatchedBy } from "@/lib/watched-by";
-import { readResumeEntry } from "@/lib/resume";
+import { pickPreferredResume, readResumeEntry, useResumeVersion } from "@/lib/resume";
+import { localCwEntry } from "@/lib/local-cw";
+import { useLocalLibrary } from "@/lib/local-library";
 import { resolveLocalPlayVersions } from "@/lib/local-library/playback";
 import { localPlayerSrc } from "@/lib/local-library/player-src";
 import { openLocalVersions } from "@/lib/player/local-versions-modal";
@@ -100,6 +102,8 @@ export const ContinueCard = memo(function ContinueCard({
     !!activeProfile &&
     watcher.id !== activeProfile.id &&
     sharesStremioStorage(activeProfile, watcher, profiles);
+  const resumeVer = useResumeVersion();
+  const localLib = useLocalLibrary();
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const { open: openContextMenu } = useContextMenu();
@@ -151,12 +155,18 @@ export const ContinueCard = memo(function ContinueCard({
     let bestLocal: ReturnType<typeof readResumeEntry> = null;
     for (const id of candidateIds) {
       const e = readResumeEntry(id, ep?.season, ep?.episode);
-      if (e && (!bestLocal || e.t > bestLocal.t)) {
-        bestLocal = e;
-      }
+      bestLocal = pickPreferredResume(bestLocal, e);
     }
     if (!bestLocal) return null;
-    if (!Number.isFinite(remoteMtime) || bestLocal.t > remoteMtime) {
+    const isFirstParty = !bestLocal.source;
+    const beatsRemote = !Number.isFinite(remoteMtime)
+      ? true
+      : Boolean(item.external) && isFirstParty
+        ? bestLocal.t + 60_000 >= remoteMtime
+        : !item.external && !isFirstParty
+          ? bestLocal.t > remoteMtime + 60_000
+          : bestLocal.t > remoteMtime;
+    if (beatsRemote) {
       return bestLocal;
     }
     return null;
@@ -164,24 +174,68 @@ export const ContinueCard = memo(function ContinueCard({
     item._id,
     item.name,
     item.type,
+    item.external,
     item.state?.lastWatched,
     (item as { _mtime?: unknown })._mtime,
     ep?.season,
     ep?.episode,
+    resumeVer,
+    localLib,
   ]);
-  const dur =
-    rawDur > 0
+  const localCwMatch = useMemo(() => {
+    const candidateIds = [item._id];
+    const imdbId = item._id.startsWith("tt") ? item._id : undefined;
+    const local = resolveLocalPlayVersions(
+      { id: item._id, type: libraryMetaType(item.type), name: item.name },
+      ep ?? null,
+      imdbId,
+    );
+    for (const entry of local) {
+      candidateIds.push(`local:${entry.id}`);
+      if (entry.imdbId) candidateIds.push(entry.imdbId);
+      if (entry.tmdbId != null) {
+        candidateIds.push(`tmdb:${entry.type === "show" ? "tv" : "movie"}:${entry.tmdbId}`);
+      }
+    }
+    for (const cid of candidateIds) {
+      const e = localCwEntry(cid, false) ?? localCwEntry(cid, true);
+      if (e) {
+        const match = item.type === "movie" || (e.season === ep?.season && e.episode === ep?.episode);
+        if (match) return e;
+      }
+    }
+    return null;
+  }, [item._id, item.name, item.type, ep?.season, ep?.episode, localLib]);
+
+  const realDur =
+    rawDur > 0 && !item.external
       ? rawDur
-      : effectiveResume?.pct && effectiveResume.pct > 0 && effectiveResume.ms > 0
-        ? Math.round(effectiveResume.ms / effectiveResume.pct)
+      : localCwMatch?.durationMs && localCwMatch.durationMs > 0
+        ? localCwMatch.durationMs
         : 0;
+
+  const dur =
+    realDur > 0
+      ? realDur
+      : rawDur > 0
+        ? rawDur
+        : effectiveResume?.pct && effectiveResume.pct > 0 && effectiveResume.ms > 0
+          ? Math.round(effectiveResume.ms / effectiveResume.pct)
+          : 0;
+
   const off = effectiveResume
-    ? (effectiveResume.ms > 0
+    ? effectiveResume.source && realDur > 0 && effectiveResume.pct != null
+      ? Math.round(effectiveResume.pct * realDur)
+      : effectiveResume.ms > 0
         ? effectiveResume.ms
         : effectiveResume.pct != null && dur > 0
           ? Math.floor(effectiveResume.pct * dur)
-          : 0)
-    : rawOff;
+          : 0
+    : item.external && realDur > 0 && rawOff > 0 && rawDur > 0
+      ? Math.round((rawOff / rawDur) * realDur)
+      : localCwMatch?.positionMs && localCwMatch.positionMs > 0
+        ? localCwMatch.positionMs
+        : rawOff;
   const progress = dur > 0 ? Math.min(1, off / dur) : 0;
   const remaining = dur > 0 && !isExternal ? formatRemaining(t, Math.max(0, dur - off)) : "";
   const upNext = item.upNext === true;
@@ -514,12 +568,15 @@ export const ContinueCard = memo(function ContinueCard({
     episode: PlayEpisode | undefined,
     chooseEveryTime: boolean,
   ) => {
+    const hasRealOffset =
+      !item.external || (effectiveResume && !effectiveResume.source) || realDur > 0;
     const isResuming = !chooseEveryTime && (!upNext || off > 0);
+    const startPos = isResuming && off > 0 && hasRealOffset ? off : undefined;
     const stream = () =>
       openPicker(meta, episode, {
         autoPlay: !chooseEveryTime && (settings.instantPlay || (!!episode && settings.seasonSourceLock)),
         resume: isResuming,
-        startPositionMs: isResuming && off > 0 ? off : undefined,
+        startPositionMs: startPos,
       });
     const tmdbMatch = meta.id.match(/^tmdb:(?:movie|tv):(\d+)$/);
     const identity = {
@@ -543,7 +600,7 @@ export const ContinueCard = memo(function ContinueCard({
       openPlayer({
         ...source,
         resume: isResuming,
-        startPositionMs: isResuming && off > 0 ? off : source.startPositionMs,
+        startPositionMs: startPos ?? source.startPositionMs,
         meta: {
           ...source.meta,
           id: source.meta.id && !source.meta.id.startsWith("local:") ? source.meta.id : meta.id,
@@ -569,7 +626,7 @@ export const ContinueCard = memo(function ContinueCard({
       openPlayer({
         ...serverSrc,
         resume: isResuming,
-        startPositionMs: isResuming && off > 0 ? off : serverSrc.startPositionMs,
+        startPositionMs: startPos ?? serverSrc.startPositionMs,
       });
     };
     const showChooser = () => {

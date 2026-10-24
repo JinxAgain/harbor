@@ -38,9 +38,11 @@ export function isFinaleEpisode(
 const STUB_MAX_SEC = 150;
 
 let activeFlusher: (() => Promise<void>) | null = null;
+let inflightFlush: Promise<unknown> | null = null;
 
 export async function flushCloudSync(): Promise<void> {
   if (activeFlusher) await activeFlusher().catch(() => {});
+  if (inflightFlush) await inflightFlush.catch(() => {});
   await flushWriteQueue().catch(() => {});
 }
 
@@ -117,23 +119,6 @@ export function useStremioSync(params: {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ourVideoId, src.url]);
-
-  useEffect(() => {
-    return () => {
-      const saved = progress.latest;
-      if (!saved) return;
-      const { src: s, snap: sn, authKey: ak, canonicalId: cid } = saved;
-      const vid = videoIdFor(s, cid);
-      if (!ak || !cid || !vid) return;
-      const pos = progress.position;
-      if (pos < MIN_POSITION_SEC) return;
-      const base = baseItemRef.current?._id === cid ? baseItemRef.current : null;
-      void writeLibraryItem(ak, s, sn, base, cid, pos, false, vid).then((mt) => {
-        if (mt) lastWrittenMtimesRef.current.add(mt);
-      });
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [progress]);
 
   useEffect(() => {
     sessionStartRef.current = Date.now();
@@ -305,7 +290,11 @@ export function useStremioSync(params: {
 
   useEffect(() => {
     return () => {
-      void writeWithFreshBase(true, true);
+      const p = writeWithFreshBase(true, true);
+      inflightFlush = p;
+      void p.finally(() => {
+        if (inflightFlush === p) inflightFlush = null;
+      });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

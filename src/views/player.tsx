@@ -565,6 +565,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     clearInvite,
     exitPlayback,
     openPicker,
+    snap,
   });
   closePlayerRef.current = () => void closePlayer();
   const backFromPlayer = useCallback(async () => {

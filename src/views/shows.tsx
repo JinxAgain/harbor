@@ -19,15 +19,17 @@ import { hasPageRowChanges, resetPageRows, usePageRows } from "@/lib/page-rows";
 import { useSettings } from "@/lib/settings";
 import {
   ANIME_CLOUD_ID,
+  cwMemberViaResume,
   cwSortKey,
   isAnimeCwItem,
   isCwMember,
   library,
+  resumeSourceForItem,
   type LibraryItem,
 } from "@/lib/stremio";
-import { listLocalCw, localCwVersion, subscribeLocalCw } from "@/lib/local-cw";
-import { localToLibraryItem } from "@/lib/continue-watching";
-import { clearLocalCw } from "@/lib/local-cw";
+import { listLocalCw, localCwVersion, subscribeLocalCw, clearLocalCw } from "@/lib/local-cw";
+import { localToLibraryItem, reconcileCwItem } from "@/lib/continue-watching";
+import { useExternalCw } from "@/lib/feed/external-cw";
 import {
   dismissManualWatched,
   manualWatchedLibraryItems,
@@ -81,7 +83,7 @@ export function Shows({ active = true }: { active?: boolean }) {
     setScrollEl(el);
   }, []);
 
-  useEffect(() => {
+  const refreshLibrary = useCallback(() => {
     if (!authKey) {
       setItems([]);
       return;
@@ -90,6 +92,27 @@ export function Shows({ active = true }: { active?: boolean }) {
       .then(setItems)
       .catch(() => {});
   }, [authKey]);
+
+  useEffect(() => {
+    refreshLibrary();
+  }, [refreshLibrary]);
+
+  useEffect(() => {
+    if (!active) return;
+    refreshLibrary();
+  }, [active, refreshLibrary]);
+
+  useEffect(() => {
+    const onFocus = () => {
+      if (document.visibilityState === "visible") refreshLibrary();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [refreshLibrary]);
 
   useEffect(() => {
     let cancelled = false;
@@ -177,27 +200,88 @@ export function Shows({ active = true }: { active?: boolean }) {
     };
   }, [settings.tmdbKey]);
 
-  const localCwVer = useSyncExternalStore(subscribeLocalCw, localCwVersion);
-  const continueWatching = useMemo(
-    () =>
-      (hideSharedCw ? listLocalCw(true).map(localToLibraryItem) : items)
-        .filter(
-          (i) =>
-            i.type === "series" &&
-            !ANIME_CLOUD_ID.test(i._id) &&
-            isCwMember(i) &&
-            !isCwDismissed(i),
-        )
-        .map((i) => ({ i, k: cwSortKey(i) }))
-        .sort((a, b) => b.k - a.k)
-        .map((e) => e.i)
-        .slice(0, 16),
-    [items, cwVersion, hideSharedCw, localCwVer, activeProfile?.id],
+  const externalCw = useExternalCw(
+    !hideSharedCw && (settings.cwSources.trakt || settings.cwSources.simkl),
   );
+  const localCwVer = useSyncExternalStore(subscribeLocalCw, localCwVersion);
+  const continueWatching = useMemo(() => {
+    const disabledSources = new Set<string>();
+    if (!settings.cwSources.trakt) disabledSources.add("trakt");
+    if (!settings.cwSources.simkl) disabledSources.add("simkl");
+
+    const base = hideSharedCw
+      ? []
+      : [
+          ...(settings.cwSources.library
+            ? items.filter((i) => !ANIME_CLOUD_ID.test(i._id) && isCwMember(i))
+            : []),
+          ...externalCw.filter((i) => !disabledSources.has(i.external ?? "")),
+        ];
+    const local = listLocalCw(hideSharedCw)
+      .filter((e) => (e.source === "library" ? settings.cwSources.library : settings.cwSources.local))
+      .map(localToLibraryItem);
+
+    const lastWatchedOf = (i: LibraryItem) => {
+      const w = i.state?.lastWatched;
+      const lw = typeof w === "number" ? w : Date.parse(String(w ?? ""));
+      if (Number.isFinite(lw) && lw > 0) return lw;
+      const m = i._mtime as unknown;
+      const mt = typeof m === "number" ? m : Date.parse(String(m ?? ""));
+      return Number.isFinite(mt) ? mt : 0;
+    };
+
+    const eligible = [...base, ...local].filter((i) => {
+      if (i.type !== "series") return false;
+      if (ANIME_CLOUD_ID.test(i._id)) return false;
+      if (isCwDismissed(i)) return false;
+      if (!isCwMember(i)) return false;
+      if ((settings.animeOnlyInAnimeRoom || settings.hideContent.anime) && isAnimeCwItem(i)) return false;
+      if (disabledSources.size > 0 && cwMemberViaResume(i)) {
+        const src = resumeSourceForItem(i);
+        if (src && disabledSources.has(src)) return false;
+      }
+      return true;
+    });
+
+    const byId = new Map<string, LibraryItem>();
+    for (const i of eligible) {
+      const existing = byId.get(i._id);
+      if (existing) {
+        const winner = reconcileCwItem(existing, i, lastWatchedOf);
+        if (winner !== existing) {
+          byId.set(i._id, winner);
+        }
+        continue;
+      }
+      byId.set(i._id, i);
+    }
+
+    return [...byId.values()]
+      .map((i) => ({ i, k: cwSortKey(i) }))
+      .sort((a, b) => b.k - a.k || lastWatchedOf(b.i) - lastWatchedOf(a.i))
+      .map((e) => e.i)
+      .slice(0, 16);
+  }, [
+    items,
+    externalCw,
+    cwVersion,
+    hideSharedCw,
+    localCwVer,
+    settings.cwSources,
+    settings.animeOnlyInAnimeRoom,
+    settings.hideContent.anime,
+    activeProfile?.id,
+  ]);
 
   const manualWatchedVer = useSyncExternalStore(subscribeManualWatched, manualWatchedVersion);
   const resurfaceLibrary = useMemo(() => {
-    const base = items.filter((i) => !ANIME_CLOUD_ID.test(i._id));
+    const localSeries = listLocalCw(hideSharedCw)
+      .filter((e) => e.type === "series" && (e.source === "library" ? settings.cwSources.library : settings.cwSources.local))
+      .map(localToLibraryItem);
+    const base = [
+      ...(hideSharedCw || !settings.cwSources.library ? [] : items.filter((i) => !ANIME_CLOUD_ID.test(i._id))),
+      ...localSeries,
+    ];
     const manual = manualWatchedLibraryItems().filter((i) => !isAnimeCwItem(i));
     if (manual.length === 0) return base;
     const cwMemberIds = new Set(base.filter(isCwMember).map((i) => i._id));
@@ -205,7 +289,7 @@ export function Shows({ active = true }: { active?: boolean }) {
     if (usable.length === 0) return base;
     const overrideIds = new Set(usable.map((i) => i._id));
     return [...base.filter((i) => !overrideIds.has(i._id)), ...usable];
-  }, [items, manualWatchedVer]);
+  }, [items, manualWatchedVer, hideSharedCw, localCwVer, settings.cwSources]);
   const cwItems = useCwAdvance(
     continueWatching,
     settings.tmdbKey,
@@ -332,13 +416,14 @@ export function Shows({ active = true }: { active?: boolean }) {
                 <ContinueCard
                   key={it._id}
                   item={it}
-                  onDismiss={(item) =>
-                    item.manualWatched
-                      ? dismissManualWatched(item._id)
-                      : item.local
-                        ? clearLocalCw(item._id)
-                        : dismissCw(item, authKey)
-                  }
+                  onDismiss={(item) => {
+                    if (item.manualWatched) {
+                      dismissManualWatched(item._id);
+                    } else {
+                      if (item.local) clearLocalCw(item._id);
+                      dismissCw(item, authKey);
+                    }
+                  }}
                 />
               ))}
             </Row>

@@ -57,6 +57,65 @@ export function localToLibraryItem(e: ReturnType<typeof listLocalCw>[number]): L
   };
 }
 
+export function reconcileCwItem(
+  existing: LibraryItem,
+  candidate: LibraryItem,
+  lastWatchedOf: (i: LibraryItem) => number,
+): LibraryItem {
+  const tExisting = lastWatchedOf(existing);
+  const tCandidate = lastWatchedOf(candidate);
+  const candidateIsExternal = candidate.external != null;
+  const existingIsExternal = existing.external != null;
+
+  if (candidateIsExternal !== existingIsExternal) {
+    const ext = candidateIsExternal ? candidate : existing;
+    const nonExt = candidateIsExternal ? existing : candidate;
+    const tExt = candidateIsExternal ? tCandidate : tExisting;
+    const tNonExt = candidateIsExternal ? tExisting : tCandidate;
+    const sameTarget =
+      nonExt.type === "movie" ||
+      (ext.state?.season === nonExt.state?.season &&
+        ext.state?.episode === nonExt.state?.episode);
+
+    // Echo window: if external scrobble timestamp is within 60s of non-external local pause
+    // on the same movie/episode, the local/non-external session wins.
+    if (sameTarget ? tExt <= tNonExt + 60_000 : tExt <= tNonExt) {
+      return nonExt;
+    }
+
+    // External genuinely newer on the same movie/episode: scale external progress onto nonExt's real duration
+    const nonExtDur = sameTarget ? (nonExt.state?.duration ?? 0) : 0;
+    if (nonExtDur > 0) {
+      const extDur = ext.state?.duration ?? 0;
+      const extOff = ext.state?.timeOffset ?? 0;
+      const ratio = extDur > 0 ? extOff / extDur : 0;
+      return {
+        ...nonExt,
+        state: {
+          ...nonExt.state,
+          duration: nonExtDur,
+          timeOffset: Math.round(ratio * nonExtDur),
+          flaggedWatched: ext.state?.flaggedWatched ?? 0,
+          lastWatched: ext.state?.lastWatched ?? nonExt.state?.lastWatched,
+          season: ext.state?.season ?? nonExt.state?.season,
+          episode: ext.state?.episode ?? nonExt.state?.episode,
+          video_id: ext.state?.video_id ?? nonExt.state?.video_id,
+        },
+        _mtime: ext._mtime ?? nonExt._mtime,
+      };
+    }
+    return ext;
+  }
+
+  if (
+    tCandidate > tExisting ||
+    (candidate.local && !existing.local && tCandidate >= tExisting)
+  ) {
+    return candidate;
+  }
+  return existing;
+}
+
 function episodeOf(i: LibraryItem): { season: number; episode: number } | null {
   const season = i.state?.season;
   const episode = i.state?.episode;
@@ -200,11 +259,9 @@ export function useContinueWatching(excludeId?: string, limit = 12): CwCard[] {
       if (i._id === excludeId) continue;
       const existing = byId.get(i._id);
       if (existing) {
-        if (
-          watchedAt(i) > watchedAt(existing) ||
-          (i.local && !existing.local && watchedAt(i) >= watchedAt(existing))
-        ) {
-          byId.set(i._id, i);
+        const winner = reconcileCwItem(existing, i, watchedAt);
+        if (winner !== existing) {
+          byId.set(i._id, winner);
         }
         continue;
       }

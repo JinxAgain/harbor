@@ -1,6 +1,7 @@
 import { simklRequest, SimklApiError } from "./client";
 import { getSession } from "./session";
 import { isCwDismissed } from "@/lib/cw-dismiss";
+import { localCwEntry } from "@/lib/local-cw";
 import { readResumeEntry, saveResumeBatch } from "@/lib/resume";
 import type { LibraryItem } from "@/lib/stremio";
 
@@ -83,6 +84,20 @@ function buildItem(
   };
 }
 
+function resolveItemDuration(
+  id: string,
+  type: "movie" | "series",
+  season?: number,
+  episode?: number,
+): number {
+  const local = localCwEntry(id, false) ?? localCwEntry(id, true);
+  if (local && local.durationMs > 0) {
+    if (type === "movie") return local.durationMs;
+    if (local.season === season && local.episode === episode) return local.durationMs;
+  }
+  return type === "movie" ? DURATION_MS.movie : DURATION_MS.series;
+}
+
 function toLibraryItem(raw: RawSession): LibraryItem | null {
   const pct = Math.min(100, Math.max(0, raw.progress ?? 0));
   if (pct < 1 || pct > 98) return null;
@@ -90,18 +105,20 @@ function toLibraryItem(raw: RawSession): LibraryItem | null {
 
   if (raw.movie) {
     const id = movieMetaId(raw.movie.ids);
-    return id ? buildItem(id, "movie", raw.movie, pct, DURATION_MS.movie, when) : null;
+    const durMs = id ? resolveItemDuration(id, "movie") : DURATION_MS.movie;
+    return id ? buildItem(id, "movie", raw.movie, pct, durMs, when) : null;
   }
 
   if (!raw.show && !raw.episode && raw.anime) {
     const movieId = movieMetaId(raw.anime.ids);
     if (movieId) {
+      const durMs = resolveItemDuration(movieId, "movie");
       return buildItem(
         movieId,
         "movie",
         raw.anime,
         pct,
-        DURATION_MS.movie,
+        durMs,
         when,
         undefined,
         undefined,
@@ -134,12 +151,13 @@ function toLibraryItem(raw: RawSession): LibraryItem | null {
       : (raw.episode?.number ?? raw.episode?.episode);
     // Season-based anime IDs cannot be attached to franchise IDs without a mapping.
     if (mappedAnime && (season == null || episode == null)) return null;
+    const durMs = resolveItemDuration(id, "series", season, episode);
     return buildItem(
       id,
       "series",
       seriesNode,
       pct,
-      DURATION_MS.series,
+      durMs,
       when,
       season,
       episode,
@@ -180,10 +198,13 @@ export async function fetchSimklPlaybackItems(): Promise<LibraryItem[]> {
     const existing = readResumeEntry(item._id, item.state.season, item.state.episode);
     const remoteT = Date.parse(item.state.lastWatched ?? "");
     const remoteValid = Number.isFinite(remoteT) && remoteT > 0;
+    const isFirstParty = Boolean(existing && !existing.source);
     const shouldWrite =
       !existing ||
-      (remoteValid && remoteT >= existing.t) ||
-      (!existing.t && item.state.timeOffset > existing.ms);
+      (isFirstParty
+        ? remoteValid && remoteT > existing.t + 60_000
+        : (remoteValid && remoteT >= existing.t) ||
+          (!existing.t && item.state.timeOffset > existing.ms));
     if (shouldWrite) {
       // Persist the true remote percent alongside the synthetic ms so consumers
       // can prefer pct x real runtime once migrated; pct rides along with the

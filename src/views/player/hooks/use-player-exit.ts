@@ -36,6 +36,7 @@ export function usePlayerExit(params: {
   clearInvite: () => void;
   exitPlayback: () => void;
   openPicker: ReturnType<typeof useView>["openPicker"];
+  snap?: { durationSec?: number };
 }) {
   const {
     src,
@@ -56,6 +57,7 @@ export function usePlayerExit(params: {
     clearInvite,
     exitPlayback,
     openPicker,
+    snap,
   } = params;
 
   const { activeProfile } = useProfiles();
@@ -63,16 +65,36 @@ export function usePlayerExit(params: {
   const closePlayer = useCallback(async () => {
     await captureExitSnapshot();
     const pos = getPlaybackPosition();
-    if (Number.isFinite(pos) && pos > 0) {
+    const dur = snap?.durationSec ?? 0;
+    const finished = dur > 0 && pos >= dur * 0.92;
+    if (Number.isFinite(pos) && pos >= 5 && !finished) {
       saveResumeMs(
-        src.meta.id, pos * 1000, season, episode,
-        undefined, undefined, undefined, activeProfile?.id,
+        src.meta.id,
+        pos * 1000,
+        season,
+        episode,
+        undefined,
+        undefined,
+        undefined,
+        activeProfile?.id,
       );
+      if (src.imdbIdVerified && src.imdbId && src.imdbId !== src.meta.id) {
+        saveResumeMs(
+          src.imdbId,
+          pos * 1000,
+          season,
+          episode,
+          undefined,
+          undefined,
+          undefined,
+          activeProfile?.id,
+        );
+      }
       if (liveStreamRef && pos >= REMEMBER_MIN_SEC) {
         const rememberedUrl = (src.historyUrl ?? liveUrl) || src.url;
         const entry = { ...liveStreamRef, url: rememberedUrl, title: src.meta.name };
         savePlayback(src.meta.id, entry, season, episode);
-        if (src.imdbId && src.imdbId !== src.meta.id) {
+        if (src.imdbIdVerified && src.imdbId && src.imdbId !== src.meta.id) {
           savePlayback(src.imdbId, entry, season, episode);
         }
       }

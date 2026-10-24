@@ -1,4 +1,5 @@
-import { readResumeEntry, saveResumeBatch } from "@/lib/resume";
+import { pickPreferredResume, readResumeEntry, saveResumeBatch } from "@/lib/resume";
+import { localCwEntry } from "@/lib/local-cw";
 import { privateCwProfileId } from "@/lib/cw-profile";
 import { episodeFromVideoId, libraryGetOne, type LibraryItem } from "@/lib/stremio";
 
@@ -99,15 +100,39 @@ export async function resolveStartMs({
   openingVid,
 }: ResolveStartArgs): Promise<{ ms: number; fromRemote: boolean; finished: boolean }> {
   const candidateLocalIds = lookupIds({ metaId, authKey, imdbId, imdbVerified });
+  const isEpisode = typeof season === "number" && typeof episode === "number";
   let localEntry: ReturnType<typeof readResumeEntry> = null;
   for (const id of candidateLocalIds) {
     const candidate = readResumeEntry(id, season, episode);
-    if (candidate && (!localEntry || candidate.t > localEntry.t)) {
-      localEntry = candidate;
+    localEntry =
+      typeof pickPreferredResume === "function"
+        ? pickPreferredResume(localEntry, candidate)
+        : candidate && (!localEntry || candidate.t > localEntry.t)
+          ? candidate
+          : localEntry;
+  }
+  let localCwEntryMatch: ReturnType<typeof localCwEntry> = null;
+  for (const id of candidateLocalIds) {
+    const candidate = localCwEntry(id, false) ?? localCwEntry(id, true);
+    if (candidate) {
+      const match = !isEpisode || (candidate.season === season && candidate.episode === episode);
+      if (match && (!localCwEntryMatch || candidate.t > localCwEntryMatch.t)) {
+        localCwEntryMatch = candidate;
+      }
     }
   }
-  const local = localEntry?.ms ?? 0;
-  const isEpisode = typeof season === "number" && typeof episode === "number";
+  const knownDur =
+    localCwEntryMatch?.durationMs && localCwEntryMatch.durationMs > 0
+      ? localCwEntryMatch.durationMs
+      : 0;
+  const resolvedLocalMs =
+    localEntry?.source && knownDur > 0 && localEntry.pct != null
+      ? Math.round(localEntry.pct * knownDur)
+      : (localEntry?.ms ??
+        (localCwEntryMatch?.positionMs && localCwEntryMatch.positionMs > 0
+          ? localCwEntryMatch.positionMs
+          : 0));
+  const local = resolvedLocalMs;
   if (!authKey || privateCwProfileId()) return { ms: local, fromRemote: false, finished: false };
   const matchesEpisode = (item: LibraryItem | null) => {
     if (!item) return false;
