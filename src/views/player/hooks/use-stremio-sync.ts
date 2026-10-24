@@ -151,7 +151,8 @@ export function useStremioSync(params: {
   useEffect(() => {
     if (!loadResetSeenRef.current || snap.status === "loading" || snap.status === "idle") return;
     if (snap.durationSec > 0) progress.latest = latestRef.current;
-    if (snap.positionSec >= MIN_POSITION_SEC) progress.position = snap.positionSec;
+    if (progress.position === 0 && snap.positionSec >= MIN_POSITION_SEC)
+      progress.position = snap.positionSec;
   });
 
   useEffect(() => {

@@ -24,6 +24,7 @@ import { useAuth } from "@/lib/auth";
 import { useSettings } from "@/lib/settings";
 import { useView, type PlayEpisode } from "@/lib/view";
 import { getWatchedBy } from "@/lib/watched-by";
+import { readResumeEntry } from "@/lib/resume";
 import { resolveLocalPlayVersions } from "@/lib/local-library/playback";
 import { localPlayerSrc } from "@/lib/local-library/player-src";
 import { openLocalVersions } from "@/lib/player/local-versions-modal";
@@ -108,10 +109,80 @@ export const ContinueCard = memo(function ContinueCard({
   const isExternal = !!item.external;
   const externalLogo = item.external === "trakt" ? traktLogo : simklLogo;
   const externalLabel = item.external === "trakt" ? t("Paused on Trakt") : t("Paused on Simkl");
-  const dur = item.state?.duration ?? 0;
-  const off = item.state?.timeOffset ?? 0;
+  const kitsuThreeSeg =
+    /^(kitsu|mal|anilist|anidb):/.test(item._id) &&
+    (item.state?.video_id ?? "").split(":").length === 3;
+  const ep =
+    item.state?.season && item.state?.episode
+      ? { season: item.state.season, episode: item.state.episode }
+      : kitsuThreeSeg
+        ? null
+        : episodeFromVideoId(item.state?.video_id);
+  const animeEp = kitsuThreeSeg
+    ? Number((item.state?.video_id ?? "").split(":")[2])
+    : isAnimeCwItem(item) && ep
+      ? ep.episode
+      : null;
+  const rawDur = item.state?.duration ?? 0;
+  const rawOff = item.state?.timeOffset ?? 0;
+  const effectiveResume = useMemo(() => {
+    const rawMtime = item.state?.lastWatched ?? (item as { _mtime?: unknown })._mtime;
+    const remoteMtime =
+      typeof rawMtime === "number" ? rawMtime : Date.parse(String(rawMtime ?? ""));
+    const candidateIds = [item._id];
+    const tmdbMatch = item._id.match(/^tmdb:(?:movie|tv):(\d+)$/);
+    const identity = {
+      tmdbId: tmdbMatch ? Number(tmdbMatch[1]) : undefined,
+      imdbId: item._id.startsWith("tt") ? item._id : undefined,
+    };
+    const local = resolveLocalPlayVersions(
+      { id: item._id, type: libraryMetaType(item.type), name: item.name },
+      ep ?? null,
+      identity.imdbId,
+    );
+    for (const entry of local) {
+      candidateIds.push(`local:${entry.id}`);
+      if (entry.imdbId) candidateIds.push(entry.imdbId);
+      if (entry.tmdbId != null) {
+        candidateIds.push(`tmdb:${entry.type === "show" ? "tv" : "movie"}:${entry.tmdbId}`);
+      }
+    }
+    let bestLocal: ReturnType<typeof readResumeEntry> = null;
+    for (const id of candidateIds) {
+      const e = readResumeEntry(id, ep?.season, ep?.episode);
+      if (e && (!bestLocal || e.t > bestLocal.t)) {
+        bestLocal = e;
+      }
+    }
+    if (!bestLocal) return null;
+    if (!Number.isFinite(remoteMtime) || bestLocal.t > remoteMtime) {
+      return bestLocal;
+    }
+    return null;
+  }, [
+    item._id,
+    item.name,
+    item.type,
+    item.state?.lastWatched,
+    (item as { _mtime?: unknown })._mtime,
+    ep?.season,
+    ep?.episode,
+  ]);
+  const dur =
+    rawDur > 0
+      ? rawDur
+      : effectiveResume?.pct && effectiveResume.pct > 0 && effectiveResume.ms > 0
+        ? Math.round(effectiveResume.ms / effectiveResume.pct)
+        : 0;
+  const off = effectiveResume
+    ? (effectiveResume.ms > 0
+        ? effectiveResume.ms
+        : effectiveResume.pct != null && dur > 0
+          ? Math.floor(effectiveResume.pct * dur)
+          : 0)
+    : rawOff;
   const progress = dur > 0 ? Math.min(1, off / dur) : 0;
-  const remaining = dur > 0 && !isExternal ? formatRemaining(t, dur - off) : "";
+  const remaining = dur > 0 && !isExternal ? formatRemaining(t, Math.max(0, dur - off)) : "";
   const upNext = item.upNext === true;
   const waitingForAir = (item as Record<string, unknown>).waitingForAir === true;
   const nextAirDate = waitingForAir
@@ -136,20 +207,6 @@ export const ContinueCard = memo(function ContinueCard({
       return t("Next in {hours}h {minutes}m", { hours: String(hours), minutes: String(minutes) });
     return t("Next in {minutes}m", { minutes: String(Math.max(1, minutes)) });
   }, [nextAirDate, now, t]);
-  const kitsuThreeSeg =
-    /^(kitsu|mal|anilist|anidb):/.test(item._id) &&
-    (item.state?.video_id ?? "").split(":").length === 3;
-  const ep =
-    item.state?.season && item.state?.episode
-      ? { season: item.state.season, episode: item.state.episode }
-      : kitsuThreeSeg
-        ? null
-        : episodeFromVideoId(item.state?.video_id);
-  const animeEp = kitsuThreeSeg
-    ? Number((item.state?.video_id ?? "").split(":")[2])
-    : isAnimeCwItem(item) && ep
-      ? ep.episode
-      : null;
   const [logo, setLogo] = useState<string | undefined>();
   const [metaBg, setMetaBg] = useState<string | undefined>();
   const [hydratedMeta, setHydratedMeta] = useState<Meta | null>(null);

@@ -98,7 +98,14 @@ export async function resolveStartMs({
   imdbVerified,
   openingVid,
 }: ResolveStartArgs): Promise<{ ms: number; fromRemote: boolean; finished: boolean }> {
-  const localEntry = readResumeEntry(metaId, season, episode);
+  const candidateLocalIds = lookupIds({ metaId, authKey, imdbId, imdbVerified });
+  let localEntry: ReturnType<typeof readResumeEntry> = null;
+  for (const id of candidateLocalIds) {
+    const candidate = readResumeEntry(id, season, episode);
+    if (candidate && (!localEntry || candidate.t > localEntry.t)) {
+      localEntry = candidate;
+    }
+  }
   const local = localEntry?.ms ?? 0;
   const isEpisode = typeof season === "number" && typeof episode === "number";
   if (!authKey || privateCwProfileId()) return { ms: local, fromRemote: false, finished: false };

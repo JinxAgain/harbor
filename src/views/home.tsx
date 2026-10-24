@@ -622,6 +622,13 @@ export function Home({
     const cwBase = hideSharedCw
       ? []
       : [...items.filter((i) => !ANIME_CLOUD_ID.test(i._id)), ...externalCw];
+    const lastWatchedOf = (i: LibraryItem) => {
+      const lw = Date.parse(i.state?.lastWatched ?? "");
+      if (Number.isFinite(lw) && lw > 0) return lw;
+      const m = i._mtime as unknown;
+      const mt = typeof m === "number" ? m : Date.parse(String(m ?? ""));
+      return Number.isFinite(mt) ? mt : 0;
+    };
     const eligible = [...cwBase, ...localCwItems]
       .filter(
         (i) =>
@@ -632,20 +639,31 @@ export function Home({
           !((settings.animeOnlyInAnimeRoom || settings.hideContent.anime) && isAnimeCwItem(i)),
       )
       .map((i) => ({ i, k: cwSortKey(i) }))
-      .sort((a, b) => b.k - a.k)
+      .sort(
+        (a, b) =>
+          b.k - a.k ||
+          lastWatchedOf(b.i) - lastWatchedOf(a.i) ||
+          (b.i.local ? 1 : 0) - (a.i.local ? 1 : 0),
+      )
       .map((e) => e.i);
     const norm = (s: string) => franchiseDedupKey(s);
-    const lastWatchedOf = (i: LibraryItem) => {
-      const lw = Date.parse(i.state?.lastWatched ?? "");
-      if (Number.isFinite(lw) && lw > 0) return lw;
-      const m = i._mtime as unknown;
-      const mt = typeof m === "number" ? m : Date.parse(String(m ?? ""));
-      return Number.isFinite(mt) ? mt : 0;
-    };
     const byId = new Map<string, LibraryItem>();
     const byName = new Map<string, LibraryItem>();
     for (const i of eligible) {
-      if (byId.has(i._id)) continue;
+      const existing = byId.get(i._id);
+      if (existing) {
+        if (
+          lastWatchedOf(i) > lastWatchedOf(existing) ||
+          (i.local && !existing.local && lastWatchedOf(i) >= lastWatchedOf(existing))
+        ) {
+          const oldNm = norm(existing.name ?? "");
+          if (oldNm) byName.delete(`${existing.type}:${oldNm}`);
+          byId.set(i._id, i);
+          const nm = norm(i.name ?? "");
+          if (nm) byName.set(`${i.type}:${nm}`, i);
+        }
+        continue;
+      }
       const nm = norm(i.name ?? "");
       const key = `${i.type}:${nm}`;
       if (nm) {
@@ -661,7 +679,6 @@ export function Home({
         byName.set(key, i);
       }
       byId.set(i._id, i);
-      if (byId.size >= 100) break;
     }
     const seenRoot = new Set<string>();
     for (const i of [...byId.values()].sort((a, b) => lastWatchedOf(b) - lastWatchedOf(a))) {
@@ -669,7 +686,7 @@ export function Home({
       if (root && seenRoot.has(root)) byId.delete(i._id);
       if (root) seenRoot.add(root);
     }
-    return [...byId.values()].sort((a, b) => cwSortKey(b) - cwSortKey(a));
+    return [...byId.values()].sort((a, b) => cwSortKey(b) - cwSortKey(a)).slice(0, 100);
   }, [
     items,
     externalCw,

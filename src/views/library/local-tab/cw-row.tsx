@@ -4,6 +4,7 @@ import { Row } from "@/components/row";
 import { useT } from "@/lib/i18n";
 import { useView } from "@/lib/view";
 import { clearLocalCw } from "@/lib/local-cw";
+import { readResumeEntry } from "@/lib/resume";
 import type { LibraryItem } from "@/lib/stremio";
 import type { LocalEntry } from "@/lib/local-library";
 import { localPlayerSrc } from "@/lib/local-library/player-src";
@@ -27,9 +28,41 @@ export function LocalCwRow() {
           ? findLocalEpisodeVersions(entry.season, entry.episode, entry.tmdbId, entry.imdbId)
           : findLocalMovieVersions(entry.tmdbId, entry.imdbId);
       const start = (target: LocalEntry) => {
-        const src = localPlayerSrc(target);
-        // Keep the CW id so playback resumes and updates the same entry.
-        openPlayer({ ...src, meta: { ...src.meta, id: item._id } });
+        const src = localPlayerSrc(target, target.isAnime === true);
+        // Only fall back to item._id if src.meta.id is not canonical or is missing.
+        // Never downgrade canonical tmdb/imdb src.meta.id back to legacy local:<hash>.
+        const id =
+          src.meta.id && !src.meta.id.startsWith("local:")
+            ? src.meta.id
+            : item._id;
+        const candidateIds = [item._id, src.meta.id, `local:${target.id}`];
+        if (target.imdbId) candidateIds.push(target.imdbId);
+        if (target.tmdbId != null) {
+          candidateIds.push(`tmdb:${target.type === "show" ? "tv" : "movie"}:${target.tmdbId}`);
+        }
+        let bestLocal: ReturnType<typeof readResumeEntry> = null;
+        for (const cid of candidateIds) {
+          const e = readResumeEntry(cid, target.season ?? undefined, target.episode ?? undefined);
+          if (e && (!bestLocal || e.t > bestLocal.t)) {
+            bestLocal = e;
+          }
+        }
+        const rawOff = item.state?.timeOffset ?? 0;
+        const rawMtime = item.state?.lastWatched ?? (item as { _mtime?: unknown })._mtime;
+        const remoteMtime =
+          typeof rawMtime === "number" ? rawMtime : Date.parse(String(rawMtime ?? ""));
+        const off =
+          bestLocal && (!Number.isFinite(remoteMtime) || bestLocal.t > remoteMtime) && bestLocal.ms > 0
+            ? bestLocal.ms
+            : rawOff > 0
+              ? rawOff
+              : undefined;
+        openPlayer({
+          ...src,
+          resume: true,
+          startPositionMs: off,
+          meta: { ...src.meta, id },
+        });
       };
       if (versions.length > 1) {
         openLocalVersions({

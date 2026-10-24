@@ -137,6 +137,13 @@ export function useMobileCw(limit = 14): LibraryItem[] {
     const base = hideSharedCw
       ? []
       : [...items.filter((i) => !ANIME_CLOUD_ID.test(i._id)), ...externalCw];
+    const lastWatchedOf = (i: LibraryItem) => {
+      const lw = Date.parse(i.state?.lastWatched ?? "");
+      if (Number.isFinite(lw) && lw > 0) return lw;
+      const m = i._mtime as unknown;
+      const mt = typeof m === "number" ? m : Date.parse(String(m ?? ""));
+      return Number.isFinite(mt) ? mt : 0;
+    };
     const merged = [...base, ...listLocalCw(hideSharedCw).map(localToLibraryItem)]
       .filter(
         (i) =>
@@ -147,17 +154,28 @@ export function useMobileCw(limit = 14): LibraryItem[] {
           !(hideAnime && isAnimeCwItem(i)),
       )
       .map((i) => ({ i, k: cwSortKey(i) }))
-      .sort((a, b) => b.k - a.k)
+      .sort(
+        (a, b) =>
+          b.k - a.k ||
+          lastWatchedOf(b.i) - lastWatchedOf(a.i) ||
+          (b.i.local ? 1 : 0) - (a.i.local ? 1 : 0),
+      )
       .map((e) => e.i);
-    const seen = new Set<string>();
-    const out: LibraryItem[] = [];
+    const byId = new Map<string, LibraryItem>();
     for (const i of merged) {
-      if (seen.has(i._id)) continue;
-      seen.add(i._id);
-      out.push(i);
-      if (out.length >= limit) break;
+      const existing = byId.get(i._id);
+      if (existing) {
+        if (
+          lastWatchedOf(i) > lastWatchedOf(existing) ||
+          (i.local && !existing.local && lastWatchedOf(i) >= lastWatchedOf(existing))
+        ) {
+          byId.set(i._id, i);
+        }
+        continue;
+      }
+      byId.set(i._id, i);
     }
-    return out;
+    return [...byId.values()].slice(0, limit);
   }, [items, externalCw, localVersion, dismissVersion, limit, hideAnime, hideSharedCw, activeProfile?.id]);
 }
 

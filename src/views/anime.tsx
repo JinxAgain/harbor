@@ -445,22 +445,35 @@ export function AnimeView({ active = true }: { active?: boolean }) {
       }));
   }, [localCwVer, hideSharedCw, activeProfile?.id]);
   const continueWatching = useMemo(() => {
-    const seen = new Set<string>();
+    const lastWatchedOf = (i: LibraryItem) => {
+      const lw = Date.parse(i.state?.lastWatched ?? "");
+      if (Number.isFinite(lw) && lw > 0) return lw;
+      const m = i._mtime as unknown;
+      const mt = typeof m === "number" ? m : Date.parse(String(m ?? ""));
+      return Number.isFinite(mt) ? mt : 0;
+    };
     const seenRoot = new Set<string>();
-    return [
+    const byId = new Map<string, LibraryItem>();
+    for (const i of [
       ...localAnimeCw,
-      ...(hideSharedCw ? [] : libItems.filter((i) => !ANIME_CLOUD_ID.test(i._id))),
+      ...(hideSharedCw ? [] : libItems.filter((it) => !ANIME_CLOUD_ID.test(it._id))),
       ...(hideSharedCw ? [] : simklCw),
-      ...(hideSharedCw ? [] : trackerCw.filter((i) => i.external === "trakt")),
-    ]
-      .filter((i) => {
-        if (!isCwMember(i)) return false;
-        if (!i.local && !isAnimeCwItem(i)) return false;
-        if (isCwDismissed(i)) return false;
-        if (seen.has(i._id)) return false;
-        seen.add(i._id);
-        return true;
-      })
+      ...(hideSharedCw ? [] : trackerCw.filter((it) => it.external === "trakt")),
+    ]) {
+      if (!isCwMember(i) || (!i.local && !isAnimeCwItem(i)) || isCwDismissed(i)) continue;
+      const existing = byId.get(i._id);
+      if (existing) {
+        if (
+          lastWatchedOf(i) > lastWatchedOf(existing) ||
+          (i.local && !existing.local && lastWatchedOf(i) >= lastWatchedOf(existing))
+        ) {
+          byId.set(i._id, i);
+        }
+        continue;
+      }
+      byId.set(i._id, i);
+    }
+    return [...byId.values()]
       .sort((a, b) => cwSortKey(b) - cwSortKey(a))
       .filter((i) => {
         const root = franchiseRootSync(i._id);

@@ -188,13 +188,30 @@ export function useContinueWatching(excludeId?: string, limit = 12): CwCard[] {
         return true;
       })
       .map((i) => ({ i, k: cwSortKey(i) }))
-      .sort((a, b) => b.k - a.k)
+      .sort(
+        (a, b) =>
+          b.k - a.k ||
+          watchedAt(b.i) - watchedAt(a.i) ||
+          (b.i.local ? 1 : 0) - (a.i.local ? 1 : 0),
+      )
       .map((e) => e.i);
-    const seen = new Set<string>();
-    const out: CwCard[] = [];
+    const byId = new Map<string, LibraryItem>();
     for (const i of merged) {
-      if (i._id === excludeId || seen.has(i._id)) continue;
-      seen.add(i._id);
+      if (i._id === excludeId) continue;
+      const existing = byId.get(i._id);
+      if (existing) {
+        if (
+          watchedAt(i) > watchedAt(existing) ||
+          (i.local && !existing.local && watchedAt(i) >= watchedAt(existing))
+        ) {
+          byId.set(i._id, i);
+        }
+        continue;
+      }
+      byId.set(i._id, i);
+    }
+    const out: CwCard[] = [];
+    for (const i of byId.values()) {
       out.push(toCard(i));
       if (out.length >= limit) break;
     }

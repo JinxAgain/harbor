@@ -50,15 +50,20 @@ export function localPlayerSrc(
           episodeEnd: entry.episodeEnd ?? inferred?.episodeEnd ?? entry.episode,
         }
       : undefined;
+  const metaId =
+    (entry.tmdbId != null
+      ? `tmdb:${entry.type === "show" ? "tv" : "movie"}:${entry.tmdbId}`
+      : entry.imdbId) ?? `local:${entry.id}`;
   return {
     meta: {
-      id: entry.imdbId ?? `local:${entry.id}`,
+      id: metaId,
       type: entry.type === "show" ? "series" : "movie",
       name: entry.title,
       poster: entry.poster ?? undefined,
       releaseInfo: entry.year ? String(entry.year) : undefined,
     },
     imdbId: entry.imdbId ?? undefined,
+    imdbIdVerified: Boolean(entry.imdbId),
     episode: epLabel
       ? {
           season: selectedEpisode?.season ?? (entry.season as number),
