@@ -1,13 +1,16 @@
-import { useCallback } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { ContinueCard } from "@/components/continue-card";
 import { Row } from "@/components/row";
 import { useT } from "@/lib/i18n";
 import { useView } from "@/lib/view";
-import { clearLocalCw, localCwEntry } from "@/lib/local-cw";
+import { useAuth } from "@/lib/auth";
+import { dismissCw } from "@/lib/cw-dismiss";
+import { clearLocalCw, localCwEntry, localCwVersion, subscribeLocalCw, type LocalCwEntry } from "@/lib/local-cw";
 import { pickPreferredResume, readResumeEntry, useResumeVersion } from "@/lib/resume";
-import type { LibraryItem } from "@/lib/stremio";
+import { episodeFromVideoId, libraryMetaType, type LibraryItem } from "@/lib/stremio";
 import type { LocalEntry } from "@/lib/local-library";
 import { localPlayerSrc } from "@/lib/local-library/player-src";
+import { resolveLocalPlayVersions } from "@/lib/local-library/playback";
 import { findLocalMovieVersions, findLocalEpisodeVersions } from "@/lib/local-library/versions";
 import { openLocalVersions } from "@/lib/player/local-versions-modal";
 import { useLocalContinueWatching } from "@/lib/local-library/use-local-cw";
@@ -21,6 +24,7 @@ export function LocalCwRow() {
   const { openPlayer } = useView();
   const cards = useLocalContinueWatching();
   useResumeVersion();
+  useSyncExternalStore(subscribeLocalCw, localCwVersion, () => 0);
 
   const play = useCallback(
     (entry: LocalEntry, item: LibraryItem) => {
@@ -51,13 +55,19 @@ export function LocalCwRow() {
         const rawMtime = item.state?.lastWatched ?? (item as { _mtime?: unknown })._mtime;
         const remoteMtime =
           typeof rawMtime === "number" ? rawMtime : Date.parse(String(rawMtime ?? ""));
-        let localDur = rawDur > 0 && !item.external ? rawDur : 0;
+        let bestLcw: LocalCwEntry | null = null;
         for (const cid of candidateIds) {
           const lcw = localCwEntry(cid, false) ?? localCwEntry(cid, true);
-          if (lcw && lcw.durationMs > 0 && localDur === 0) {
+          if (lcw && lcw.durationMs > 0) {
             const matchesEp = target.type !== "show" || (lcw.season === target.season && lcw.episode === target.episode);
-            if (matchesEp) localDur = lcw.durationMs;
+            if (matchesEp && (!bestLcw || lcw.t > bestLcw.t)) {
+              bestLcw = lcw;
+            }
           }
+        }
+        let localDur = rawDur > 0 && !item.external ? rawDur : (bestLcw?.durationMs ?? 0);
+        if (bestLcw && bestLcw.positionMs > 0 && (!bestLocal || bestLcw.t > bestLocal.t)) {
+          bestLocal = { ms: bestLcw.positionMs, t: bestLcw.t };
         }
         const isFirstParty = Boolean(bestLocal && !bestLocal.source);
         const beatsRemote = !Number.isFinite(remoteMtime)
@@ -66,7 +76,9 @@ export function LocalCwRow() {
             ? (bestLocal?.t ?? 0) + 60_000 >= remoteMtime
             : !item.external && !isFirstParty
               ? (bestLocal?.t ?? 0) > remoteMtime + 60_000
-              : (bestLocal?.t ?? 0) > remoteMtime;
+              : isFirstParty
+                ? (bestLocal?.t ?? 0) + 5_000 >= remoteMtime
+                : (bestLocal?.t ?? 0) > remoteMtime;
         const effectiveResume = bestLocal && beatsRemote ? bestLocal : null;
         const off =
           effectiveResume
@@ -103,7 +115,36 @@ export function LocalCwRow() {
     [openPlayer],
   );
 
-  const onDismiss = useCallback((item: LibraryItem) => clearLocalCw(item._id), []);
+  const { authKey } = useAuth();
+  const onDismiss = useCallback(
+    (item: LibraryItem) => {
+      clearLocalCw(item._id);
+      dismissCw(item, authKey);
+      const candidateIds = new Set<string>([item._id]);
+      const ep =
+        item.state?.season && item.state?.episode
+          ? { season: item.state.season, episode: item.state.episode }
+          : episodeFromVideoId(item.state?.video_id);
+      const imdbId = item._id.startsWith("tt") ? item._id : undefined;
+      const local = resolveLocalPlayVersions(
+        { id: item._id, type: libraryMetaType(item.type), name: item.name },
+        ep ?? null,
+        imdbId,
+      );
+      for (const entry of local) {
+        candidateIds.add(`local:${entry.id}`);
+        if (entry.imdbId) candidateIds.add(entry.imdbId);
+        if (entry.tmdbId != null) {
+          candidateIds.add(`tmdb:${entry.type === "show" ? "tv" : "movie"}:${entry.tmdbId}`);
+        }
+      }
+      for (const cid of candidateIds) clearLocalCw(cid);
+      for (const cid of candidateIds) {
+        if (cid !== item._id) dismissCw({ ...item, _id: cid }, authKey);
+      }
+    },
+    [authKey],
+  );
 
   if (cards.length === 0) return null;
 

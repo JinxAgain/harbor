@@ -227,6 +227,7 @@ test("external backfills preserve dismissals and save true remote progress only 
         ],
       },
       "@/lib/cw-dismiss": { isCwDismissed: () => dismissed },
+      "@/lib/local-cw": { localCwEntry: () => undefined },
       "@/lib/resume": {
         readResumeEntry: () => existing,
         saveResumeMs: (...args: unknown[]) => writes.push(args),
@@ -253,7 +254,7 @@ test("external backfills preserve dismissals and save true remote progress only 
     existing = { ms: 1000, t: remoteTime + 1000 };
     await fetchItems();
     assert.equal(writes.length, 0, `${provider}: preserve newer local progress`);
-    existing = { ms: 1000, t: remoteTime - 1000 };
+    existing = { ms: 1000, t: remoteTime - 70000 };
     await fetchItems();
     assert.equal(writes.length, 1);
     assert.equal(writes[0][5], 0.45);

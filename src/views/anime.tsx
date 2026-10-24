@@ -94,12 +94,15 @@ import {
   ANIME_CLOUD_ID,
   cwMemberViaResume,
   cwSortKey,
+  episodeFromVideoId,
   isAnimeCwItem,
   isCwMember,
   library,
+  libraryMetaType,
   resumeSourceForItem,
   type LibraryItem,
 } from "@/lib/stremio";
+import { resolveLocalPlayVersions } from "@/lib/local-library/playback";
 import {
   clearLocalCw,
   listLocalCw,
@@ -1037,6 +1040,28 @@ export function AnimeView({ active = true }: { active?: boolean }) {
                           }
                           if (it.local) clearLocalCw(it._id);
                           dismissCw(it, authKey);
+                          const candidateIds = new Set<string>([it._id]);
+                          const ep =
+                            it.state?.season && it.state?.episode
+                              ? { season: it.state.season, episode: it.state.episode }
+                              : episodeFromVideoId(it.state?.video_id);
+                          const imdbId = it._id.startsWith("tt") ? it._id : undefined;
+                          const local = resolveLocalPlayVersions(
+                            { id: it._id, type: libraryMetaType(it.type), name: it.name },
+                            ep ?? null,
+                            imdbId,
+                          );
+                          for (const entry of local) {
+                            candidateIds.add(`local:${entry.id}`);
+                            if (entry.imdbId) candidateIds.add(entry.imdbId);
+                            if (entry.tmdbId != null) {
+                              candidateIds.add(`tmdb:${entry.type === "show" ? "tv" : "movie"}:${entry.tmdbId}`);
+                            }
+                          }
+                          for (const cid of candidateIds) clearLocalCw(cid);
+                          for (const cid of candidateIds) {
+                            if (cid !== it._id) dismissCw({ ...it, _id: cid }, authKey);
+                          }
                         }}
                       />
                     ))}

@@ -126,12 +126,16 @@ export async function resolveStartMs({
       ? localCwEntryMatch.durationMs
       : 0;
   const resolvedLocalMs =
-    localEntry?.source && knownDur > 0 && localEntry.pct != null
-      ? Math.round(localEntry.pct * knownDur)
-      : (localEntry?.ms ??
-        (localCwEntryMatch?.positionMs && localCwEntryMatch.positionMs > 0
-          ? localCwEntryMatch.positionMs
-          : 0));
+    localCwEntryMatch &&
+    localCwEntryMatch.positionMs > 0 &&
+    localCwEntryMatch.t > (localEntry?.t ?? 0)
+      ? localCwEntryMatch.positionMs
+      : localEntry?.source && knownDur > 0 && localEntry.pct != null
+        ? Math.round(localEntry.pct * knownDur)
+        : (localEntry?.ms ??
+          (localCwEntryMatch?.positionMs && localCwEntryMatch.positionMs > 0
+            ? localCwEntryMatch.positionMs
+            : 0));
   const local = resolvedLocalMs;
   const localFinished =
     isEpisode &&
@@ -170,9 +174,15 @@ export async function resolveStartMs({
     const rawMtime = remote.state?.lastWatched ?? (remote as { _mtime?: unknown })._mtime;
     const remoteMtime =
       typeof rawMtime === "number" ? rawMtime : Date.parse(String(rawMtime ?? ""));
-    const useRemote =
-      !localEntry ||
-      (Number.isFinite(remoteMtime) ? remoteMtime > localEntry.t : remoteMs >= effectiveLocal);
+    const localTimestamp = Math.max(localEntry?.t ?? 0, localCwEntryMatch?.t ?? 0);
+    const hasLocal = Boolean(localEntry || localCwEntryMatch);
+    const isFirstParty = !localEntry?.source;
+    const remoteBeats = Number.isFinite(remoteMtime)
+      ? isFirstParty
+        ? remoteMtime >= localTimestamp + 5_000
+        : remoteMtime > localTimestamp
+      : remoteMs >= effectiveLocal;
+    const useRemote = !hasLocal || remoteBeats;
     if (useRemote) {
       saveResumeBatch([
         {
