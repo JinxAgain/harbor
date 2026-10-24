@@ -261,6 +261,14 @@ export function dismissCw(item: LibraryItem, authKey: string | null): void {
     clearResume(id, season, episode);
     persistDismissed();
     emit();
+    if (authKey && item.state && !privateCwProfileId()) {
+      void cloudLibraryPut(authKey, {
+        ...item,
+        external: undefined,
+        state: { ...item.state, timeOffset: 0 },
+        _mtime: now,
+      });
+    }
     return;
   }
   persistDismissed();

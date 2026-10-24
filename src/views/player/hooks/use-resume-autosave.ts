@@ -271,6 +271,9 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
     if (s.meta.type === "movie" && finished) {
       setMovieWatchedLocal(id, true);
       clearLocalCw(id, current.ownerId);
+      if (rv && rid && rid !== id) {
+        clearLocalCw(rid, current.ownerId);
+      }
     }
     if (finished) {
       recordWatchEvent({

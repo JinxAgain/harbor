@@ -63,6 +63,7 @@ import { isCorruptAnimeEntry } from "@/lib/anime-cw-repair";
 import { absorbCloudAnimeCw } from "@/lib/anime-cw-absorb";
 import { franchiseRoot, franchiseRootSync } from "@/lib/providers/anime-franchise-root";
 import { franchiseDedupKey } from "@/lib/providers/jikan";
+import { resolveLocalPlayVersions } from "@/lib/local-library/playback";
 import {
   ANIME_CLOUD_ID,
   cwMemberViaResume,
@@ -71,6 +72,7 @@ import {
   isAnimeCwItem,
   isCwMember,
   libraryIfChanged,
+  libraryMetaType,
   resumeSourceForItem,
   type LibraryItem,
 } from "@/lib/stremio";
@@ -788,6 +790,13 @@ export function Home({
     publishResumeStates(cwItems);
   }, [cwItems]);
 
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const externalCwRef = useRef(externalCw);
+  externalCwRef.current = externalCw;
+  const localCwItemsRef = useRef(localCwItems);
+  localCwItemsRef.current = localCwItems;
+
   const onDismissCw = useCallback(
     (item: LibraryItem) => {
       if (item.manualWatched) {
@@ -797,9 +806,87 @@ export function Home({
       if (item.local) {
         clearLocalCw(item._id);
         dismissCw(item, authKey);
-        return;
       }
-      dismissCw(item, authKey);
+      const candidateIds = new Set<string>([item._id]);
+      const ep =
+        item.state?.season && item.state?.episode
+          ? { season: item.state.season, episode: item.state.episode }
+          : episodeFromVideoId(item.state?.video_id);
+      const imdbId = item._id.startsWith("tt") ? item._id : undefined;
+      const local = resolveLocalPlayVersions(
+        { id: item._id, type: libraryMetaType(item.type), name: item.name },
+        ep ?? null,
+        imdbId,
+      );
+      for (const entry of local) {
+        candidateIds.add(`local:${entry.id}`);
+        if (entry.imdbId) candidateIds.add(entry.imdbId);
+        if (entry.tmdbId != null) {
+          candidateIds.add(`tmdb:${entry.type === "show" ? "tv" : "movie"}:${entry.tmdbId}`);
+        }
+      }
+      const dedupKey = item.name ? `${item.type}:${franchiseDedupKey(item.name)}` : null;
+      const pool = [...itemsRef.current, ...externalCwRef.current, ...localCwItemsRef.current];
+      const matchingSiblings: LibraryItem[] = [];
+      for (const s of pool) {
+        if (s === item) continue;
+        const sKey = s.name ? `${s.type}:${franchiseDedupKey(s.name)}` : null;
+        if (candidateIds.has(s._id) || (dedupKey && sKey && dedupKey === sKey)) {
+          matchingSiblings.push(s);
+          candidateIds.add(s._id);
+          const sImdb = s._id.startsWith("tt") ? s._id : undefined;
+          const sLocal = resolveLocalPlayVersions(
+            { id: s._id, type: libraryMetaType(s.type), name: s.name },
+            ep ?? null,
+            sImdb,
+          );
+          for (const entry of sLocal) {
+            candidateIds.add(`local:${entry.id}`);
+            if (entry.imdbId) candidateIds.add(entry.imdbId);
+            if (entry.tmdbId != null) {
+              candidateIds.add(`tmdb:${entry.type === "show" ? "tv" : "movie"}:${entry.tmdbId}`);
+            }
+          }
+        }
+      }
+      for (const cid of candidateIds) {
+        clearLocalCw(cid);
+      }
+      const ratioOf = (it: LibraryItem): number => {
+        const off = it.state?.timeOffset ?? 0;
+        const dur = it.state?.duration ?? 0;
+        return dur > 0 ? Math.min(1, Math.max(0, off / dur)) : 0;
+      };
+      let maxRatio = ratioOf(item);
+      for (const s of matchingSiblings) {
+        const r = ratioOf(s);
+        if (r > maxRatio) maxRatio = r;
+      }
+      for (const s of matchingSiblings) {
+        dismissCw(s, authKey);
+      }
+      const dur = item.state?.duration && item.state.duration > 0 ? item.state.duration : 6_300_000;
+      const syntheticItem: LibraryItem = {
+        ...item,
+        state: {
+          ...(item.state ?? {}),
+          timeOffset: Math.round(maxRatio * dur),
+          duration: dur,
+        },
+      };
+      dismissCw(syntheticItem, authKey);
+      for (const cid of candidateIds) {
+        if (cid !== item._id) {
+          dismissCw({ ...syntheticItem, _id: cid }, authKey);
+        }
+      }
+      setItems((prev) =>
+        prev.map((i) =>
+          candidateIds.has(i._id) && i.state
+            ? { ...i, state: { ...i.state, timeOffset: 0 }, _mtime: new Date().toISOString() }
+            : i,
+        ),
+      );
     },
     [authKey],
   );

@@ -58,6 +58,14 @@ const showsSource = readFileSync(
   new URL("../src/views/shows.tsx", import.meta.url),
   "utf8",
 );
+const playerExitSource = readFileSync(
+  new URL("../src/views/player/hooks/use-player-exit.ts", import.meta.url),
+  "utf8",
+);
+const cwDismissSource = readFileSync(
+  new URL("../src/lib/cw-dismiss.ts", import.meta.url),
+  "utf8",
+);
 
 test("localPlayerSrc and localEntryToMeta prioritize imdbId and fall back to tmdbId", () => {
   const itemWithBoth = {
@@ -344,4 +352,107 @@ test("regression: shows and anime CW completeness with source gates", () => {
   // Anime uses useExternalCw and gates
   assert.match(animeCwSource, /useExternalCw\(/);
   assert.match(animeCwSource, /settings\.cwSources\.simkl/);
+});
+
+test("regression: ContinueCard recency subscription, memo deps and candidate pick", () => {
+  assert.match(
+    continueCardSource,
+    /localCwVersion,\s*subscribeLocalCw/,
+    "ContinueCard must import localCwVersion and subscribeLocalCw",
+  );
+  assert.match(
+    continueCardSource,
+    /useSyncExternalStore\(\s*subscribeLocalCw,\s*localCwVersion/,
+    "ContinueCard must subscribe to localCw store",
+  );
+  assert.match(
+    continueCardSource,
+    /useMemo\(\(\) => \{[\s\S]*?\}, \[[^\]]*localCwVer[^\]]*\]\)/,
+    "localCwMatch must include localCwVer in useMemo dependencies",
+  );
+  assert.match(
+    continueCardSource,
+    /useMemo\(\(\) => \{[\s\S]*?\}, \[[^\]]*resumeVer[^\]]*\]\)/,
+    "localCwMatch must include resumeVer in useMemo dependencies",
+  );
+  assert.match(
+    continueCardSource,
+    /(!best\s*\|\|\s*e\.t\s*>\s*best\.t)/,
+    "localCwMatch must pick candidate with highest e.t",
+  );
+  assert.match(
+    continueCardSource,
+    /bestLocal\.t\s*\+\s*5_?000\s*>=\s*remoteMtime/,
+    "effectiveResume must allow 5s leeway for first-party same-session writes",
+  );
+  assert.match(
+    continueCardSource,
+    /localCwMatch\.t\s*>=\s*remoteMtime/,
+    "off must require localCwMatch.t >= remoteMtime before preferring stale localCwMatch.positionMs over rawOff",
+  );
+  assert.match(
+    continueCardSource,
+    /name:\s*meta\.name\s*\|\|\s*source\.meta\.name/,
+    "playLocal must preserve hydrated meta.name over raw filename",
+  );
+});
+
+test("regression: LocalCwRow 5s write window and newest lcw entry across candidate IDs", () => {
+  assert.match(
+    cwRowSource,
+    /\(bestLocal\?\.t\s*\?\?\s*0\)\s*\+\s*5_?000\s*>=\s*remoteMtime/,
+    "LocalCwRow must use 5s leeway for first-party comparisons",
+  );
+  assert.match(
+    cwRowSource,
+    /(!bestLcw\s*\|\|\s*lcw\.t\s*>\s*bestLcw\.t)/,
+    "LocalCwRow must find the newest lcw entry across candidate IDs",
+  );
+});
+
+test("regression: resume-start recency precedence and 5s leeway for first-party entries", () => {
+  assert.match(
+    resumeStartSource,
+    /localCwEntryMatch(?:\.t\s*>\s*\(localEntry\?\.t\s*\?\?\s*0\)|\s*&&\s*localCwEntryMatch\.t\s*>\s*\(localEntry\?\.t\s*\?\?\s*0\))/,
+    "resolveStartMs must compare localCwEntryMatch.t against localEntry.t",
+  );
+  assert.match(
+    resumeStartSource,
+    /localTimestamp\s*\+\s*5_?000/,
+    "resolveStartMs must require remoteMtime to exceed localTimestamp + 5_000 for first-party entries",
+  );
+});
+
+test("regression: usePlayerExit saves resume before exit snapshot and includes duration and imdbId in deps", () => {
+  const saveIdx = playerExitSource.indexOf("saveResumeMs(");
+  const snapIdx = playerExitSource.indexOf("await captureExitSnapshot()");
+  assert.ok(saveIdx > 0 && snapIdx > 0, "saveResumeMs and captureExitSnapshot must exist");
+  assert.ok(saveIdx < snapIdx, "saveResumeMs must be called before captureExitSnapshot");
+  assert.match(playerExitSource, /snap\?\.durationSec/, "closePlayer must depend on snap?.durationSec");
+  assert.match(playerExitSource, /src\.imdbId\b/, "closePlayer must depend on src.imdbId");
+  assert.match(playerExitSource, /src\.imdbIdVerified\b/, "closePlayer must depend on src.imdbIdVerified");
+});
+
+test("regression: useResumeAutosave clears localCw for both id and rid when movie completes", () => {
+  assert.match(
+    autosaveSource,
+    /if\s*\(\s*s\.meta\.type\s*===\s*"movie"\s*&&\s*finished\s*\)\s*\{[\s\S]*?clearLocalCw\(id,\s*current\.ownerId\);[\s\S]*?if\s*\(\s*rv\s*&&\s*rid\s*&&\s*rid\s*!==\s*id\s*\)\s*\{?\s*clearLocalCw\(rid,\s*current\.ownerId\);/,
+    "movie finish must clear localCw for both id and rid",
+  );
+});
+
+test("regression: cw-dismiss syncs cloudLibraryPut on external dismissal when authKey is provided", () => {
+  assert.match(
+    cwDismissSource,
+    /if\s*\(\s*item\.external\s*\)\s*\{[\s\S]*?cloudLibraryPut\(authKey,\s*\{[\s\S]*?timeOffset:\s*0/,
+    "dismissCw on external item must cloudLibraryPut zeroed timeOffset when authKey is present",
+  );
+});
+
+test("regression: Home onDismissCw clears localCw for candidate IDs, dismisses matching siblings with max ratio, and updates items state", () => {
+  assert.match(
+    homeSource,
+    /setItems\(\(prev\)\s*=>\s*prev\.map\(/,
+    "Home onDismissCw must immediately zero timeOffset in in-memory items state",
+  );
 });

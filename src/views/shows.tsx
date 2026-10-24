@@ -21,12 +21,15 @@ import {
   ANIME_CLOUD_ID,
   cwMemberViaResume,
   cwSortKey,
+  episodeFromVideoId,
   isAnimeCwItem,
   isCwMember,
   library,
+  libraryMetaType,
   resumeSourceForItem,
   type LibraryItem,
 } from "@/lib/stremio";
+import { resolveLocalPlayVersions } from "@/lib/local-library/playback";
 import { listLocalCw, localCwVersion, subscribeLocalCw, clearLocalCw } from "@/lib/local-cw";
 import { localToLibraryItem, reconcileCwItem } from "@/lib/continue-watching";
 import { useExternalCw } from "@/lib/feed/external-cw";
@@ -419,10 +422,39 @@ export function Shows({ active = true }: { active?: boolean }) {
                   onDismiss={(item) => {
                     if (item.manualWatched) {
                       dismissManualWatched(item._id);
-                    } else {
-                      if (item.local) clearLocalCw(item._id);
-                      dismissCw(item, authKey);
+                      return;
                     }
+                    if (item.local) clearLocalCw(item._id);
+                    dismissCw(item, authKey);
+                    const candidateIds = new Set<string>([item._id]);
+                    const ep =
+                      item.state?.season && item.state?.episode
+                        ? { season: item.state.season, episode: item.state.episode }
+                        : episodeFromVideoId(item.state?.video_id);
+                    const imdbId = item._id.startsWith("tt") ? item._id : undefined;
+                    const local = resolveLocalPlayVersions(
+                      { id: item._id, type: libraryMetaType(item.type), name: item.name },
+                      ep ?? null,
+                      imdbId,
+                    );
+                    for (const entry of local) {
+                      candidateIds.add(`local:${entry.id}`);
+                      if (entry.imdbId) candidateIds.add(entry.imdbId);
+                      if (entry.tmdbId != null) {
+                        candidateIds.add(`tmdb:${entry.type === "show" ? "tv" : "movie"}:${entry.tmdbId}`);
+                      }
+                    }
+                    for (const cid of candidateIds) clearLocalCw(cid);
+                    for (const cid of candidateIds) {
+                      if (cid !== item._id) dismissCw({ ...item, _id: cid }, authKey);
+                    }
+                    setItems((prev) =>
+                      prev.map((i) =>
+                        candidateIds.has(i._id) && i.state
+                          ? { ...i, state: { ...i.state, timeOffset: 0 }, _mtime: new Date().toISOString() }
+                          : i,
+                      ),
+                    );
                   }}
                 />
               ))}

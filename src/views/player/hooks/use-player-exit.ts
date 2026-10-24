@@ -63,24 +63,12 @@ export function usePlayerExit(params: {
   const { activeProfile } = useProfiles();
 
   const closePlayer = useCallback(async () => {
-    await captureExitSnapshot();
-    const pos = getPlaybackPosition();
-    const dur = snap?.durationSec ?? 0;
-    const finished = dur > 0 && pos >= dur * 0.92;
-    if (Number.isFinite(pos) && pos >= 5 && !finished) {
-      saveResumeMs(
-        src.meta.id,
-        pos * 1000,
-        season,
-        episode,
-        undefined,
-        undefined,
-        undefined,
-        activeProfile?.id,
-      );
-      if (src.imdbIdVerified && src.imdbId && src.imdbId !== src.meta.id) {
+    const saveCurrent = (pos: number) => {
+      const dur = snap?.durationSec ?? 0;
+      const finished = dur > 0 && pos >= dur * 0.92;
+      if (Number.isFinite(pos) && pos >= 5 && !finished) {
         saveResumeMs(
-          src.imdbId,
+          src.meta.id,
           pos * 1000,
           season,
           episode,
@@ -89,15 +77,35 @@ export function usePlayerExit(params: {
           undefined,
           activeProfile?.id,
         );
-      }
-      if (liveStreamRef && pos >= REMEMBER_MIN_SEC) {
-        const rememberedUrl = (src.historyUrl ?? liveUrl) || src.url;
-        const entry = { ...liveStreamRef, url: rememberedUrl, title: src.meta.name };
-        savePlayback(src.meta.id, entry, season, episode);
         if (src.imdbIdVerified && src.imdbId && src.imdbId !== src.meta.id) {
-          savePlayback(src.imdbId, entry, season, episode);
+          saveResumeMs(
+            src.imdbId,
+            pos * 1000,
+            season,
+            episode,
+            undefined,
+            undefined,
+            undefined,
+            activeProfile?.id,
+          );
+        }
+        if (liveStreamRef && pos >= REMEMBER_MIN_SEC) {
+          const rememberedUrl = (src.historyUrl ?? liveUrl) || src.url;
+          const entry = { ...liveStreamRef, url: rememberedUrl, title: src.meta.name };
+          savePlayback(src.meta.id, entry, season, episode);
+          if (src.imdbIdVerified && src.imdbId && src.imdbId !== src.meta.id) {
+            savePlayback(src.imdbId, entry, season, episode);
+          }
         }
       }
+    };
+
+    const initialPos = getPlaybackPosition();
+    saveCurrent(initialPos);
+    await captureExitSnapshot();
+    const finalPos = getPlaybackPosition();
+    if (finalPos !== initialPos) {
+      saveCurrent(finalPos);
     }
     await exitPip();
     if (castActiveRef.current) await stopCast().catch(() => {});
@@ -120,6 +128,8 @@ export function usePlayerExit(params: {
     exitPlayback,
     src.meta.id,
     src.meta.name,
+    src.imdbId,
+    src.imdbIdVerified,
     src.historyUrl,
     season,
     episode,
@@ -135,6 +145,7 @@ export function usePlayerExit(params: {
     stopCast,
     castActiveRef,
     activeProfile?.id,
+    snap?.durationSec,
   ]);
 
   const onStubEject = useCallback(() => {

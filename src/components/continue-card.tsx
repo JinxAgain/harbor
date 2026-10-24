@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Check, X } from "lucide-react";
 import { Play } from "@/components/icons/play-filled";
 import simklLogo from "@/assets/simkl.png";
@@ -25,7 +25,7 @@ import { useSettings } from "@/lib/settings";
 import { useView, type PlayEpisode } from "@/lib/view";
 import { getWatchedBy } from "@/lib/watched-by";
 import { pickPreferredResume, readResumeEntry, useResumeVersion } from "@/lib/resume";
-import { localCwEntry } from "@/lib/local-cw";
+import { localCwEntry, localCwVersion, subscribeLocalCw, type LocalCwEntry } from "@/lib/local-cw";
 import { useLocalLibrary } from "@/lib/local-library";
 import { resolveLocalPlayVersions } from "@/lib/local-library/playback";
 import { localPlayerSrc } from "@/lib/local-library/player-src";
@@ -103,6 +103,7 @@ export const ContinueCard = memo(function ContinueCard({
     watcher.id !== activeProfile.id &&
     sharesStremioStorage(activeProfile, watcher, profiles);
   const resumeVer = useResumeVersion();
+  const localCwVer = useSyncExternalStore(subscribeLocalCw, localCwVersion, () => 0);
   const localLib = useLocalLibrary();
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -129,11 +130,38 @@ export const ContinueCard = memo(function ContinueCard({
       : null;
   const rawDur = item.state?.duration ?? 0;
   const rawOff = item.state?.timeOffset ?? 0;
+  const rawMtime = item.state?.lastWatched ?? (item as { _mtime?: unknown })._mtime;
+  const remoteMtime =
+    typeof rawMtime === "number" ? rawMtime : Date.parse(String(rawMtime ?? ""));
+
+  const localCwMatch = useMemo(() => {
+    const candidateIds = [item._id];
+    const imdbId = item._id.startsWith("tt") ? item._id : undefined;
+    const local = resolveLocalPlayVersions(
+      { id: item._id, type: libraryMetaType(item.type), name: item.name },
+      ep ?? null,
+      imdbId,
+    );
+    for (const entry of local) {
+      candidateIds.push(`local:${entry.id}`);
+      if (entry.imdbId) candidateIds.push(entry.imdbId);
+      if (entry.tmdbId != null) {
+        candidateIds.push(`tmdb:${entry.type === "show" ? "tv" : "movie"}:${entry.tmdbId}`);
+      }
+    }
+    let best: LocalCwEntry | null = null;
+    for (const cid of candidateIds) {
+      const e = localCwEntry(cid, false) ?? localCwEntry(cid, true);
+      if (e) {
+        const match = item.type === "movie" || (e.season === ep?.season && e.episode === ep?.episode);
+        if (match && (!best || e.t > best.t)) best = e;
+      }
+    }
+    return best;
+  }, [item._id, item.name, item.type, ep?.season, ep?.episode, localLib, localCwVer, resumeVer]);
+
   const effectiveResume = useMemo(() => {
     if (item.upNext === true) return null;
-    const rawMtime = item.state?.lastWatched ?? (item as { _mtime?: unknown })._mtime;
-    const remoteMtime =
-      typeof rawMtime === "number" ? rawMtime : Date.parse(String(rawMtime ?? ""));
     const candidateIds = [item._id];
     const tmdbMatch = item._id.match(/^tmdb:(?:movie|tv):(\d+)$/);
     const identity = {
@@ -157,6 +185,9 @@ export const ContinueCard = memo(function ContinueCard({
       const e = readResumeEntry(id, ep?.season, ep?.episode);
       bestLocal = pickPreferredResume(bestLocal, e);
     }
+    if (localCwMatch && localCwMatch.positionMs > 0 && (!bestLocal || localCwMatch.t > bestLocal.t)) {
+      bestLocal = { ms: localCwMatch.positionMs, t: localCwMatch.t };
+    }
     if (!bestLocal) return null;
     const isFirstParty = !bestLocal.source;
     const beatsRemote = !Number.isFinite(remoteMtime)
@@ -165,7 +196,9 @@ export const ContinueCard = memo(function ContinueCard({
         ? bestLocal.t + 60_000 >= remoteMtime
         : !item.external && !isFirstParty
           ? bestLocal.t > remoteMtime + 60_000
-          : bestLocal.t > remoteMtime;
+          : isFirstParty
+            ? bestLocal.t + 5_000 >= remoteMtime
+            : bestLocal.t > remoteMtime;
     if (beatsRemote) {
       return bestLocal;
     }
@@ -175,37 +208,14 @@ export const ContinueCard = memo(function ContinueCard({
     item.name,
     item.type,
     item.external,
-    item.state?.lastWatched,
-    (item as { _mtime?: unknown })._mtime,
+    remoteMtime,
     ep?.season,
     ep?.episode,
     resumeVer,
+    localCwVer,
+    localCwMatch,
     localLib,
   ]);
-  const localCwMatch = useMemo(() => {
-    const candidateIds = [item._id];
-    const imdbId = item._id.startsWith("tt") ? item._id : undefined;
-    const local = resolveLocalPlayVersions(
-      { id: item._id, type: libraryMetaType(item.type), name: item.name },
-      ep ?? null,
-      imdbId,
-    );
-    for (const entry of local) {
-      candidateIds.push(`local:${entry.id}`);
-      if (entry.imdbId) candidateIds.push(entry.imdbId);
-      if (entry.tmdbId != null) {
-        candidateIds.push(`tmdb:${entry.type === "show" ? "tv" : "movie"}:${entry.tmdbId}`);
-      }
-    }
-    for (const cid of candidateIds) {
-      const e = localCwEntry(cid, false) ?? localCwEntry(cid, true);
-      if (e) {
-        const match = item.type === "movie" || (e.season === ep?.season && e.episode === ep?.episode);
-        if (match) return e;
-      }
-    }
-    return null;
-  }, [item._id, item.name, item.type, ep?.season, ep?.episode, localLib]);
 
   const realDur =
     rawDur > 0 && !item.external
@@ -233,7 +243,7 @@ export const ContinueCard = memo(function ContinueCard({
           : 0
     : item.external && realDur > 0 && rawOff > 0 && rawDur > 0
       ? Math.round((rawOff / rawDur) * realDur)
-      : localCwMatch?.positionMs && localCwMatch.positionMs > 0
+      : localCwMatch?.positionMs && localCwMatch.positionMs > 0 && (!Number.isFinite(remoteMtime) || localCwMatch.t >= remoteMtime)
         ? localCwMatch.positionMs
         : rawOff;
   const progress = dur > 0 ? Math.min(1, off / dur) : 0;
@@ -604,6 +614,7 @@ export const ContinueCard = memo(function ContinueCard({
         meta: {
           ...source.meta,
           id: source.meta.id && !source.meta.id.startsWith("local:") ? source.meta.id : meta.id,
+          name: meta.name || source.meta.name,
           poster: meta.poster ?? source.meta.poster,
           background: meta.background,
         },
