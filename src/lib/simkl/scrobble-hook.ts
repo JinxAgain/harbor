@@ -171,11 +171,10 @@ export function useSimklScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }):
     if (snap.durationSec < STUB_MAX_SEC) return;
     const livePos = getPlaybackPosition();
     if (
-      src.startFromZero &&
       lastActionRef.current === null &&
-      livePos > 30 &&
+      src.startPositionMs == null &&
       snap.durationSec > 0 &&
-      livePos / snap.durationSec >= 0.5
+      isPlaybackFinished(livePos, snap.durationSec, thresholdRef.current)
     ) {
       return;
     }

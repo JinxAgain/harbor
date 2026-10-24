@@ -170,7 +170,7 @@ export function useEpisodeNavigation(params: {
         const local = findLocalEpisode(localShowKey, ep.season, ep.episode);
         if (local) {
           announceRoomEpisode(carried);
-          replacePlayerSrc({ ...localPlayerSrc(local, undefined, ep), startFromZero: true });
+          replacePlayerSrc(localPlayerSrc(local, undefined, ep));
           return;
         }
       }
@@ -179,11 +179,11 @@ export function useEpisodeNavigation(params: {
           const local = findLocalEpisode(localShowKey, ep.season, ep.episode);
           if (local) {
             announceRoomEpisode(carried);
-            replacePlayerSrc({ ...localPlayerSrc(local), startFromZero: true });
+            replacePlayerSrc(localPlayerSrc(local));
             return;
           }
         }
-        openPicker(src.meta, carried, { autoPlay: true, startFromZero: true });
+        openPicker(src.meta, carried, { autoPlay: true });
       };
       if (inRoom || settings.localPlaybackMode === "stream") {
         withoutDownload();
@@ -195,10 +195,9 @@ export function useEpisodeNavigation(params: {
           return;
         }
         announceRoomEpisode(carried);
-        replacePlayerSrc({
-          ...downloadPlayerSrc(src.meta, ep, item, { imdbId: src.imdbId, isAnime: src.isAnime }),
-          startFromZero: true,
-        });
+        replacePlayerSrc(
+          downloadPlayerSrc(src.meta, ep, item, { imdbId: src.imdbId, isAnime: src.isAnime }),
+        );
       }, withoutDownload);
     },
     [

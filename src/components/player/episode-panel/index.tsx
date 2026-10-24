@@ -127,7 +127,7 @@ export function EpisodePanel({
         setPickingFor(ep);
       } else {
         onClose();
-        openPicker(meta, ep, { autoPlay: true, startFromZero: true });
+        openPicker(meta, ep, { autoPlay: true });
       }
     };
     playLocalAware({
@@ -135,10 +135,10 @@ export function EpisodePanel({
       episode: ep,
       mode: settings.localPlaybackMode,
       source: "manual",
-      playLocal: (e) => {
+      playLocal: (e, o) => {
         onClose();
         onHostAdvance?.(ep);
-        replacePlayerSrc({ ...localPlayerSrc(e, undefined, ep), startFromZero: true });
+        replacePlayerSrc({ ...localPlayerSrc(e, undefined, ep), startFromZero: o?.fromStart });
       },
       playStream: streamFlow,
       setMode: (m) => update({ localPlaybackMode: m }),
@@ -207,7 +207,6 @@ export function EpisodePanel({
         proxySessionId,
         historyUrl: r.data.url,
         subtitles: [],
-        startFromZero: true,
         streamRef: {
           resolvedFilename:
             r.data.filename ??

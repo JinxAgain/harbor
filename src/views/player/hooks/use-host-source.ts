@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import type { PlayerSnapshot } from "@/lib/player/bridge";
+import { getPlaybackPosition } from "@/lib/player/playback-clock";
 import type { PartialSyncState } from "@/lib/together/provider";
 import type { SourceDescriptor } from "@/lib/together/protocol";
 import { buildSourceDescriptor, descriptorsEqual } from "@/lib/together/source-descriptor";
@@ -11,6 +12,8 @@ export function useHostSource(params: {
   inRoom: boolean;
   isHost: boolean;
   hasStarted: boolean;
+  resumeReady?: boolean;
+  resolvedStartSec?: number | null;
   src: PlayerSrc;
   liveUrl: string;
   liveStreamRef: PlayerStreamRef | undefined;
@@ -23,6 +26,8 @@ export function useHostSource(params: {
     inRoom,
     isHost,
     hasStarted,
+    resumeReady = true,
+    resolvedStartSec = null,
     src,
     liveUrl,
     liveStreamRef,
@@ -70,7 +75,11 @@ export function useHostSource(params: {
     if (!descriptor) return;
     if (descriptorsEqual(lastSeedRef.current, descriptor)) return;
     lastSeedRef.current = descriptor;
-    const safePos = 0;
+    const playbackPos = getPlaybackPosition();
+    const rawPos =
+      resumeReady && playbackPos > 0.5 ? playbackPos : Math.max(0, resolvedStartSec ?? 0);
+    const safePos =
+      snap.durationSec > 0 && rawPos >= Math.max(0, snap.durationSec - 20) ? 0 : rawPos;
     publishState({
       mediaId: src.meta.id,
       mediaTitle: src.meta.name ?? null,
@@ -79,13 +88,27 @@ export function useHostSource(params: {
         : null,
       posterUrl: src.meta.poster ?? null,
       positionSeconds: safePos,
-      playing: snap.status === "playing",
+      playing: false,
       speed: snap.rate,
       source: descriptor,
       guestPick: guestPickRef.current || undefined,
       guestControl: guestControlRef ? guestControlRef.current : undefined,
     });
-  }, [inRoom, isHost, hasStarted, descriptor, publishState, src.meta.id, src.meta.name, src.meta.poster, src.episode]);
+  }, [
+    inRoom,
+    isHost,
+    hasStarted,
+    resumeReady,
+    resolvedStartSec,
+    descriptor,
+    publishState,
+    src.meta.id,
+    src.meta.name,
+    src.meta.poster,
+    src.episode,
+    snap.durationSec,
+    snap.rate,
+  ]);
 
   return { hostSourceRef };
 }

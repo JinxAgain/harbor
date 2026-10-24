@@ -402,7 +402,7 @@ export function usePickHandler({
         autoFired: autoPickRef.current,
         resume: !!resume,
         startPositionMs: startPositionMs ?? undefined,
-        startFromZero: Boolean(startFromZero || inSession) || undefined,
+        startFromZero: startFromZero || undefined,
         playbackTraceId,
         proxySessionId,
         historyUrl: r.data.url,

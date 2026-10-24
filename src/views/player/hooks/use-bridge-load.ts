@@ -32,6 +32,7 @@ export function useBridgeLoad(params: {
   clearPendingSeek: () => void;
   sourceKey: string;
   resumeReady: boolean;
+  resolvedStartSec: number | null;
 } {
   const {
     bridgeRef,
@@ -57,6 +58,7 @@ export function useBridgeLoad(params: {
   const [pendingResumeSec, setPendingResumeSec] = useState<number | null>(null);
   const [pendingSeekSec, setPendingSeekSec] = useState<number | null>(null);
   const [readyLoadKey, setReadyLoadKey] = useState<string | null>(null);
+  const [resolvedStart, setResolvedStart] = useState<{ key: string; sec: number } | null>(null);
   const ackRef = useRef<((action: "resume" | "start-over") => void) | null>(null);
   const sourceIdentity = playerLoadIdentity(src, transcodedUrl ?? src.url, season, episode);
   const sourceKey = `${bridgeKey}|${sourceIdentity}`;
@@ -96,11 +98,12 @@ export function useBridgeLoad(params: {
         imdbId: src.imdbId ?? null,
         imdbVerified: src.imdbIdVerified === true,
       };
-      const forceZero = isLive || Boolean(src.startFromZero) || Boolean(inRoomRef.current);
+      const guestInRoom = inRoomRef.current && !isHostRef.current;
+      const forceZero = isLive || Boolean(src.startFromZero) || guestInRoom;
       const shouldResolveResume =
         !forceZero &&
         src.startPositionMs == null &&
-        (resumePlaybackRef.current || resumePromptRef.current);
+        (resumePlaybackRef.current || resumePromptRef.current || Boolean(inRoomRef.current));
       const resumePromise = !shouldResolveResume
         ? Promise.resolve({ ms: 0, fromRemote: false, finished: false })
         : resolveStartMs({
@@ -130,17 +133,21 @@ export function useBridgeLoad(params: {
       const startSec =
         forceZero
           ? 0
-          : (hasExplicitStart ? startMs : !resumePlaybackRef.current || finishedNearEnd ? 0 : startMs) /
-            1000;
-      const guestInRoom = inRoomRef.current && !isHostRef.current;
+          : (hasExplicitStart
+              ? startMs
+              : (!resumePlaybackRef.current && !inRoomRef.current) || finishedNearEnd
+                ? 0
+                : startMs) / 1000;
       const eligibleForPrompt =
         !forceZero &&
+        !inRoomRef.current &&
         isFirstLoad &&
         !isAutoRetry &&
         !src.resume &&
         resumePromptRef.current &&
         startSec > RESUME_PROMPT_MIN_SEC &&
         !guestInRoom;
+      setResolvedStart({ key: loadKey, sec: !guestInRoom && startSec > 5 ? startSec : 0 });
       try {
         await bridge.load({
           url: playUrl,
@@ -224,5 +231,6 @@ export function useBridgeLoad(params: {
       readyLoadKey === sourceKey &&
       pendingResumeSec == null &&
       pendingSeekSec == null,
+    resolvedStartSec: resolvedStart?.key === sourceKey ? resolvedStart.sec : null,
   };
 }

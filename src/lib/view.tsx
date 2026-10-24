@@ -1334,7 +1334,9 @@ export function ViewProvider({ children }: { children: ReactNode }) {
           t.meta.id === m.id &&
           (t.attempt ?? 0) === (opts?.attempt ?? 0) &&
           (t.intent ?? "play") === (opts?.intent ?? "play") &&
-          Boolean(t.seasonEpisodes?.length) === Boolean(opts?.seasonEpisodes?.length)
+          Boolean(t.seasonEpisodes?.length) === Boolean(opts?.seasonEpisodes?.length) &&
+          (t.episode?.season ?? null) === (ep?.season ?? null) &&
+          (t.episode?.episode ?? null) === (ep?.episode ?? null)
         ) {
           return cur;
         }

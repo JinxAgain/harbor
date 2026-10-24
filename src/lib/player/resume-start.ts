@@ -133,7 +133,15 @@ export async function resolveStartMs({
           ? localCwEntryMatch.positionMs
           : 0));
   const local = resolvedLocalMs;
-  if (!authKey || privateCwProfileId()) return { ms: local, fromRemote: false, finished: false };
+  const localFinished =
+    isEpisode &&
+    ((typeof localEntry?.pct === "number" &&
+      Number.isFinite(localEntry.pct) &&
+      localEntry.pct >= RESTART_THRESHOLD) ||
+      (knownDur > 0 && local / knownDur >= RESTART_THRESHOLD));
+  if (!authKey || privateCwProfileId()) {
+    return { ms: local, fromRemote: false, finished: localFinished };
+  }
   const matchesEpisode = (item: LibraryItem | null) => {
     if (!item) return false;
     if (typeof season !== "number" || typeof episode !== "number") return true;
@@ -177,7 +185,7 @@ export async function resolveStartMs({
       ]);
       return { ms: remoteMs, fromRemote: true, finished: finishedAt(remoteMs) };
     }
-    return { ms: effectiveLocal, fromRemote: false, finished: finishedAt(effectiveLocal) };
+    return { ms: effectiveLocal, fromRemote: false, finished: finishedAt(effectiveLocal) || localFinished };
   }
-  return { ms: local, fromRemote: false, finished: false };
+  return { ms: local, fromRemote: false, finished: localFinished };
 }

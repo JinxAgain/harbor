@@ -53,3 +53,9 @@ test("private profiles never use another profile's cloud resume", async () => {
   const h = harness({ ms: 300000, t: 5000 }, {}, "private");
   assert.equal((await h.run()).ms, 300000); assert.equal(h.reads, 0);
 });
+test("completed local episode (pct >= 0.8) reports finished: true even in private profile or without remotes", async () => {
+  const h = harness({ ms: 1600000, pct: 0.9, t: 20000 }, {}, "private");
+  const res = await h.run();
+  assert.equal(res.finished, true);
+});
+
