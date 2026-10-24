@@ -126,6 +126,7 @@ export const ContinueCard = memo(function ContinueCard({
   const rawDur = item.state?.duration ?? 0;
   const rawOff = item.state?.timeOffset ?? 0;
   const effectiveResume = useMemo(() => {
+    if (item.upNext === true) return null;
     const rawMtime = item.state?.lastWatched ?? (item as { _mtime?: unknown })._mtime;
     const remoteMtime =
       typeof rawMtime === "number" ? rawMtime : Date.parse(String(rawMtime ?? ""));
@@ -545,7 +546,7 @@ export const ContinueCard = memo(function ContinueCard({
         startPositionMs: isResuming && off > 0 ? off : source.startPositionMs,
         meta: {
           ...source.meta,
-          id: meta.id,
+          id: source.meta.id && !source.meta.id.startsWith("local:") ? source.meta.id : meta.id,
           poster: meta.poster ?? source.meta.poster,
           background: meta.background,
         },

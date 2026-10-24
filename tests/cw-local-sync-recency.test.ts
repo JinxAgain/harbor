@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 // @ts-expect-error Node test types are intentionally outside the browser-only tsconfig.
 import test from "node:test";
 import { localPlayerSrc } from "../src/lib/local-library/player-src.ts";
+import { localEntryToMeta } from "../src/lib/local-library.ts";
 
 const homeSource = readFileSync(new URL("../src/views/home.tsx", import.meta.url), "utf8");
 const continueCardSource = readFileSync(
@@ -35,23 +36,50 @@ const animeCwSource = readFileSync(
   new URL("../src/views/anime.tsx", import.meta.url),
   "utf8",
 );
+const playbackSource = readFileSync(
+  new URL("../src/lib/local-library/playback.ts", import.meta.url),
+  "utf8",
+);
 
-test("localPlayerSrc prefers tmdbId matching localEntryToMeta and sets imdbIdVerified", () => {
-  const src = localPlayerSrc({
+test("localPlayerSrc and localEntryToMeta prioritize imdbId and fall back to tmdbId", () => {
+  const itemWithBoth = {
     id: "test-hash",
+    path: "V:\\Movies\\Movie.mkv",
+    filename: "Movie.mkv",
+    title: "Movie",
+    year: 2026,
+    type: "movie" as const,
+    tmdbId: 1419747,
+    imdbId: "tt38775487",
+    addedAt: Date.now(),
+  };
+  const srcWithBoth = localPlayerSrc(itemWithBoth);
+  const metaWithBoth = localEntryToMeta(itemWithBoth);
+
+  // When imdbId is present, both local and cloud use tt... (canonical cloudWriteId)
+  assert.equal(srcWithBoth.meta.id, "tt38775487");
+  assert.equal(metaWithBoth?.id, "tt38775487");
+  assert.equal(srcWithBoth.imdbId, "tt38775487");
+  assert.equal(srcWithBoth.imdbIdVerified, true);
+
+  const itemTmdbOnly = {
+    id: "test-hash-2",
     path: "V:\\Movies\\V.2026.mkv",
     filename: "V.2026.mkv",
     title: "V",
     year: 2026,
-    type: "movie",
+    type: "movie" as const,
     tmdbId: 1419747,
-    imdbId: "tt38775487",
     addedAt: Date.now(),
-  });
-  // Must match localEntryToMeta's tmdb priority so Detail and Player share the same meta ID
-  assert.equal(src.meta.id, "tmdb:movie:1419747");
-  assert.equal(src.imdbId, "tt38775487");
-  assert.equal(src.imdbIdVerified, true);
+  };
+  const srcTmdbOnly = localPlayerSrc(itemTmdbOnly);
+  const metaTmdbOnly = localEntryToMeta(itemTmdbOnly);
+
+  // When imdbId is absent (e.g. Chinese movies), fallback to tmdb:movie:...
+  assert.equal(srcTmdbOnly.meta.id, "tmdb:movie:1419747");
+  assert.equal(metaTmdbOnly?.id, "tmdb:movie:1419747");
+  assert.equal(srcTmdbOnly.imdbId, undefined);
+  assert.equal(srcTmdbOnly.imdbIdVerified, false);
 
   const showSrc = localPlayerSrc({
     id: "test-show",
@@ -68,7 +96,11 @@ test("localPlayerSrc prefers tmdbId matching localEntryToMeta and sets imdbIdVer
   assert.equal(showSrc.meta.id, "tmdb:tv:99999");
 });
 
-test("continue-card calculates off and dur without fabricating ms * 1.2", () => {
+test("continue-card calculates off and dur without fabricating ms * 1.2 and ignores upNext", () => {
+  assert.match(
+    continueCardSource,
+    /if \(item\.upNext === true\) return null;/,
+  );
   assert.match(
     continueCardSource,
     /dur =\s*rawDur > 0\s*\?\s*rawDur\s*:\s*effectiveResume\?\.pct && effectiveResume\.pct > 0 && effectiveResume\.ms > 0\s*\?\s*Math\.round\(effectiveResume\.ms \/ effectiveResume\.pct\)\s*:\s*0;/,
@@ -78,6 +110,21 @@ test("continue-card calculates off and dur without fabricating ms * 1.2", () => 
     /off = effectiveResume\s*\?\s*\(effectiveResume\.ms > 0\s*\?\s*effectiveResume\.ms/,
   );
   assert.doesNotMatch(continueCardSource, /effectiveResume\.ms \* 1\.2/);
+});
+
+test("continue-card and playback resolve local:<hash> and migrate to canonical ID", () => {
+  assert.match(
+    playbackSource,
+    /if \(id\.startsWith\("local:"\)\) localId = id\.slice\(6\);/,
+  );
+  assert.match(
+    playbackSource,
+    /if \(localId\) \{[\s\S]*?readLocalLibrary\(\)/,
+  );
+  assert.match(
+    continueCardSource,
+    /id: source\.meta\.id && !source\.meta\.id\.startsWith\("local:"\)\s*\?\s*source\.meta\.id\s*:\s*meta\.id/,
+  );
 });
 
 test("useStremioSync guards progress position updates against snapshot reset on rerender", () => {

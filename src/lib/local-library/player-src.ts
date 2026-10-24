@@ -51,9 +51,10 @@ export function localPlayerSrc(
         }
       : undefined;
   const metaId =
+    entry.imdbId ??
     (entry.tmdbId != null
       ? `tmdb:${entry.type === "show" ? "tv" : "movie"}:${entry.tmdbId}`
-      : entry.imdbId) ?? `local:${entry.id}`;
+      : `local:${entry.id}`);
   return {
     meta: {
       id: metaId,

@@ -1,5 +1,5 @@
 import type { Meta } from "@/lib/cinemeta";
-import { type LocalEntry } from "@/lib/local-library";
+import { readLocalLibrary, type LocalEntry } from "@/lib/local-library";
 import { findLocalEpisodeVersions, findLocalMovieVersions } from "@/lib/local-library/versions";
 import { openLocalVersions } from "@/lib/player/local-versions-modal";
 import { episodeLabel } from "@/lib/local-library/player-src";
@@ -11,14 +11,16 @@ export type LocalPlaybackMode = "ask" | "local" | "stream";
 function idsFromMeta(
   meta: Meta,
   extraImdb?: string | null,
-): { tmdbId: number | null; imdbId: string | null } {
+): { tmdbId: number | null; imdbId: string | null; localId: string | null } {
   let tmdbId: number | null = null;
   let imdbId: string | null = extraImdb ?? null;
+  let localId: string | null = null;
   const id = meta.id;
+  if (id.startsWith("local:")) localId = id.slice(6);
   const m = id.match(/^tmdb:(?:movie|tv):(\d+)$/);
   if (m) tmdbId = parseInt(m[1], 10);
   else if (id.startsWith("tt")) imdbId = imdbId ?? id;
-  return { tmdbId, imdbId };
+  return { tmdbId, imdbId, localId };
 }
 
 /** Every local file for this title/episode, best version first. */
@@ -27,7 +29,26 @@ export function resolveLocalPlayVersions(
   episode?: { season: number; episode: number } | null,
   extraImdb?: string | null,
 ): LocalEntry[] {
-  const { tmdbId, imdbId } = idsFromMeta(meta, extraImdb);
+  const { tmdbId, imdbId, localId } = idsFromMeta(meta, extraImdb);
+  if (localId) {
+    const all = readLocalLibrary();
+    const entry = all.find((e) => e.id === localId);
+    if (entry) {
+      if (entry.type === "show" && episode && episode.season != null && episode.episode != null) {
+        const versions = findLocalEpisodeVersions(
+          episode.season,
+          episode.episode,
+          entry.tmdbId,
+          entry.imdbId,
+        );
+        if (versions.length > 0) return versions;
+      } else if (entry.type === "movie") {
+        const versions = findLocalMovieVersions(entry.tmdbId, entry.imdbId);
+        if (versions.length > 0) return versions;
+      }
+      return [entry];
+    }
+  }
   if (tmdbId == null && imdbId == null) return [];
   if (episode && episode.season != null && episode.episode != null) {
     return findLocalEpisodeVersions(episode.season, episode.episode, tmdbId, imdbId);

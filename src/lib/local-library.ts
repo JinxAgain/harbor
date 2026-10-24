@@ -312,7 +312,7 @@ export function findLocalSeriesEpisodes(
 
 export function localEntryToMeta(entry: LocalEntry): Meta | null {
   const kind = entry.type === "show" ? "tv" : "movie";
-  const id = entry.tmdbId != null ? `tmdb:${kind}:${entry.tmdbId}` : (entry.imdbId ?? null);
+  const id = entry.imdbId ?? (entry.tmdbId != null ? `tmdb:${kind}:${entry.tmdbId}` : null);
   if (!id) return null;
   return {
     id,
