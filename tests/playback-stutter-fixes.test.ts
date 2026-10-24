@@ -28,11 +28,17 @@ test("Task 1: useExitSnapshot does not invoke live captureMpvFrame during active
   // grabFrame must guard against live capture when allowLiveMpvCapture is false
   assert.match(
     exitSnapshotSource,
-    /if \(!allowLiveMpvCapture\) return null;/,
+    /if \(!allowLiveMpvCapture\) \{/,
     "grabFrame should return early before calling captureMpvFrame when live capture is disallowed",
   );
 
-  // During active playing, tick(false) must be called so cplayer is never blocked by live screenshot
+  // During active playing, tick(false) must be called so cplayer is never blocked by live screenshot,
+  // and grabFrame only reads from the in-memory thumbCacheNearest without spawning shadow-mpv I/O.
+  assert.match(
+    exitSnapshotSource,
+    /thumbCacheNearest\(bucket, 2\)/,
+    "grabFrame must use in-memory thumbCacheNearest for playback thumbnail cache",
+  );
   assert.match(
     exitSnapshotSource,
     /const warm = window\.setTimeout\(\(\) => void tick\(false\), WARM_MS\);/,
@@ -100,6 +106,11 @@ test("Task 3: cache-on-disk is disabled for local files unless full_download req
 });
 
 test("Task 3: applyAudioFilters deduplicates target af string to prevent WASAPI resets", () => {
+  assert.match(
+    mpvSource,
+    /if \(!mpvStarted\) return;/,
+    "applyAudioFilters must guard against running before mpv starts",
+  );
   assert.match(
     mpvSource,
     /let lastAppliedAf: string \| null = null;/,
@@ -180,8 +191,8 @@ test("Task 4: onWindowFocusRestore does not issue ao-reload during active playba
   );
   assert.match(
     focusRestoreBlock[1],
-    /if \(getAudioDeviceSignature\(\) === audioDeviceSignatureAtBlur\) return;/,
-    "onWindowFocusRestore must return early when audio device signature is unchanged",
+    /scheduleAudioDeviceReload\(\);/,
+    "onWindowFocusRestore should still schedule reload when paused/idle after screensaver",
   );
 });
 

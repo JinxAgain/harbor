@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { captureFrame, captureMpvFrame, saveSnapshot } from "@/lib/snapshots";
 import { useSettings } from "@/lib/settings";
-import { trickplayGet } from "@/lib/trickplay";
+import { thumbCacheNearest, trickplayGet } from "@/lib/trickplay";
 import { getPlaybackPosition } from "@/lib/player/playback-clock";
 import type { PlayerStatus } from "@/lib/player/bridge";
 import type { PlayerSrc } from "@/lib/view";
@@ -58,16 +58,18 @@ export function useExitSnapshot(params: {
         const v = videoMountRef.current?.querySelector("video") as HTMLVideoElement | null;
         return v ? captureFrame(v, full) : null;
       }
-      // Prefer instantaneous trickplay thumbnail when available
-      if (allowTrick && seek) {
-        const trick = trickplayGet(getPlaybackPosition());
-        if (trick) return trick;
+      // Do not block live playback with synchronous screenshots or shadow-mpv seeks;
+      // only consult the already-populated in-memory trickplay cache.
+      if (!allowLiveMpvCapture) {
+        if (allowTrick && seek) {
+          const bucket = Math.round(getPlaybackPosition() / 2);
+          return thumbCacheNearest(bucket, 2) ?? null;
+        }
+        return null;
       }
-      // Do not block live playback with synchronous software screenshots
-      if (!allowLiveMpvCapture) return null;
       const mpvImg = await captureMpvFrame(full);
       if (mpvImg) return mpvImg;
-      if (allowTrick && seek) return trickplayGet(getPlaybackPosition());
+      if (allowTrick && seek) return await trickplayGet(getPlaybackPosition());
       return null;
     },
     [videoMountRef],

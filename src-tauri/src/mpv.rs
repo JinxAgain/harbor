@@ -1343,6 +1343,15 @@ fn spawn_event_loop(
                     if let Event::EndFile(reason) = &event {
                         eprintln!("[harbor::mpv] end-file reason={:?}", reason);
                     }
+                    #[cfg(windows)]
+                    if matches!(event, Event::PlaybackRestart) {
+                        if let Ok(s) = mpv_keepalive.get_property::<String>("user-data/display-info/hdr-status") {
+                            if last_hdr_status.as_deref() != Some(s.as_str()) {
+                                last_hdr_status = Some(s.clone());
+                                let _ = app.emit("hdr-stage://display-status", s.as_str());
+                            }
+                        }
+                    }
                     if let Event::PropertyChange { name, change, .. } = &event {
                         #[cfg(windows)]
                         if *name == "user-data/display-info/hdr-status" {

@@ -49,7 +49,7 @@ test("refocus reload waits for a long absence and removes both listeners on disp
   assert.match(mpv, /const onWindowBlur = \(\) => \{\s*lastWindowBlur = Date.now\(\)/);
   assert.match(
     mpv,
-    /Date.now\(\) - lastWindowBlur < FOCUS_RELOAD_MIN_ABSENT_MS\) return;\s*scheduleAudioDeviceReload\(\)/,
+    /Date\.now\(\) - lastWindowBlur < FOCUS_RELOAD_MIN_ABSENT_MS\) return;\s*if \(snap\.status === "playing"\) return;\s*scheduleAudioDeviceReload\(\)/,
   );
   for (const [event, callback] of [
     ["blur", "onWindowBlur"],

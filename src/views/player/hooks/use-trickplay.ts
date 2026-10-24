@@ -11,12 +11,13 @@ export function useTrickplay({ url, enabled, isLive }: { url: string; enabled: b
     const isTorrent = isBundledEngineUrl(url);
     setTrickplayState({ active: true, bufferedOnly: isTorrent });
     let alive = true;
+    let eagerTimer: ReturnType<typeof setTimeout> | null = null;
     const isLocal = !url.includes("://") || url.startsWith("file://");
     void trickplaySetUrl(url).then(() => {
       if (!alive) return;
       if (!isLive) {
         if (isLocal) {
-          setTimeout(() => {
+          eagerTimer = setTimeout(() => {
             if (alive) void trickplaySpawnEager();
           }, 3500);
         } else {
@@ -26,6 +27,7 @@ export function useTrickplay({ url, enabled, isLive }: { url: string; enabled: b
     });
     return () => {
       alive = false;
+      if (eagerTimer != null) clearTimeout(eagerTimer);
       setTrickplayState({ active: false, bufferedOnly: false });
       void trickplayStop();
     };

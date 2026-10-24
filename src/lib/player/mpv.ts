@@ -261,6 +261,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
   let lastAppliedAf: string | null = null;
   let hdrToSdr = mpvOptions?.hdrToSdr ?? true;
   const applyAudioFilters = () => {
+    if (!mpvStarted) return;
     const parts: string[] = [];
     if (snap.audioNormalize) parts.push("dynaudnorm=f=500:g=31:p=0.9:m=4:b=1");
     if (profileAf) parts.push(profileAf);
@@ -639,20 +640,12 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
   // from paying for an `ao-reload` they don't need.
   const FOCUS_RELOAD_MIN_ABSENT_MS = 60_000;
   let lastWindowBlur = Date.now();
-  let audioDeviceSignatureAtBlur = "";
-  const getAudioDeviceSignature = () =>
-    (snap.audioTracks ?? []).map((t) => t.id).join(",") +
-    "|" +
-    (appliedAudioDevice ?? "");
   const onWindowBlur = () => {
     lastWindowBlur = Date.now();
-    audioDeviceSignatureAtBlur = getAudioDeviceSignature();
   };
   const onWindowFocusRestore = () => {
     if (Date.now() - lastWindowBlur < FOCUS_RELOAD_MIN_ABSENT_MS) return;
-    // Guard against tearing down active healthy playback with spurious ao-reload
     if (snap.status === "playing") return;
-    if (getAudioDeviceSignature() === audioDeviceSignatureAtBlur) return;
     scheduleAudioDeviceReload();
   };
   if (typeof window !== "undefined") {
@@ -958,6 +951,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       ) {
         mpvStarted = true;
         lastAppliedAf = null;
+        applyAudioFilters();
         currentIsLive = nextIsLive;
         currentStartupProfile = nextStartupProfile;
         retainedMpv = null;
@@ -1079,7 +1073,8 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
         preparedSubtitleCleanups.clearBefore(activeLoadId);
         markPlaybackTrace(activeTraceId, "loadfile-accepted");
         mpvStarted = true;
-        lastAppliedAf = null;
+        lastAppliedAf = "";
+        applyAudioFilters();
         currentIsLive = nextIsLive;
         currentStartupProfile = nextStartupProfile;
         void addSeedSubtitles(src.subtitles, activeLoadId);
