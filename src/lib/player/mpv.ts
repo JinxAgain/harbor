@@ -258,13 +258,17 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
   let host: HTMLElement | null = null;
   let snap: PlayerSnapshot = initialPlayerSnapshot();
   let profileAf = "";
+  let lastAppliedAf: string | null = null;
   let hdrToSdr = mpvOptions?.hdrToSdr ?? true;
   const applyAudioFilters = () => {
     const parts: string[] = [];
     if (snap.audioNormalize) parts.push("dynaudnorm=f=500:g=31:p=0.9:m=4:b=1");
     if (profileAf) parts.push(profileAf);
     if (parts.length > 0) parts.push("lavfi=[alimiter=limit=0.97]");
-    invoke("mpv_command", { cmd: ["af", "set", parts.join(",")] }).catch(() => {});
+    const target = parts.join(",");
+    if (target === lastAppliedAf) return;
+    lastAppliedAf = target;
+    invoke("mpv_command", { cmd: ["af", "set", target] }).catch(() => {});
   };
   const listeners = new Set<(s: PlayerSnapshot) => void>();
   let unlistenEvent: UnlistenFn | null = null;
@@ -635,11 +639,20 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
   // from paying for an `ao-reload` they don't need.
   const FOCUS_RELOAD_MIN_ABSENT_MS = 60_000;
   let lastWindowBlur = Date.now();
+  let audioDeviceSignatureAtBlur = "";
+  const getAudioDeviceSignature = () =>
+    (snap.audioTracks ?? []).map((t) => t.id).join(",") +
+    "|" +
+    (appliedAudioDevice ?? "");
   const onWindowBlur = () => {
     lastWindowBlur = Date.now();
+    audioDeviceSignatureAtBlur = getAudioDeviceSignature();
   };
   const onWindowFocusRestore = () => {
     if (Date.now() - lastWindowBlur < FOCUS_RELOAD_MIN_ABSENT_MS) return;
+    // Guard against tearing down active healthy playback with spurious ao-reload
+    if (snap.status === "playing") return;
+    if (getAudioDeviceSignature() === audioDeviceSignatureAtBlur) return;
     scheduleAudioDeviceReload();
   };
   if (typeof window !== "undefined") {
@@ -944,6 +957,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
         retainedMpv.isLive === nextIsLive
       ) {
         mpvStarted = true;
+        lastAppliedAf = null;
         currentIsLive = nextIsLive;
         currentStartupProfile = nextStartupProfile;
         retainedMpv = null;
@@ -1065,6 +1079,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
         preparedSubtitleCleanups.clearBefore(activeLoadId);
         markPlaybackTrace(activeTraceId, "loadfile-accepted");
         mpvStarted = true;
+        lastAppliedAf = null;
         currentIsLive = nextIsLive;
         currentStartupProfile = nextStartupProfile;
         void addSeedSubtitles(src.subtitles, activeLoadId);

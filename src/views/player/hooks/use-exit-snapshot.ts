@@ -52,12 +52,19 @@ export function useExitSnapshot(params: {
   const capturedKeyRef = useRef<string | null>(null);
 
   const grabFrame = useCallback(
-    async (allowTrick: boolean): Promise<string | null> => {
+    async (allowTrick: boolean, allowLiveMpvCapture = true): Promise<string | null> => {
       const { engine: eng, seekPreviewEnabled: seek, fullQuality: full } = latest.current;
       if (eng === "html5") {
         const v = videoMountRef.current?.querySelector("video") as HTMLVideoElement | null;
         return v ? captureFrame(v, full) : null;
       }
+      // Prefer instantaneous trickplay thumbnail when available
+      if (allowTrick && seek) {
+        const trick = trickplayGet(getPlaybackPosition());
+        if (trick) return trick;
+      }
+      // Do not block live playback with synchronous software screenshots
+      if (!allowLiveMpvCapture) return null;
       const mpvImg = await captureMpvFrame(full);
       if (mpvImg) return mpvImg;
       if (allowTrick && seek) return trickplayGet(getPlaybackPosition());
@@ -90,7 +97,7 @@ export function useExitSnapshot(params: {
     }
     const budget = lastGoodRef.current ? EXIT_GRAB_MS : GRAB_FULL_MS;
     const fresh = await Promise.race([
-      grabFrame(true),
+      grabFrame(true, true),
       new Promise<null>((r) => setTimeout(() => r(null), budget)),
     ]);
     if (fresh && latest.current.src.meta.id === s.meta.id) {
@@ -100,8 +107,10 @@ export function useExitSnapshot(params: {
   }, [grabFrame]);
 
   useEffect(() => {
-    if (status !== "playing" || snapshotsOff) return;
-    const tick = async () => {
+    if (snapshotsOff) return;
+    if (status !== "playing" && status !== "paused") return;
+    const isPaused = status === "paused";
+    const tick = async (allowLiveCapture = false) => {
       const { src: s, durationSec: dur, resolvedImdbId: resolved, resolvedImdbVerified: verified } = latest.current;
       const id = snapshotId(s, resolved, verified);
       if (!id) return;
@@ -109,7 +118,7 @@ export function useExitSnapshot(params: {
       if (good && good.id === id && Date.now() - lastGrabAtRef.current < REFRESH_MS) return;
       const cur = getPlaybackPosition();
       if (!Number.isFinite(cur) || cur <= 0 || nearEnd(cur, dur, false)) return;
-      const img = await grabFrame(true);
+      const img = await grabFrame(true, allowLiveCapture);
       if (!img) return;
       lastGrabAtRef.current = Date.now();
       if (latest.current.src.meta.id !== s.meta.id) return;
@@ -117,8 +126,14 @@ export function useExitSnapshot(params: {
       lastGoodRef.current = cached;
       persist(cached);
     };
-    const warm = window.setTimeout(() => void tick(), WARM_MS);
-    const id = window.setInterval(() => void tick(), CACHE_MS);
+
+    if (isPaused) {
+      const pauseTimer = window.setTimeout(() => void tick(true), 300);
+      return () => window.clearTimeout(pauseTimer);
+    }
+
+    const warm = window.setTimeout(() => void tick(false), WARM_MS);
+    const id = window.setInterval(() => void tick(false), CACHE_MS);
     return () => {
       window.clearTimeout(warm);
       window.clearInterval(id);

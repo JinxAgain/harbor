@@ -754,6 +754,10 @@ export function useTrackAutoload(params: {
     bridgeRef.current?.setAudioDevice?.(settings.audioDevice);
   }, [engine, settings.audioDevice, bridgeRef]);
   useEffect(() => {
+    bridgeRef.current?.setAudioNormalize(settings.audioNormalize);
+    bridgeRef.current?.setAudioProfile?.(settings.audioProfile);
+  }, [settings.audioNormalize, settings.audioProfile, bridgeRef]);
+  useEffect(() => {
     const subIdSig = subtitleAutoSelectionSignature(snap.subtitleTracks);
     const audioIdSig = JSON.stringify(
       snap.audioTracks.map((t) => [t.id, t.lang, t.title, t.label, t.default]),
@@ -772,8 +776,6 @@ export function useTrackAutoload(params: {
     if (autoTrackKeyRef.current === key) return;
     if (snap.audioTracks.length === 0 && snap.subtitleTracks.length === 0) return;
     autoTrackKeyRef.current = key;
-    bridgeRef.current?.setAudioNormalize(settings.audioNormalize);
-    bridgeRef.current?.setAudioProfile?.(settings.audioProfile);
 
     const prefs = readPlayerPrefs(src.meta.id);
     const isAnime =

@@ -11,9 +11,18 @@ export function useTrickplay({ url, enabled, isLive }: { url: string; enabled: b
     const isTorrent = isBundledEngineUrl(url);
     setTrickplayState({ active: true, bufferedOnly: isTorrent });
     let alive = true;
+    const isLocal = !url.includes("://") || url.startsWith("file://");
     void trickplaySetUrl(url).then(() => {
       if (!alive) return;
-      if (!isLive) void trickplaySpawnEager();
+      if (!isLive) {
+        if (isLocal) {
+          setTimeout(() => {
+            if (alive) void trickplaySpawnEager();
+          }, 3500);
+        } else {
+          void trickplaySpawnEager();
+        }
+      }
     });
     return () => {
       alive = false;
