@@ -177,7 +177,7 @@ function PlaybackSyncGroup() {
       />
       <ToggleRow
         label={t("Smooth speed catch-up (Syncplay style)")}
-        sub={t("Gently slow down or speed up playback (0.95× / 1.05×) to correct small drift (1.5s–4.0s) without jarring seeks.")}
+        sub={t("Gently slow down playback (0.95×) to correct small drift without jarring seeks.")}
         value={settings.togetherSlowOnDesync}
         onChange={(togetherSlowOnDesync) => update({ togetherSlowOnDesync })}
       />
