@@ -53,6 +53,7 @@ export function StatusPicker({
         : "start-2 end-2 lg:start-4 lg:end-4";
   return (
     <div
+      data-harbor-glass="popover"
       className={`absolute z-10 overflow-hidden rounded-xl border border-edge bg-elevated shadow-[0_20px_40px_-10px_rgba(0,0,0,0.6)] ${vpos} ${hpos}`}
     >
       <div className="px-3.5 pb-1 pt-2.5 text-[10.5px] font-bold uppercase tracking-[0.16em] text-ink-subtle">

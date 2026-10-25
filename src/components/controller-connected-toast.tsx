@@ -56,6 +56,7 @@ export function ControllerConnectedToast() {
       }}
     >
       <div
+        data-harbor-glass="popover"
         className={`flex items-center gap-4 rounded-lg bg-elevated px-5 py-3.5 ring-1 ring-edge shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
           shown ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0"
         }`}

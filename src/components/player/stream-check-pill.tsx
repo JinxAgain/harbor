@@ -39,6 +39,8 @@ export function StreamCheckPill({
 
   return (
     <div
+      data-harbor-glass="pill"
+      data-player-glass="pill"
       className={`pointer-events-auto absolute left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-2xl border border-white/12 bg-black/85 py-2.5 ps-3.5 pe-2.5 shadow-[0_18px_48px_-18px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-2xl animate-in fade-in slide-in-from-top-2 duration-300 ${compact ? "top-2" : "top-7"}`}
       role="status"
     >

@@ -214,6 +214,7 @@ export function Dropdown({
             role="listbox"
             aria-label={ariaLabel}
             data-dropdown-menu
+            data-harbor-glass="popover"
             data-settings-menu={btnRef.current?.closest(".harbor-settings-shell") ? "" : undefined}
             onKeyDown={onMenuKeyDown}
             style={{

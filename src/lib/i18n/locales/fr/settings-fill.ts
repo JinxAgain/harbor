@@ -422,6 +422,10 @@ const settingsFill: Record<string, string> = {
   "Use addon order": "Respecter l’ordre des extensions",
   "Use community corrections": "Utiliser les corrections de la communauté",
   "Use liquid glass": "Utiliser le verre liquide",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "Utilisez le verre liquide sur les surfaces flottantes, menus, boîtes de dialogue, docks et incrustations du lecteur Harbor.",
+  "How solid glass surfaces look across Harbor.":
+    "Niveau d'opacité des surfaces en verre dans Harbor.",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "Utilisez le verre liquide pour la pastille de recherche et les flèches de défilement des lignes. Les réglages d’apparence ci-dessous s’appliquent à toutes les surfaces en verre de Harbor.",
   "Use model": "Utiliser le modèle",

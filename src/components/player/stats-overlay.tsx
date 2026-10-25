@@ -120,7 +120,11 @@ export function StatsOverlay({ snap, engine }: { snap: PlayerSnapshot; engine: "
   rows.push([tr("Volume"), `${Math.round(snap.volume * 100)}%${snap.muted ? tr(" · muted") : ""}`]);
 
   return (
-    <div className="pointer-events-none absolute start-6 top-20 z-20 max-w-[320px] animate-fade-in rounded-2xl border border-edge-soft bg-canvas/85 p-4 font-mono text-[11.5px] leading-relaxed text-ink shadow-[0_18px_50px_-15px_rgba(0,0,0,0.7)] backdrop-blur-md">
+    <div
+      data-harbor-glass="pill"
+      data-player-glass="hud"
+      className="pointer-events-none absolute start-6 top-20 z-20 max-w-[320px] animate-fade-in rounded-2xl border border-edge-soft bg-canvas/85 p-4 font-mono text-[11.5px] leading-relaxed text-ink shadow-[0_18px_50px_-15px_rgba(0,0,0,0.7)] backdrop-blur-md"
+    >
       <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-ink-subtle">
         {tr("Playback stats · press I to hide")}
       </p>

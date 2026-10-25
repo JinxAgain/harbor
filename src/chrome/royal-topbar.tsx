@@ -95,6 +95,8 @@ export function RoyalTopbar() {
       >
         <div
           data-tauri-drag-region
+          data-harbor-glass="dock"
+          data-glass-tier="enhanced"
           onContextMenu={openEmptyMenu}
           className="harbor-royal-bar pointer-events-auto grid h-14 w-full grid-cols-[1fr_auto] items-center gap-3 rounded-md border border-[color-mix(in_srgb,var(--color-accent)_22%,var(--color-edge))] bg-canvas/85 ps-3.5 pe-2 shadow-[inset_0_1px_0_color-mix(in_srgb,var(--color-accent)_14%,transparent),0_22px_60px_-26px_rgba(0,0,0,0.85)] backdrop-blur-xl"
         >

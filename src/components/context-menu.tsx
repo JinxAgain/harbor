@@ -993,6 +993,7 @@ export function ContextMenu() {
       <div
         ref={ref}
         role="menu"
+        data-harbor-glass="popover"
         data-tv-focus-scope={state.target.kind === "nav" || undefined}
         onKeyDown={(e) => {
           if (state.target.kind !== "nav") return;

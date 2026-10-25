@@ -62,6 +62,7 @@ export function CriticismPanel({
       <div
         role="dialog"
         aria-label={title}
+        data-harbor-glass="popover"
         className="overflow-hidden rounded-xl border border-edge bg-elevated shadow-[0_18px_50px_-15px_rgba(0,0,0,0.7)] animate-popover-in"
       >
         <div className="flex flex-col gap-0.5 border-b border-edge-soft px-3.5 py-2.5">

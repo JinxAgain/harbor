@@ -73,7 +73,10 @@ export function GuideModal({ onClose }: { onClose: () => void }) {
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[260] flex flex-col bg-canvas/95 backdrop-blur-xl">
+    <div
+      data-harbor-glass="modal"
+      className="fixed inset-0 z-[260] flex flex-col bg-canvas/95 backdrop-blur-xl"
+    >
       <header className="flex shrink-0 items-center justify-between gap-4 border-b border-edge-soft/40 px-8 py-5">
         <div className="flex items-center gap-4">
           <h2 className="font-display text-[22px] font-medium tracking-tight text-ink">

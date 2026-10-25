@@ -87,6 +87,7 @@ import { MalSyncToast } from "@/components/mal/mal-sync-toast";
 import { MangaSyncToast } from "@/components/manga/manga-sync-toast";
 import { TogetherLeaveForLiveModal } from "@/components/together-leave-for-live-modal";
 import { ThemeBackdrop } from "@/components/theme-backdrop";
+import { LiquidGlassFilterDefs } from "@/components/LiquidGlassFilterDefs";
 import { TopRankModal } from "@/components/top-rank-modal";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { listMangaProgress } from "@/lib/manga-progress";
@@ -420,6 +421,7 @@ export function App({ onReady }: { onReady?: () => void }) {
                                                     <MalAvatarSync />
                                                     <MiddleClickScroll />
                                                     <ThemeBackdrop />
+                                                    <LiquidGlassFilterDefs />
                                                     <WatchlistSync />
                                                     {isMobileWeb() || isRemoteRoute() ? (
                                                       <>
@@ -1559,6 +1561,7 @@ function Shell({ onReady }: { onReady?: () => void }) {
       className="relative flex h-full"
     >
       <div data-harbor-native-backdrop className="relative flex h-full min-w-0 flex-1">
+        <div data-harbor-sidebar-ambient aria-hidden="true" />
         {!settingsTop && !playerActive && !standaloneLive && !pickerTop && layout === "sidebar" && (
           <Sidebar />
         )}

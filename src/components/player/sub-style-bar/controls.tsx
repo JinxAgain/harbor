@@ -89,6 +89,8 @@ export function FontMenu({
             />
             <div
               ref={menuRef}
+              data-harbor-glass="popover"
+              data-player-glass="menu"
               className="fixed z-[320] max-h-[min(60vh,380px)] w-[208px] overflow-y-auto rounded-md bg-elevated p-1.5 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] [scrollbar-width:thin]"
               style={{ top: pos.top, left: pos.left }}
             >

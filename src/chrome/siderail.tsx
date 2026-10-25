@@ -83,6 +83,8 @@ export function SideRail() {
       <aside
         data-tv-focus-scope={editing || undefined}
         aria-hidden={chromeHidden}
+        data-harbor-glass="dock"
+        data-glass-tier="enhanced"
         className={`relative z-[60] flex shrink-0 flex-col border-e border-edge-soft bg-canvas/40 transition-[opacity,width] duration-300 ${
           collapsed ? "w-[68px]" : "w-[200px]"
         } ${chromeHidden ? "pointer-events-none opacity-0" : "opacity-100"}`}

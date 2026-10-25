@@ -58,7 +58,11 @@ function GenreSelect({
         />
       </button>
       {open && (
-        <div className="absolute left-0 top-[calc(100%+6px)] z-40 max-h-64 w-max min-w-[132px] overflow-y-auto rounded-xl bg-neutral-900 p-1 ring-1 ring-white/12 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.85)] [scrollbar-width:thin]">
+        <div
+          data-harbor-glass="popover"
+          data-player-glass="menu"
+          className="absolute left-0 top-[calc(100%+6px)] z-40 max-h-64 w-max min-w-[132px] overflow-y-auto rounded-xl bg-neutral-900 p-1 ring-1 ring-white/12 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.85)] [scrollbar-width:thin]"
+        >
           {options.map((o) => {
             const selected = o.value === value;
             return (

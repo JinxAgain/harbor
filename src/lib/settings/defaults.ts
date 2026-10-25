@@ -83,7 +83,7 @@ export const DEFAULT: Settings = {
   defaultLiquidGlassBlur: 8,
   defaultLiquidGlassTint: 20,
   experimentalLiquidGlassEnabled: false,
-  experimentalLiquidGlassOpacity: 25,
+  experimentalLiquidGlassOpacity: 90,
   posterBackdropExpansion: false,
   posterFocusedCard: false,
   posterDockMagnification: false,

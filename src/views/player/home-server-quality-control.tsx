@@ -58,7 +58,11 @@ export function HomeServerQualityControl({
       onClick={(event) => event.stopPropagation()}
     >
       {open && (
-        <div className="absolute bottom-[calc(100%+12px)] left-1/2 w-56 max-w-[calc(100vw-32px)] -translate-x-1/2 animate-menu-pop overflow-hidden rounded-md bg-elevated p-1.5 text-ink shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]">
+        <div
+          data-harbor-glass="popover"
+          data-player-glass="menu"
+          className="absolute bottom-[calc(100%+12px)] left-1/2 w-56 max-w-[calc(100vw-32px)] -translate-x-1/2 animate-menu-pop overflow-hidden rounded-md bg-elevated p-1.5 text-ink shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]"
+        >
           <div className="px-3 pb-2 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
             Home server quality
           </div>

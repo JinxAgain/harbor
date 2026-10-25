@@ -127,7 +127,10 @@ export function SearchSortRow(props: {
               onClick={() => setSortOpen(false)}
               className="fixed inset-0 z-10 cursor-default"
             />
-            <div className="absolute end-0 top-full z-20 mt-1 min-w-[176px] rounded-xl bg-elevated p-1 ring-1 ring-edge shadow-[0_18px_44px_-14px_rgba(0,0,0,0.7)]">
+            <div
+              data-harbor-glass="popover"
+              className="absolute end-0 top-full z-20 mt-1 min-w-[176px] rounded-xl bg-elevated p-1 ring-1 ring-edge shadow-[0_18px_44px_-14px_rgba(0,0,0,0.7)]"
+            >
               {sortOptions.map((opt) => {
                 const selected = props.sortBy === opt.key;
                 return (

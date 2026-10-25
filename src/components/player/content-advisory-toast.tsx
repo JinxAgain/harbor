@@ -187,6 +187,8 @@ export function ContentAdvisoryToast({
         }
         onFocusCapture={preview ? undefined : () => setPaused(true)}
         onBlurCapture={preview ? undefined : handleBlur}
+        data-harbor-glass="pill"
+        data-player-glass="hud"
         className={`${
           preview
             ? "relative"

@@ -158,6 +158,7 @@ export function HoverTooltip({
               <div
                 role="tooltip"
                 id={descriptionId}
+                data-harbor-glass="popover"
                 className={`harbor-float relative w-max rounded-md bg-raised leading-snug font-medium text-ink ring-1 ring-edge ${
                   large
                     ? "max-w-[320px] rounded-xl px-4 py-3 text-[15px] font-semibold"

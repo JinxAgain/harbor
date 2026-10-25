@@ -215,6 +215,10 @@ const settingsFill: Record<string, string> = {
     "يكبّر الملصقات المجاورة بلطف أثناء تنقّلك عبر صف الملصقات، مثل الرصيف. معطّل افتراضيًا.",
   "Liquid Glass": "الزجاج السائل",
   "Use liquid glass": "استخدم الزجاج السائل",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "استخدم الزجاج السائل عبر أسطح هاربور العائمة والقوائم والمربعات الحوارية والأرصفة وتراكبات المشغل.",
+  "How solid glass surfaces look across Harbor.":
+    "مدى صلوبة الأسطح الزجاجية عبر هاربور.",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "استخدم الزجاج السائل لشريط البحث وأسهم تمرير الصفوف. إعدادات المظهر أدناه مشتركة بين أسطح الزجاج في Harbor.",
   "Enhanced liquid glass": "زجاج سائل محسّن",

@@ -29,6 +29,7 @@ export function AccountMenuPanel({
 
   return (
     <div
+      data-harbor-glass="popover"
       className={`harbor-profile-dropdown absolute z-40 overflow-hidden rounded-md bg-elevated ring-1 ring-edge shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] ${positionClass}`}
     >
       {showHeader && (

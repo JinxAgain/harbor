@@ -166,7 +166,11 @@ export function SeekStepBtn({
         </button>
       </Tooltip>
       {pickerOpen && (
-        <div className="absolute bottom-[calc(100%+12px)] left-1/2 z-30 w-60 max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-md bg-elevated p-3 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] animate-menu-pop">
+        <div
+          data-harbor-glass="popover"
+          data-player-glass="menu"
+          className="absolute bottom-[calc(100%+12px)] left-1/2 z-30 w-60 max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-md bg-elevated p-3 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] animate-menu-pop"
+        >
           <div className="mb-2.5 text-[10.5px] font-semibold uppercase tracking-[0.2em] text-ink-subtle">
             {word}
           </div>

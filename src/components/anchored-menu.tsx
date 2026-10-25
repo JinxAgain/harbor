@@ -84,6 +84,7 @@ export function AnchoredMenu({
       <div
         ref={menuRef}
         data-anchored-up={pos?.up || undefined}
+        data-harbor-glass-host="anchored"
         className="fixed z-[310] flex flex-col"
         style={{
           top: pos?.top ?? 0,

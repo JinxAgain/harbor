@@ -23,10 +23,12 @@ export function TogetherLeaveForLiveModal() {
 
   return createPortal(
     <div
+      data-harbor-glass="scrim"
       className="fixed inset-0 z-[175] flex items-center justify-center bg-black/60 px-6 animate-fade-in"
       onClick={cancelLeavePartyForLive}
     >
       <div
+        data-harbor-glass="modal"
         className="w-full max-w-md rounded-2xl border border-edge bg-surface p-6 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)] animate-modal-in"
         onClick={(e) => e.stopPropagation()}
       >

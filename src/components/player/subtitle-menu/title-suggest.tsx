@@ -31,6 +31,8 @@ export function TitleSuggestDropdown({
   return createPortal(
     <div
       data-title-suggest-dropdown=""
+      data-harbor-glass="popover"
+      data-player-glass="menu"
       className="fixed z-[2000] overflow-hidden rounded-md bg-elevated shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]"
       style={{ top: rect.top, left: rect.left, width: rect.width }}
     >

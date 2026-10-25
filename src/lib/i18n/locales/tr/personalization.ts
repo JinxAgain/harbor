@@ -1435,6 +1435,10 @@ const personalization: Record<string, string> = {
     "Yalnızca bunu kullan (asla yerel motora geri dönme)",
   "Use in Nuvio": "Nuvio'da kullan",
   "Use liquid glass": "Sıvı cam kullan",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "Harbor'ın yüzen yüzeylerinde, menülerinde, iletişim kutularında, rıhtımlarında ve oynatıcı katmanlarında sıvı cam kullanın.",
+  "How solid glass surfaces look across Harbor.":
+    "Harbor genelinde cam yüzeylerin ne kadar katı görüneceği.",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "Arama kapsülü ve satır kaydırma oklarında sıvı cam kullanın. Aşağıdaki görünüm ayarları Harbor'daki tüm cam yüzeylerde ortaktır.",
   "Use live web context": "Canlı web bağlamını kullan",

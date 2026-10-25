@@ -51,12 +51,17 @@ export function StillWatchingPrompt({
 
   return (
     <div
+      data-harbor-glass="scrim"
       className="absolute inset-0 z-[130] flex items-center justify-center bg-black/70 backdrop-blur-sm"
       role="dialog"
       aria-modal
       style={{ opacity: entered ? 1 : 0, transition: "opacity 240ms ease-out" }}
     >
-      <div className="mx-6 flex w-full max-w-md flex-col items-center rounded-xl border border-white/10 bg-neutral-950/80 px-8 py-9 text-center shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)]">
+      <div
+        data-harbor-glass="modal"
+        data-player-glass="panel"
+        className="mx-6 flex w-full max-w-md flex-col items-center rounded-xl border border-white/10 bg-neutral-950/80 px-8 py-9 text-center shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)]"
+      >
         <h2 className="font-display text-[27px] font-medium tracking-tight text-white">
           {t("Still watching?")}
         </h2>

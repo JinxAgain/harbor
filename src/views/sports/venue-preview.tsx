@@ -96,7 +96,11 @@ export function VenuePreview({
   const singles = ["tennis", "boxing", "combat"].includes(sport);
   const singleTeam = ["rugby", "lacrosse", "cricket", "aussie"].includes(sport);
   return (
-    <details className="sh-field-preview" onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details
+      className="sh-field-preview"
+      data-harbor-glass="popover"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary>
         <SportIcon name={sport} />
         <span>

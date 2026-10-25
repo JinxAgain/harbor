@@ -69,6 +69,8 @@ export function ContentAdvisoryPrompt({
       <div
         role="region"
         aria-label={t("Show content ratings?")}
+        data-harbor-glass="pill"
+        data-player-glass="hud"
         className={`harbor-advisory-prompt absolute ${positionClass} z-30 w-[280px] max-w-[calc(100vw-3rem)] rounded-[4px] bg-black/80 p-3 text-white ${exiting ? "pointer-events-none" : "pointer-events-auto"}`}
         style={{
           animation: exiting

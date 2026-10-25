@@ -89,7 +89,7 @@ export function GameLibraryDock({ visible: pageVisible }: { visible: boolean }) 
   const error = prefs.error || shortcuts.error || custom.error || emulation.error || (library.launchError ? "games.library.launchError" : launchers.launchError ? "games.dock.launchError" : "");
   const displayed = dockOpen || retained ? shown : [];
   if (!visible) return null;
-  return <aside className={`game-library-dock${dockOpen ? " is-open" : retained ? " is-closing" : ""}`} aria-label={t("games.dock.title")}
+  return <aside data-harbor-glass="dock" data-glass-tier="enhanced" className={`game-library-dock${dockOpen ? " is-open" : retained ? " is-closing" : ""}`} aria-label={t("games.dock.title")}
     onPointerEnter={event => { if (event.pointerType !== "mouse") return; pointerInside.current = true; cancelHover(); if (!dockOpen) hoverTimer.current = window.setTimeout(() => show(toggle.current!, true), 150); }}
     onPointerLeave={() => { pointerInside.current = false; cancelHover(); if (!options && !panel.current?.contains(document.activeElement)) hoverTimer.current = window.setTimeout(() => close(false), 420); }}
     onFocus={cancelHover} onBlur={event => { if (!pointerInside.current && !event.currentTarget.contains(event.relatedTarget as Node) && !options) { cancelHover(); hoverTimer.current = window.setTimeout(() => close(false), 420); } }}>

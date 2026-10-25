@@ -176,7 +176,10 @@ function FacetMenu({
             onClick={onClose}
             className="fixed inset-0 z-10 cursor-default"
           />
-          <div className="absolute start-0 top-full z-20 mt-1 min-w-[176px] rounded-xl bg-elevated p-1 ring-1 ring-edge shadow-[0_18px_44px_-14px_rgba(0,0,0,0.7)]">
+          <div
+            data-harbor-glass="popover"
+            className="absolute start-0 top-full z-20 mt-1 min-w-[176px] rounded-xl bg-elevated p-1 ring-1 ring-edge shadow-[0_18px_44px_-14px_rgba(0,0,0,0.7)]"
+          >
             <MenuItem
               label={t("All")}
               count={entry.total}

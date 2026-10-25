@@ -63,6 +63,7 @@ export function CardCssPopout({
 
   return createPortal(
     <div
+      data-harbor-glass="scrim"
       className={`${closing ? "animate-scrim-out" : "animate-scrim-in"} pointer-events-auto fixed inset-0 z-[246] grid place-items-center p-8`}
       onClick={(e) => {
         if (e.target === e.currentTarget) close();
@@ -72,6 +73,7 @@ export function CardCssPopout({
         role="dialog"
         aria-label={t("Custom cards")}
         aria-modal="true"
+        data-harbor-glass="modal"
         className={`${closing ? "animate-dialog-out" : "animate-dialog-in"} flex h-[min(680px,86vh)] w-[min(1080px,100%)] flex-col overflow-hidden rounded-md bg-surface`}
       >
         <header className="flex shrink-0 items-start gap-4 px-6 pb-5 pt-6">

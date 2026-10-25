@@ -79,6 +79,7 @@ export function LiquidGlassSurface({
       {...wrapperProps}
       style={surfaceStyle}
       data-liquid-glass={interactive ? "interactive" : "static"}
+      data-harbor-glass="pill"
       className={`${className} ${surfaceClassName}`}
     >
       <div className={`relative z-10 isolate h-full w-full ${contentClassName}`}>{children}</div>
@@ -155,8 +156,8 @@ export function ThreeLiquidGlassSurface({
     <LiquidGlassSurface
       {...props}
       style={{ ...style, ...defaultStyle }}
-      blurRadius={settings.defaultLiquidGlassBlur}
-      tintOpacity={settings.defaultLiquidGlassTint}
+      blurRadius={Math.round(8 * (settings.experimentalLiquidGlassOpacity / 100))}
+      tintOpacity={settings.experimentalLiquidGlassOpacity}
     />
   );
 }

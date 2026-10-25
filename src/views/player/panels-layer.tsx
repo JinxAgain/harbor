@@ -72,6 +72,8 @@ export const PanelsLayer = memo(function PanelsLayer({
           aria-label={t("Up next")}
           tabIndex={upNextButtonVisible ? 0 : -1}
           aria-hidden={!upNextButtonVisible}
+          data-harbor-glass="pill"
+          data-player-glass="pill"
           className={`group absolute top-1/2 z-20 flex h-32 -translate-y-1/2 flex-col items-center justify-center gap-2.5 bg-elevated/45 text-ink shadow-[0_6px_20px_-10px_rgba(0,0,0,0.5)] backdrop-blur-md transition-[padding,background,opacity] duration-300 hover:bg-elevated/85 ${
             upNextButtonVisible ? "pointer-events-auto opacity-40 hover:opacity-100" : "pointer-events-none opacity-0"
           } ${

@@ -69,7 +69,10 @@ export function TogetherHostLeavingPrompt() {
 
   return (
     <div className="pointer-events-none fixed inset-x-0 top-24 z-[140] flex justify-center px-6">
-      <div className="pointer-events-auto flex w-full max-w-md flex-col gap-4 rounded-2xl border border-edge bg-surface p-5 shadow-[0_24px_60px_-15px_rgba(0,0,0,0.75)] animate-popover-in">
+      <div
+        data-harbor-glass="modal"
+        className="pointer-events-auto flex w-full max-w-md flex-col gap-4 rounded-2xl border border-edge bg-surface p-5 shadow-[0_24px_60px_-15px_rgba(0,0,0,0.75)] animate-popover-in"
+      >
         <div className="flex flex-col gap-1.5">
           <span className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-accent">
             {t("{name} left the video", { name: incomingHostLeaving.name })}

@@ -89,6 +89,8 @@ export function CinematicOverlay() {
         <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/85 via-black/45 to-transparent" />
         <div
           data-tauri-drag-region
+          data-harbor-glass="dock"
+          data-glass-tier="enhanced"
           onContextMenu={openEmptyMenu}
           className="pointer-events-auto relative flex h-14 w-full items-center gap-2 px-1"
         >

@@ -60,6 +60,8 @@ export function SpeakerAudioBar({
       ref={panel}
       dir={dir}
       role="dialog"
+      data-harbor-glass="pill"
+      data-player-glass="pill"
       onMouseDown={(event) => event.stopPropagation()}
       style={{
         right: Math.max(

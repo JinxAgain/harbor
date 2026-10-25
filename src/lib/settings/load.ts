@@ -41,6 +41,7 @@ import { DEFAULT, STORAGE_KEY } from "./defaults";
 import type { Settings } from "./types";
 import { adoptLegacyPlaylists, readPlaylists } from "@/lib/iptv/playlists-store";
 import { sanitizeDisplaySelection } from "@/lib/monitors";
+import { clampGlassOpacity } from "@/lib/liquid-glass";
 
 const HEX_RE = /^#[0-9a-f]{6}$/i;
 
@@ -145,7 +146,7 @@ export function loadStoredSettings(rawKey: string = STORAGE_KEY): Settings {
   return settings;
 }
 
-function parseStoredSettings(raw: string | null): Settings {
+export function parseStoredSettings(raw: string | null): Settings {
   if (!raw) {
     return {
       ...DEFAULT,
@@ -178,6 +179,7 @@ function parseStoredSettings(raw: string | null): Settings {
       _animeRowsV1?: boolean;
       _tennisWtaV1?: boolean;
       _liquidGlassOptIn?: boolean;
+      _liquidGlassUnifiedV1?: boolean;
       _navThemeRepairV1?: boolean;
       _navHideMigrateV1?: boolean;
       _playlistsTabV1?: boolean;
@@ -312,6 +314,19 @@ function parseStoredSettings(raw: string | null): Settings {
       parsed.experimentalLiquidGlassEnabled = false;
       parsed._liquidGlassOptIn = true;
     }
+    if (!parsed._liquidGlassUnifiedV1) {
+      if (
+        parsed.experimentalLiquidGlassOpacity == null ||
+        parsed.experimentalLiquidGlassOpacity === 25
+      ) {
+        parsed.experimentalLiquidGlassOpacity = DEFAULT.experimentalLiquidGlassOpacity;
+      }
+      parsed._liquidGlassUnifiedV1 = true;
+    }
+    parsed.experimentalLiquidGlassOpacity = clampGlassOpacity(
+      parsed.experimentalLiquidGlassOpacity,
+      DEFAULT.experimentalLiquidGlassOpacity,
+    );
     if (!parsed._smoothScrollOptIn) {
       parsed.smoothScroll = false;
       parsed._smoothScrollOptIn = true;

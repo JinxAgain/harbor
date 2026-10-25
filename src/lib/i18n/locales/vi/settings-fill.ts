@@ -206,6 +206,10 @@ const settingsFill: Record<string, string> = {
     "Phóng đại nhẹ các áp phích lân cận khi bạn di chuyển qua một hàng áp phích, giống như thanh Dock. Tắt theo mặc định.",
   "Liquid Glass": "Kính lỏng",
   "Use liquid glass": "Dùng kính lỏng",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "Sử dụng kính lỏng trên các bề mặt nổi, menu, hộp thoại, thanh dock và lớp phủ trình phát của Harbor.",
+  "How solid glass surfaces look across Harbor.":
+    "Độ đặc của các bề mặt kính trên toàn Harbor.",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "Dùng kính lỏng cho ô tìm kiếm dạng viên thuốc và các mũi tên cuộn hàng. Các cài đặt giao diện bên dưới được dùng chung cho mọi bề mặt kính trong Harbor.",
   "Enhanced liquid glass": "Kính lỏng nâng cao",

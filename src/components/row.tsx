@@ -889,7 +889,7 @@ function EdgeArrow({
           style={{
             boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 0 rgba(0,0,0,0.04)",
           }}
-          className={`h-11 w-11 pointer-events-auto border border-white/[0.06] transition-opacity duration-200 ${
+          className={`harbor-row-arrow h-11 w-11 pointer-events-auto border border-white/[0.06] transition-opacity duration-200 ${
             visible
               ? "opacity-85 group-hover/row:opacity-100 focus-within:opacity-100"
               : "pointer-events-none opacity-0"

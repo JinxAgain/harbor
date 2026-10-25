@@ -50,7 +50,11 @@ export function InlineSourceSwitcher({
         />
       </button>
       {open && (
-        <div className="absolute start-0 top-[calc(100%+8px)] z-[100] w-[300px] overflow-hidden rounded-2xl border border-edge-soft bg-elevated shadow-[0_18px_50px_-15px_rgba(0,0,0,0.6)]">
+        <div
+          data-harbor-glass="popover"
+          data-player-glass="menu"
+          className="absolute start-0 top-[calc(100%+8px)] z-[100] w-[300px] overflow-hidden rounded-2xl border border-edge-soft bg-elevated shadow-[0_18px_50px_-15px_rgba(0,0,0,0.6)]"
+        >
           <div className="border-b border-edge-soft/55 px-3.5 py-2 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-ink-subtle">
             {t("Browse provider")}
           </div>

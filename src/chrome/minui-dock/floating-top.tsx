@@ -58,6 +58,7 @@ export function FloatingTop() {
         {showBack && (
           <button
             type="button"
+            data-harbor-glass="pill"
             onClick={onBack}
             aria-label={t("common.back")}
             className="pointer-events-auto flex h-10 shrink-0 items-center gap-2 rounded-full border border-edge-soft bg-surface ps-2.5 pe-4 text-[13px] font-semibold text-ink-muted shadow-[0_2px_8px_-4px_rgba(15,15,18,0.16)] transition-all hover:-translate-y-px hover:border-edge hover:text-ink hover:shadow-[0_4px_12px_-4px_rgba(15,15,18,0.22)]"

@@ -6,7 +6,11 @@ export function ForeignNoticeBox(props: {
 }) {
   const t = useT();
   return (
-    <div className="pointer-events-auto absolute end-6 bottom-32 z-30 flex max-w-sm items-center gap-3 rounded-2xl border border-white/15 bg-black/72 px-4 py-3 text-white backdrop-blur-xl">
+    <div
+      data-harbor-glass="pill"
+      data-player-glass="hud"
+      className="pointer-events-auto absolute end-6 bottom-32 z-30 flex max-w-sm items-center gap-3 rounded-2xl border border-white/15 bg-black/72 px-4 py-3 text-white backdrop-blur-xl"
+    >
       <div className="flex flex-col">
         <span className="text-[11px] uppercase tracking-wider text-white/55">{t("Now watching")}</span>
         <span className="text-[14px] font-medium">{props.title ?? t("Something else")}</span>

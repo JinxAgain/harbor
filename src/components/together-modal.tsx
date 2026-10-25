@@ -18,7 +18,6 @@ import { ReturnToVideo } from "./together-modal/return-to-video";
 import { ListenTogetherCta } from "./together-modal/listen-together-cta";
 import { useListenTogether } from "@/lib/listen-together/provider";
 import { TogetherRelayBanner } from "./together-relay-banner";
-import { ThreeLiquidGlassSurface } from "@/components/ThreeLiquidGlassSurface";
 import { isValidRelayUrl } from "@/lib/together/invite";
 import { normalizeRoomCode } from "@/lib/together/protocol";
 
@@ -503,26 +502,16 @@ function TogetherSurface({
   }
 
   return (
-    <ThreeLiquidGlassSurface
+    <div
       role="dialog"
       aria-modal="true"
       aria-label={label}
-      radius="16px"
-      shaderRadius={0.58}
-      intensity={0.2}
-      interactive={false}
-      alwaysActive
-      style={{
-        ...cornerStyle,
-        background:
-          "linear-gradient(145deg, rgba(7,11,17,0.50), rgba(7,11,17,0.38) 56%, rgba(7,11,17,0.44))",
-        boxShadow:
-          "inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(110,185,255,0.07), 0 28px 72px -24px rgba(0,0,0,0.78)",
-      }}
-      className={`${surfaceClass} border-white/[0.16]`}
-      contentClassName={`${contentClass} text-white/[0.94] [text-shadow:0_1px_2px_rgba(0,0,0,0.66)] [&_.text-ink]:!text-white/[0.96] [&_.text-ink-muted]:!text-white/[0.80] [&_.text-ink-subtle]:!text-white/[0.64] [&_.border-edge]:!border-white/[0.16] [&_.border-edge-soft]:!border-white/[0.10] [&_input]:!border-white/[0.16] [&_input]:!bg-black/[0.24] [&_input]:!text-white [&_input::placeholder]:!text-white/35 [&_textarea]:!border-white/[0.16] [&_textarea]:!bg-black/[0.24] [&_textarea]:!text-white [&_textarea::placeholder]:!text-white/35 [&_button]:focus-visible:outline-none [&_button]:focus-visible:ring-1 [&_button]:focus-visible:ring-white/30`}
+      data-harbor-glass="modal"
+      data-glass-tier="enhanced"
+      style={cornerStyle}
+      className={surfaceClass}
     >
-      {children}
-    </ThreeLiquidGlassSurface>
+      <div className={contentClass}>{children}</div>
+    </div>
   );
 }

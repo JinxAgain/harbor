@@ -92,7 +92,11 @@ export function SyncControl({
       </button>
 
       {open && (
-        <div className="absolute end-0 top-[calc(100%+6px)] z-[60] w-[206px] overflow-hidden rounded-md bg-elevated py-1 shadow-[0_18px_44px_-18px_rgba(0,0,0,0.85)] animate-menu-pop">
+        <div
+          data-harbor-glass="popover"
+          data-player-glass="menu"
+          className="absolute end-0 top-[calc(100%+6px)] z-[60] w-[206px] overflow-hidden rounded-md bg-elevated py-1 shadow-[0_18px_44px_-18px_rgba(0,0,0,0.85)] animate-menu-pop"
+        >
           <button
             type="button"
             disabled={!canLiveSync || !onLiveSync}

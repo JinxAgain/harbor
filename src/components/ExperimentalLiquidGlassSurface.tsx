@@ -315,6 +315,8 @@ export function ExperimentalLiquidGlassSurface({
       className={className}
       style={glassStyle}
       data-liquid-glass={interactive ? "interactive" : "static"}
+      data-harbor-glass="pill"
+      data-glass-tier="enhanced"
       data-liquid-active={active ? "true" : "false"}
       data-liquid-pressed={pressed ? "true" : "false"}
       onPointerEnter={(event) => {

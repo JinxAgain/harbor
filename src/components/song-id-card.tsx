@@ -30,6 +30,9 @@ export function SongIdCard({
     <div
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
+      data-harbor-glass="modal"
+      data-glass-tier="enhanced"
+      data-player-glass="panel"
       onClick={interactive ? onOpen : undefined}
       onKeyDown={interactive ? (event) => {
         if (event.key !== "Enter" && event.key !== " ") return;

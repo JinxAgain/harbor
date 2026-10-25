@@ -50,7 +50,11 @@ export function SeasonPicker({
         />
       </button>
       {open && (
-        <div className="absolute end-0 top-full z-30 mt-2 max-h-[52vh] w-44 overflow-y-auto rounded-md bg-elevated p-1.5 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] animate-in fade-in slide-in-from-top-1 duration-150">
+        <div
+          data-harbor-glass="popover"
+          data-player-glass="menu"
+          className="absolute end-0 top-full z-30 mt-2 max-h-[52vh] w-44 overflow-y-auto rounded-md bg-elevated p-1.5 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] animate-in fade-in slide-in-from-top-1 duration-150"
+        >
           {seasons.map((n) => (
             <button
               key={n}

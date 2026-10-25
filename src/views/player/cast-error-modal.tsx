@@ -29,8 +29,13 @@ export function CastErrorModal({
   if (!error) return null;
 
   return createPortal(
-    <div className="pointer-events-auto fixed inset-0 z-[210] flex animate-[harbor-cast-err-in_180ms_ease-out] items-center justify-center bg-canvas/85 backdrop-blur-md">
+    <div
+      data-harbor-glass="scrim"
+      className="pointer-events-auto fixed inset-0 z-[210] flex animate-[harbor-cast-err-in_180ms_ease-out] items-center justify-center bg-canvas/85 backdrop-blur-md"
+    >
       <div
+        data-harbor-glass="modal"
+        data-player-glass="panel"
         className="relative mx-6 w-full max-w-[440px] rounded-xl border border-edge bg-elevated p-7 shadow-[0_40px_120px_-30px_rgba(0,0,0,0.9)]"
         onClick={(e) => e.stopPropagation()}
       >

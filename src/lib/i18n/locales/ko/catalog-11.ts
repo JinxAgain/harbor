@@ -347,6 +347,10 @@ const catalog11: Record<string, string> = {
   "Use in Nuvio": "Nuvio에서 사용",
   "Use it": "사용",
   "Use liquid glass": "리퀴드 글래스 사용",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "Harbor의 플로팅 표면, 메뉴, 대화 상자, 독 및 플레이어 오버레이 전반에 리퀴드 글래스를 사용합니다.",
+  "How solid glass surfaces look across Harbor.":
+    "Harbor 전반의 유리 표면이 얼마나 불투명하게 보일지 설정합니다.",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "검색 필과 행 스크롤 화살표에 리퀴드 글래스를 사용합니다. 아래의 화면 설정은 Harbor의 모든 글래스 표면에 공통으로 적용됩니다.",
   "Use live web context": "실시간 웹 컨텍스트 사용",

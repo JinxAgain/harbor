@@ -7,7 +7,6 @@ import {
   Hourglass,
   MousePointer2,
   Moon,
-  Palette,
   Sailboat,
   Play,
   Sparkles,
@@ -183,15 +182,9 @@ const GAMES_SETTINGS_VISIBLE = true;
 export function DisplaySection() {
   const t = useT();
   const { settings, update } = useSettings();
-  const glassBlur = Number.isFinite(settings.defaultLiquidGlassBlur)
-    ? settings.defaultLiquidGlassBlur
-    : 8;
-  const glassTint = Number.isFinite(settings.defaultLiquidGlassTint)
-    ? settings.defaultLiquidGlassTint
-    : 20;
   const glassOpacity = Number.isFinite(settings.experimentalLiquidGlassOpacity)
     ? settings.experimentalLiquidGlassOpacity
-    : 25;
+    : DEFAULT.experimentalLiquidGlassOpacity;
   return (
     <>
       {GAMES_SETTINGS_VISIBLE && (
@@ -281,7 +274,7 @@ export function DisplaySection() {
             label={t("Use liquid glass")}
             newId="theme:liquid-glass"
             sub={t(
-              "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.",
+              "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.",
             )}
             value={settings.liquidGlass}
             onChange={(v) => update({ liquidGlass: v })}
@@ -298,49 +291,20 @@ export function DisplaySection() {
                 onChange={(v) => update({ experimentalLiquidGlassEnabled: v })}
                 leading={<Sparkles size={18} strokeWidth={2} />}
               />
-              {settings.experimentalLiquidGlassEnabled ? (
-                <SliderRow
-                  label={t("Glass opacity")}
-                  desc={t("How solid the enhanced glass looks.")}
-                  icon={<Droplet size={18} strokeWidth={2} />}
-                  value={glassOpacity}
-                  min={5}
-                  max={100}
-                  step={5}
-                  readout={`${glassOpacity}%`}
-                  resetTo={DEFAULT.experimentalLiquidGlassOpacity}
-                  onChange={(experimentalLiquidGlassOpacity) =>
-                    update({ experimentalLiquidGlassOpacity })
-                  }
-                />
-              ) : (
-                <>
-                  <SliderRow
-                    label={t("Glass blur")}
-                    desc={t("How much the surface blurs what is behind it.")}
-                    icon={<Droplet size={18} strokeWidth={2} />}
-                    value={glassBlur}
-                    min={0}
-                    max={20}
-                    step={0.5}
-                    readout={`${glassBlur}px`}
-                    resetTo={DEFAULT.defaultLiquidGlassBlur}
-                    onChange={(defaultLiquidGlassBlur) => update({ defaultLiquidGlassBlur })}
-                  />
-                  <SliderRow
-                    label={t("Glass tint")}
-                    desc={t("How much theme color the surface carries.")}
-                    icon={<Palette size={18} strokeWidth={2} />}
-                    value={glassTint}
-                    min={0}
-                    max={100}
-                    step={5}
-                    readout={`${glassTint}%`}
-                    resetTo={DEFAULT.defaultLiquidGlassTint}
-                    onChange={(defaultLiquidGlassTint) => update({ defaultLiquidGlassTint })}
-                  />
-                </>
-              )}
+              <SliderRow
+                label={t("Glass opacity")}
+                desc={t("How solid glass surfaces look across Harbor.")}
+                icon={<Droplet size={18} strokeWidth={2} />}
+                value={glassOpacity}
+                min={15}
+                max={100}
+                step={5}
+                readout={`${glassOpacity}%`}
+                resetTo={DEFAULT.experimentalLiquidGlassOpacity}
+                onChange={(experimentalLiquidGlassOpacity) =>
+                  update({ experimentalLiquidGlassOpacity })
+                }
+              />
             </Nested>
           )}
         </SettingGroup>

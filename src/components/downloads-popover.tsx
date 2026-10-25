@@ -92,6 +92,7 @@ export function DownloadsButton() {
           id={popoverId}
           role="region"
           aria-label={t("Downloads")}
+          data-harbor-glass="popover"
           className="absolute end-0 top-[calc(100%+8px)] z-50 w-[20rem] overflow-hidden rounded-2xl border border-edge bg-elevated shadow-[0_18px_50px_-15px_rgba(0,0,0,0.7)] animate-popover-in"
         >
           <div className="flex items-center justify-between px-4 pb-2 pt-3">

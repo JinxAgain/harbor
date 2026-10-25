@@ -198,7 +198,12 @@ export function LiveChannelOverlay({
   useScrollMemory(`live-overlay:${source.id}`, scrollRef, true);
 
   return (
-    <div className="pointer-events-auto absolute inset-0 z-[60] flex flex-col bg-canvas/95 text-ink">
+    <div
+      data-harbor-glass="modal"
+      data-glass-tier="enhanced"
+      data-player-glass="panel"
+      className="pointer-events-auto absolute inset-0 z-[60] flex flex-col bg-canvas/95 text-ink"
+    >
       <div className="flex shrink-0 items-start gap-3 px-6 pt-6">
         <button
           onClick={onClose}

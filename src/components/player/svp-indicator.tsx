@@ -48,6 +48,8 @@ export function SvpIndicator({
 
   return (
     <div
+      data-harbor-glass="pill"
+      data-player-glass="pill"
       className={`pointer-events-none absolute top-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-edge-soft bg-canvas/85 px-3 py-1.5 text-[11px] font-semibold tracking-wide text-ink/85 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.6)] backdrop-blur-md transition-opacity duration-300 ${chromeVisible && !suppressed ? "opacity-100" : "opacity-0"}`}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-accent" />

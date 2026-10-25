@@ -525,6 +525,8 @@ export function MusicDock() {
       key="music-dock-bar"
       ref={dockRef}
       data-music-dock
+      data-harbor-glass="dock"
+      data-glass-tier="enhanced"
       data-closing={collapseExit.closing || undefined}
       data-art-colors={artworkColor ? "on" : undefined}
       role={expanded ? "dialog" : undefined}

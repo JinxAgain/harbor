@@ -51,6 +51,8 @@ export function StremioRail() {
       <aside
         data-tv-focus-scope={editing || undefined}
         aria-hidden={chromeHidden}
+        data-harbor-glass="dock"
+        data-glass-tier="enhanced"
         className={`relative z-[60] flex w-20 shrink-0 flex-col transition-[opacity,transform] duration-[320ms] ease-[cubic-bezier(0.32,0.72,0.24,1)] ${
           chromeHidden
             ? "pointer-events-none -translate-x-2 rtl:translate-x-2 opacity-0"

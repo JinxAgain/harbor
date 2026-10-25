@@ -88,6 +88,8 @@ export function TopDock() {
       >
         <div
           data-tauri-drag-region
+          data-harbor-glass="dock"
+          data-glass-tier="enhanced"
           onContextMenu={openEmptyMenu}
           className="pointer-events-auto flex h-14 w-full items-center gap-2 rounded-full border border-white/20 bg-black/55 ps-4 pe-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_18px_60px_-20px_rgba(0,0,0,0.75)] backdrop-blur-md"
         >

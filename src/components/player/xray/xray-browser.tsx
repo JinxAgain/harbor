@@ -93,7 +93,12 @@ export function XrayBrowser({
   );
 
   return (
-    <div className="pointer-events-auto absolute inset-0 z-50 flex flex-col bg-black/85 backdrop-blur-2xl animate-xray-open motion-reduce:animate-none">
+    <div
+      data-harbor-glass="modal"
+      data-glass-tier="enhanced"
+      data-player-glass="panel"
+      className="pointer-events-auto absolute inset-0 z-50 flex flex-col bg-black/85 backdrop-blur-2xl animate-xray-open motion-reduce:animate-none"
+    >
       <header className="flex items-center gap-5 px-6 pt-14 sm:px-9">
         <span className="flex shrink-0 items-center gap-1.5 text-[12px] font-bold uppercase tracking-[0.24em] text-white">
           <UiIcon name="xray" className="h-[15px] w-[15px] text-accent" /> {t("X-Ray")}

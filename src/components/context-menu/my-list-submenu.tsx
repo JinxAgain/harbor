@@ -93,6 +93,7 @@ export function MyListSubmenu({
           <div
             onMouseEnter={show}
             onMouseLeave={hide}
+            data-harbor-glass="popover"
             style={{ position: "fixed", top: pos.top, left: pos.left, width: FLYOUT_WIDTH }}
             className="z-[146] overflow-hidden rounded-xl border border-edge bg-elevated p-1 shadow-[0_18px_50px_-15px_rgba(0,0,0,0.7)] animate-popover-in"
           >
