@@ -63,6 +63,7 @@ export function BookmarksButton() {
   return (
     <div ref={wrapRef} className="relative">
       <button
+        data-harbor-glass="pill"
         aria-label={t("Bookmarks")}
         onClick={() => setOpen((v) => !v)}
         className="harbor-navbtn relative flex h-11 w-11 items-center justify-center rounded-xl bg-elevated/70 text-ink-muted transition-colors duration-150 hover:bg-elevated hover:text-ink"

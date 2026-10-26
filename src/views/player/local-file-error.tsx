@@ -19,8 +19,15 @@ export function LocalFileError({
   const filename = path.split(/[\\/]/).pop() ?? path;
   const looksLikeOneDrive = /onedrive/i.test(path);
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/85 backdrop-blur-md">
-      <div className="flex max-w-xl flex-col items-center gap-5 px-8 text-center">
+    <div
+      data-harbor-glass="scrim"
+      className="absolute inset-0 z-20 flex items-center justify-center bg-black/85 backdrop-blur-md"
+    >
+      <div
+        data-harbor-glass="modal"
+        data-player-glass="panel"
+        className="flex max-w-xl flex-col items-center gap-5 px-8 text-center"
+      >
         <span className="flex h-14 w-14 items-center justify-center rounded-full bg-rose-400/15 text-rose-200">
           <FileX size={26} strokeWidth={1.8} />
         </span>

@@ -64,6 +64,7 @@ export function DownloadsButton() {
   return (
     <div ref={wrapRef} className="relative">
       <button
+        data-harbor-glass="pill"
         ref={triggerRef}
         type="button"
         aria-label={t("Downloads")}

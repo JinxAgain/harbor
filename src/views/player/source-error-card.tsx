@@ -64,8 +64,15 @@ export function SourceErrorCard({
   const statusName = STATUS_TEXT[error.status];
 
   return (
-    <div className="animate-fade-in absolute inset-0 z-[90] flex items-center justify-center bg-canvas/85 p-6 backdrop-blur-md">
-      <div className="animate-modal-in flex w-[min(94vw,440px)] flex-col items-center gap-5 rounded-2xl border border-edge-soft bg-elevated/95 px-7 py-8 text-center shadow-[0_30px_90px_-25px_rgba(0,0,0,0.7)]">
+    <div
+      data-harbor-glass="scrim"
+      className="animate-fade-in absolute inset-0 z-[90] flex items-center justify-center bg-canvas/85 p-6 backdrop-blur-md"
+    >
+      <div
+        data-harbor-glass="modal"
+        data-player-glass="panel"
+        className="animate-modal-in flex w-[min(94vw,440px)] flex-col items-center gap-5 rounded-2xl border border-edge-soft bg-elevated/95 px-7 py-8 text-center shadow-[0_30px_90px_-25px_rgba(0,0,0,0.7)]"
+      >
         <div className="flex h-14 w-14 items-center justify-center rounded-full bg-rose-500/12 text-rose-300">
           {info.offline ? <WifiOff size={26} strokeWidth={2} /> : <ServerCrash size={26} strokeWidth={2} />}
         </div>

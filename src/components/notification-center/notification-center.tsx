@@ -82,6 +82,7 @@ export function NotificationCenter({ trigger = true }: { trigger?: boolean } = {
     <>
       {trigger && (
         <button
+          data-harbor-glass="pill"
           type="button"
           onClick={() => setOpen(true)}
           aria-label={t("Notifications")}

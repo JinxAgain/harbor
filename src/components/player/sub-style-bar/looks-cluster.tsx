@@ -177,6 +177,8 @@ function PresetTip({ label, children }: { label: string; children: ReactNode }) 
         createPortal(
           <div
             role="tooltip"
+            data-harbor-glass="popover"
+            data-player-glass="menu"
             className="pointer-events-none fixed z-[330] -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-lg border border-white/10 bg-black/90 px-2.5 py-1 text-[12px] font-medium text-white shadow-[0_10px_30px_-12px_rgba(0,0,0,0.7)] backdrop-blur-md"
             style={{ top: pos.top, left: pos.left }}
           >

@@ -61,6 +61,7 @@ export function SleepTimerButton() {
   return (
     <div ref={wrapRef} className="relative">
       <button
+        data-harbor-glass="pill"
         onClick={() => setOpen((o) => !o)}
         aria-label={t("Sleep timer")}
         title={t("Sleep timer")}

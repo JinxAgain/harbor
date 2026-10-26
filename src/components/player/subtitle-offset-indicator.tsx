@@ -83,6 +83,8 @@ export function SubtitleOffsetIndicator({
       }`}
     >
       <div
+        data-harbor-glass="hud"
+        data-player-glass="hud"
         className={`flex items-center text-white drop-shadow-[0_2px_5px_rgba(0,0,0,0.9)] transition-[opacity,transform] motion-reduce:translate-y-0 motion-reduce:transition-none ${size.root} ${
           visible
             ? "translate-y-0 opacity-100 duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]"

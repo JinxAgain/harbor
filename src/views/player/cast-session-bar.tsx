@@ -168,7 +168,11 @@ export function CastSessionBar({
 }) {
   const t = useT();
   return (
-    <div className="pointer-events-auto absolute left-1/2 top-6 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full border border-edge bg-elevated/95 px-4 py-2.5 shadow-[0_18px_40px_-14px_rgba(0,0,0,0.7)] backdrop-blur-md">
+    <div
+      data-harbor-glass="pill"
+      data-player-glass="hud"
+      className="pointer-events-auto absolute left-1/2 top-6 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full border border-edge bg-elevated/95 px-4 py-2.5 shadow-[0_18px_40px_-14px_rgba(0,0,0,0.7)] backdrop-blur-md"
+    >
       <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent/20 text-accent">
         <svg
           width="14"
