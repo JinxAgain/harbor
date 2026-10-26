@@ -366,6 +366,8 @@ export function HoverPreview() {
           ref={panelRef}
           role="presentation"
           aria-hidden
+          data-harbor-glass="modal"
+          data-glass-tier="enhanced"
           onPointerEnter={hoverPreviewPanelEnter}
           onPointerLeave={hoverPreviewPanelLeave}
           onPointerMove={onPanelPointerMove}

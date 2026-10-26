@@ -65,7 +65,10 @@ export function UpdateCard() {
         shown ? "translate-y-0 opacity-100" : "translate-y-3 opacity-0"
       }`}
     >
-      <div className="overflow-hidden rounded-2xl border border-edge bg-elevated shadow-[0_24px_70px_rgba(0,0,0,0.5)]">
+      <div
+        data-harbor-glass="popover"
+        className="overflow-hidden rounded-2xl border border-edge bg-elevated shadow-[0_24px_70px_rgba(0,0,0,0.5)]"
+      >
         <div className="flex items-start gap-3 px-5 pt-4 pb-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
             {u.status === "installing" ? (

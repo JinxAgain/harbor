@@ -82,6 +82,7 @@ export function NotificationCenter({ trigger = true }: { trigger?: boolean } = {
     <>
       {trigger && (
         <button
+          data-harbor-glass="pill"
           type="button"
           onClick={() => setOpen(true)}
           aria-label={t("Notifications")}
@@ -102,6 +103,7 @@ export function NotificationCenter({ trigger = true }: { trigger?: boolean } = {
       {open &&
         createPortal(
           <div
+            data-harbor-glass="scrim"
             className="fixed inset-0 z-[210] bg-canvas/40"
             style={{ animation: "nc-scrim-in 160ms ease both" }}
             onClick={() => setOpen(false)}
@@ -109,6 +111,7 @@ export function NotificationCenter({ trigger = true }: { trigger?: boolean } = {
             <div
               role="dialog"
               aria-modal="true"
+              data-harbor-glass="popover"
               onClick={(e) => e.stopPropagation()}
               className="harbor-together-surface animate-panel-in absolute end-4 top-[88px] flex max-h-[74vh] w-[min(400px,calc(100vw-2rem))] flex-col overflow-hidden rounded-md shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]"
             >

@@ -2795,6 +2795,10 @@ const catalogSU: Record<string, string> = {
   "Use in Nuvio": "Nuvio में इस्तेमाल करें",
   "Use it": "इसे इस्तेमाल करें",
   "Use liquid glass": "लिक्विड ग्लास इस्तेमाल करें",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "Harbor की फ़्लोटिंग सतहों, मेनू, डायलॉग, डॉक और प्लेयर ओवरले में लिक्विड ग्लास का उपयोग करें।",
+  "How solid glass surfaces look across Harbor.":
+    "Harbor में कांच की सतहें कितनी ठोस दिखती हैं।",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "सर्च पिल और पंक्तियों के स्क्रॉल ऐरो के लिए लिक्विड ग्लास इस्तेमाल करें। नीचे दी गई रूप-रंग सेटिंग्स Harbor की सभी ग्लास सतहों पर लागू होती हैं।",
   "Use live web context": "लाइव वेब संदर्भ इस्तेमाल करें",

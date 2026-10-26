@@ -26,6 +26,8 @@ export function P2pStatusChip({
 
   return (
     <div
+      data-harbor-glass="pill"
+      data-player-glass="pill"
       className="pointer-events-none absolute top-32 start-24 z-30 flex items-center gap-2.5 rounded-full border border-white/12 bg-black/80 py-1.5 ps-2.5 pe-3.5 shadow-[0_12px_32px_-14px_rgba(0,0,0,0.8),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-2xl animate-in fade-in duration-300"
       role="status"
     >

@@ -165,6 +165,7 @@ export function CastModal({
 
   return (
     <div
+      data-harbor-glass="scrim"
       className="pointer-events-auto absolute inset-0 z-[60] flex items-center justify-center bg-black/70 p-6 backdrop-blur-md animate-in fade-in duration-200"
       onClick={(e) => {
         if (e.target === e.currentTarget && !confirmTarget) onClose();
@@ -174,6 +175,9 @@ export function CastModal({
         role="dialog"
         aria-modal="true"
         data-tv-focus-scope
+        data-harbor-glass="modal"
+        data-glass-tier="enhanced"
+        data-player-glass="panel"
         aria-label={view.kind === "person" ? view.name : t("About this title")}
         onKeyDown={(e) => {
           e.stopPropagation();

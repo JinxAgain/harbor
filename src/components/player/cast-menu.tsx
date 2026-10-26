@@ -104,6 +104,8 @@ export function CastMenu({
       dir={dir}
       role="dialog"
       aria-label={t("Cast to TV or speaker")}
+      data-harbor-glass="popover"
+      data-player-glass="menu"
       onMouseDown={(e) => e.stopPropagation()}
       className="animate-menu-pop fixed z-[140] w-[320px] max-w-[calc(100vw-32px)] rounded-md bg-elevated p-4 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]"
       style={{

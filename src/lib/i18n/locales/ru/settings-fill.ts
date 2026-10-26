@@ -214,6 +214,10 @@ const settingsFill: Record<string, string> = {
     "Плавно увеличивать соседние постеры при движении по ряду, как в доке. По умолчанию выключено.",
   "Liquid Glass": "Жидкое стекло",
   "Use liquid glass": "Использовать жидкое стекло",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "Использовать жидкое стекло для плавающих поверхностей, меню, диалогов, доков и наложений плеера в Harbor.",
+  "How solid glass surfaces look across Harbor.":
+    "Плотность стеклянных поверхностей в интерфейсе Harbor.",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "Использовать жидкое стекло для строки поиска и стрелок прокрутки рядов. Настройки вида ниже общие для всех стеклянных поверхностей в Harbor.",
   "Enhanced liquid glass": "Улучшенное жидкое стекло",

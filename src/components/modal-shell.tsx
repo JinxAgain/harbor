@@ -81,6 +81,7 @@ export function ModalShell({
 
   return createPortal(
     <div
+      data-harbor-glass="scrim"
       className={`fixed inset-0 z-[240] grid place-items-center p-8 ${backdropClassName ?? ""} ${
         closing ? "animate-scrim-out" : "animate-scrim-in"
       }`}
@@ -93,6 +94,7 @@ export function ModalShell({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
+        data-harbor-glass="modal"
         aria-labelledby={labelledBy}
         onMouseDown={(e) => e.stopPropagation()}
         style={{ width: `min(${width}px, 100%)` }}

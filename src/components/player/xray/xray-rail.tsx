@@ -50,7 +50,12 @@ export function XrayRail({
             : null;
 
   return (
-    <div className="pointer-events-auto absolute left-0 top-24 z-40 max-h-[68%] w-[300px] animate-xray-rail-in motion-reduce:animate-none">
+    <div
+      data-harbor-glass="dock"
+      data-glass-tier="enhanced"
+      data-player-glass="panel"
+      className="pointer-events-auto absolute left-0 top-24 z-40 max-h-[68%] w-[300px] animate-xray-rail-in motion-reduce:animate-none"
+    >
       <div className="relative flex max-h-[68vh] flex-col overflow-hidden pe-3">
         <div
           aria-hidden

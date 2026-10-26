@@ -34,7 +34,10 @@ export function TogetherRelayBanner() {
   };
 
   return (
-    <div className="flex items-start gap-2.5 rounded-lg border border-edge-soft bg-elevated px-3.5 py-3">
+    <div
+      data-harbor-glass="pill"
+      className="flex items-start gap-2.5 rounded-lg border border-edge-soft bg-elevated px-3.5 py-3"
+    >
       <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-400/15 text-amber-300">
         <TriangleAlert size={12} strokeWidth={2.2} />
       </span>

@@ -1,0 +1,387 @@
+/**
+ * Harbor Liquid Glass — Unified Theme-Derived Material Engine
+ *
+ * All rules are strictly scoped under html[data-liquid-glass="on"].
+ * When settings.liquidGlass is false, this sheet has 0% effect.
+ */
+
+/* ==========================================================================
+   1. Token Base Engine (Computed per-element via color-mix)
+   ========================================================================== */
+
+html[data-liquid-glass="on"] [data-harbor-glass],
+html[data-liquid-glass="on"] .harbor-glass-dock,
+html[data-liquid-glass="on"] .harbor-glass-modal,
+html[data-liquid-glass="on"] .harbor-glass-popover,
+html[data-liquid-glass="on"] .harbor-glass-pill,
+html[data-liquid-glass="on"] .harbor-glass-hud,
+html[data-liquid-glass="on"] .harbor-glass-scrim,
+html[data-liquid-glass="on"] .modal-panel,
+html[data-liquid-glass="on"] .animate-modal-in,
+html[data-liquid-glass="on"] .animate-dialog-in,
+html[data-liquid-glass="on"] .critics-modal-in,
+html[data-liquid-glass="on"] .harbor-studio-panel,
+html[data-liquid-glass="on"] [data-dropdown-menu],
+html[data-liquid-glass="on"] .animate-popover-in:not(.fixed.bottom-6),
+html[data-liquid-glass="on"] .animate-menu-pop,
+html[data-liquid-glass="on"] .animate-menu-in,
+html[data-liquid-glass="on"] .animate-menu-in-up,
+html[data-liquid-glass="on"] .harbor-profile-dropdown,
+html[data-liquid-glass="on"] .harbor-royal-menu,
+html[data-liquid-glass="on"] .harbor-chat-toast,
+html[data-liquid-glass="on"] .harbor-together-pill,
+html[data-liquid-glass="on"] .harbor-row-arrow,
+html[data-liquid-glass="on"] [data-harbor-glass-host="anchored"] > *,
+html[data-liquid-glass="on"] .harbor-search-backdrop,
+html[data-liquid-glass="on"] .fsh-rail,
+html[data-liquid-glass="on"] .fsh-search,
+html[data-liquid-glass="on"] .fsh-iconbtn,
+html[data-liquid-glass="on"] #ef-profile,
+html[data-liquid-glass="on"] #ef-search {
+  --lg-opacity: var(--harbor-glass-opacity, 0.9);
+  --lg-blur: calc(14px + 8px * var(--lg-opacity));
+  --lg-saturate: 165%;
+  --lg-fill-ratio: calc(var(--lg-tier-fill, 64%) * var(--lg-opacity));
+  --lg-bg-color: color-mix(
+    in srgb,
+    var(--lg-base-token, var(--color-elevated)) var(--lg-fill-ratio),
+    transparent
+  );
+  --lg-bg-sheen: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--color-ink) calc(11% * var(--lg-opacity)), transparent) 0%,
+    color-mix(in srgb, var(--color-ink) calc(2% * var(--lg-opacity)), transparent) 48%,
+    color-mix(in srgb, var(--color-accent) calc(4% * var(--lg-opacity)), transparent) 100%
+  );
+  --lg-border-color: color-mix(in srgb, var(--color-ink) 20%, var(--color-edge));
+  --lg-inset-top: color-mix(in srgb, var(--color-ink) 28%, transparent);
+  --lg-inset-bottom: color-mix(in srgb, var(--color-canvas) 55%, rgba(0, 0, 0, 0.28));
+  --lg-shadow-drop: 0 20px 50px -16px color-mix(in srgb, var(--color-canvas) 65%, rgba(0, 0, 0, 0.65)),
+    0 4px 16px -4px rgba(0, 0, 0, 0.35);
+
+  background-color: var(--lg-bg-color) !important;
+  background-image: var(--lg-bg-sheen) !important;
+  border-color: var(--lg-border-color) !important;
+  box-shadow: inset 0 1px 0 var(--lg-inset-top),
+    inset 0 -1px 0 var(--lg-inset-bottom),
+    var(--lg-shadow-drop) !important;
+  backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+}
+
+/* Light theme, Kids mode & light-scoped Studio panel token overrides */
+html[data-liquid-glass="on"][data-theme-mode="light"]
+  :is(
+    [data-harbor-glass],
+    .harbor-glass-dock,
+    .harbor-glass-modal,
+    .harbor-glass-popover,
+    .harbor-glass-pill,
+    .harbor-glass-hud,
+    .modal-panel,
+    .animate-modal-in,
+    .animate-dialog-in,
+    .critics-modal-in,
+    .harbor-studio-panel,
+    [data-dropdown-menu],
+    .animate-popover-in:not(.fixed.bottom-6),
+    .animate-menu-pop,
+    .animate-menu-in,
+    .animate-menu-in-up,
+    .harbor-profile-dropdown,
+    .harbor-royal-menu,
+    .harbor-chat-toast,
+    .harbor-together-pill,
+    .harbor-row-arrow,
+    [data-harbor-glass-host="anchored"] > *
+  ),
+html[data-liquid-glass="on"]
+  [data-kids="on"]
+  :is(
+    [data-harbor-glass],
+    .harbor-glass-dock,
+    .harbor-glass-modal,
+    .harbor-glass-popover,
+    .harbor-glass-pill,
+    .harbor-glass-hud,
+    .modal-panel,
+    .animate-modal-in,
+    .animate-dialog-in,
+    .critics-modal-in,
+    [data-dropdown-menu],
+    .animate-popover-in:not(.fixed.bottom-6),
+    .animate-menu-pop,
+    .animate-menu-in,
+    .animate-menu-in-up,
+    .harbor-profile-dropdown,
+    .harbor-chat-toast,
+    .harbor-together-pill,
+    .harbor-row-arrow,
+    [data-harbor-glass-host="anchored"] > *
+  ),
+html[data-liquid-glass="on"] .harbor-studio-panel {
+  --lg-saturate: 175%;
+  --lg-fill-ratio: calc(var(--lg-tier-fill, 68%) * var(--lg-opacity));
+  --lg-bg-color: color-mix(
+    in srgb,
+    var(--lg-base-token, var(--color-surface)) var(--lg-fill-ratio),
+    rgba(255, 255, 255, 0.22)
+  );
+  --lg-bg-sheen: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, calc(0.55 * var(--lg-opacity))) 0%,
+    rgba(255, 255, 255, calc(0.12 * var(--lg-opacity))) 52%,
+    color-mix(in srgb, var(--color-accent) calc(6% * var(--lg-opacity)), transparent) 100%
+  );
+  --lg-border-color: color-mix(in srgb, #ffffff 65%, var(--color-edge));
+  --lg-inset-top: rgba(255, 255, 255, 0.78);
+  --lg-inset-bottom: color-mix(in srgb, var(--color-ink) 10%, transparent);
+  --lg-shadow-drop: 0 18px 42px -16px color-mix(in srgb, var(--color-ink) 18%, transparent),
+    0 4px 14px -4px color-mix(in srgb, var(--color-ink) 10%, transparent);
+}
+
+/* ==========================================================================
+   2. Surface Tiers (dock, modal, popover, pill, hud, scrim)
+   ========================================================================== */
+
+/* Tier 1: Dock */
+html[data-liquid-glass="on"] [data-harbor-glass="dock"],
+html[data-liquid-glass="on"] .harbor-glass-dock,
+html[data-liquid-glass="on"] .fsh-rail {
+  --lg-base-token: var(--color-surface);
+  --lg-tier-fill: 62%;
+  --lg-blur: calc(16px + 10px * var(--lg-opacity));
+}
+
+/* Tier 2: Modal, Dialog, Sheet, Drawer */
+html[data-liquid-glass="on"] [data-harbor-glass="modal"],
+html[data-liquid-glass="on"] .harbor-glass-modal,
+html[data-liquid-glass="on"] .modal-panel,
+html[data-liquid-glass="on"] .animate-modal-in,
+html[data-liquid-glass="on"] .animate-dialog-in,
+html[data-liquid-glass="on"] .critics-modal-in,
+html[data-liquid-glass="on"] .harbor-studio-panel {
+  --lg-base-token: var(--color-elevated);
+  --lg-tier-fill: 72%;
+  --lg-blur: calc(20px + 12px * var(--lg-opacity));
+}
+
+/* Tier 3: Popover, Dropdown, Menu, Tooltip, Toast */
+html[data-liquid-glass="on"] [data-harbor-glass="popover"],
+html[data-liquid-glass="on"] .harbor-glass-popover,
+html[data-liquid-glass="on"] [data-dropdown-menu],
+html[data-liquid-glass="on"] .animate-popover-in:not(.fixed.bottom-6),
+html[data-liquid-glass="on"] .animate-menu-pop,
+html[data-liquid-glass="on"] .animate-menu-in,
+html[data-liquid-glass="on"] .animate-menu-in-up,
+html[data-liquid-glass="on"] .harbor-profile-dropdown,
+html[data-liquid-glass="on"] [data-harbor-glass-host="anchored"] > *,
+html[data-liquid-glass="on"] .harbor-royal-menu {
+  --lg-base-token: var(--color-elevated);
+  --lg-tier-fill: 76%;
+  --lg-blur: calc(16px + 8px * var(--lg-opacity));
+}
+
+/* Tier 4: Pill & HUD Controls */
+html[data-liquid-glass="on"] [data-harbor-glass="pill"],
+html[data-liquid-glass="on"] [data-harbor-glass="hud"],
+html[data-liquid-glass="on"] .harbor-glass-pill,
+html[data-liquid-glass="on"] .harbor-glass-hud,
+html[data-liquid-glass="on"] .harbor-chat-toast,
+html[data-liquid-glass="on"] .harbor-together-pill,
+html[data-liquid-glass="on"] .harbor-row-arrow,
+html[data-liquid-glass="on"] .fsh-search,
+html[data-liquid-glass="on"] .fsh-iconbtn,
+html[data-liquid-glass="on"] #ef-profile,
+html[data-liquid-glass="on"] #ef-search {
+  --lg-base-token: var(--color-elevated);
+  --lg-tier-fill: 56%;
+  --lg-blur: calc(14px + 8px * var(--lg-opacity));
+}
+
+/* Tier 5: Scrim Backdrops */
+html[data-liquid-glass="on"] [data-harbor-glass="scrim"],
+html[data-liquid-glass="on"] .harbor-glass-scrim,
+html[data-liquid-glass="on"] .harbor-search-backdrop {
+  --lg-base-token: var(--color-canvas);
+  --lg-tier-fill: 78%;
+  --lg-blur: calc(18px * var(--lg-opacity));
+  background-image: none !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+/* ==========================================================================
+   3. Enhanced Liquid Glass: SVG Displacement Refraction
+   ========================================================================== */
+
+html[data-liquid-glass="on"][data-liquid-glass-tier="enhanced"] [data-glass-tier="enhanced"] {
+  backdrop-filter: url(#harbor-liquid-glass-refract) blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  -webkit-backdrop-filter: url(#harbor-liquid-glass-refract) blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+}
+
+/* ==========================================================================
+   4. Native libmpv Video Fallback (data-mpv-embed="1")
+   ========================================================================== */
+
+html[data-liquid-glass="on"][data-mpv-embed="1"] [data-harbor-player] [data-harbor-glass],
+html[data-liquid-glass="on"][data-mpv-embed="1"] [data-player-glass],
+html[data-liquid-glass="on"][data-mpv-embed="1"] [data-harbor-player] .modal-panel,
+html[data-liquid-glass="on"][data-mpv-embed="1"] [data-harbor-player] [data-dropdown-menu],
+html[data-liquid-glass="on"][data-mpv-embed="1"] [data-harbor-player] .animate-popover-in {
+  --lg-fill-ratio: clamp(76%, calc(84% * var(--lg-opacity)), 92%);
+  --lg-inset-top: color-mix(in srgb, var(--color-ink) 34%, transparent);
+  --lg-blur: calc(18px + 10px * var(--lg-opacity));
+  --lg-shadow-drop: 0 24px 60px -16px rgba(0, 0, 0, 0.8), 0 4px 18px -4px rgba(0, 0, 0, 0.45);
+}
+
+/* ==========================================================================
+   5. Nested Blur Suppression & Clean Nav Rules
+   ========================================================================== */
+
+html[data-liquid-glass="on"]
+  :is([data-harbor-glass="dock"], [data-harbor-glass="modal"], [data-harbor-glass="popover"], .modal-panel, .animate-modal-in, .animate-dialog-in)
+  :is([data-harbor-glass="pill"], [data-harbor-glass="hud"], .harbor-glass-inline) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+}
+
+/* Clean nav (transparent topbar): keep nav buttons transparent */
+html[data-liquid-glass="on"] [data-cleannav="on"] .harbor-navbtn,
+html[data-liquid-glass="on"] [data-cleannav="on"] .harbor-win-control,
+html[data-liquid-glass="on"] [data-cleannav="on"] .harbor-together-btn {
+  background-color: transparent !important;
+  background-image: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html[data-liquid-glass="on"] [data-cleannav="on"] .harbor-navbtn:hover,
+html[data-liquid-glass="on"] [data-cleannav="on"] .harbor-win-control:hover,
+html[data-liquid-glass="on"] [data-cleannav="on"] .harbor-together-btn:hover {
+  background-color: color-mix(in srgb, var(--color-elevated) 60%, transparent) !important;
+}
+
+/* ==========================================================================
+   6. Left Sidebar Ambient Backlight Glow
+   ========================================================================== */
+
+[data-harbor-sidebar-ambient] {
+  display: none;
+}
+
+html[data-liquid-glass="on"]:not([data-chrome-hidden="true"]):is(
+    [data-theme-layout="sidebar"],
+    [data-theme-layout="dracula"],
+    [data-theme-layout="nord"],
+    [data-theme-layout="forest"],
+    [data-theme-layout="stremio"],
+    [data-theme-layout="rail"],
+    [data-theme-layout="custom"]
+  )
+  [data-harbor-sidebar-ambient] {
+  display: block;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-start: 0;
+  width: 280px;
+  pointer-events: none;
+  z-index: 0;
+  opacity: calc(0.42 * var(--harbor-glass-opacity, 0.9));
+  background: radial-gradient(
+    ellipse 130% 90% at -10% 40%,
+    color-mix(in srgb, var(--color-accent) 24%, var(--color-raised, var(--color-surface))) 0%,
+    transparent 72%
+  );
+}
+
+/* ==========================================================================
+   7. Theme Overrides Unlocking (Preserve theme geometry & border-radius)
+   ========================================================================== */
+
+/* Crunch & Noir topbars: preserve 60px full-width geometry while applying dock glass */
+html[data-liquid-glass="on"]:root[data-theme-card="crunch"] header.fixed.top-0.z-\[60\].h-20 > div[data-harbor-glass="dock"],
+html[data-liquid-glass="on"]:root[data-theme-card="noir"] header.fixed.top-0.z-\[60\].h-20 > div[data-harbor-glass="dock"] {
+  background-color: var(--lg-bg-color) !important;
+  background-image: var(--lg-bg-sheen) !important;
+  border-bottom: 1px solid var(--lg-border-color) !important;
+  box-shadow: inset 0 1px 0 var(--lg-inset-top), var(--lg-shadow-drop) !important;
+  backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+}
+
+/* Kawaii topbar & search backdrop: let the outer header be transparent so inner dock glass blurs the page */
+html[data-liquid-glass="on"]:root header.fixed.top-0.h-20.items-center.px-4 {
+  background: transparent !important;
+  border-bottom-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html[data-liquid-glass="on"]:root header.fixed.top-0.h-20.items-center.px-4 > div[data-harbor-glass="dock"] {
+  background-color: var(--lg-bg-color) !important;
+  background-image: var(--lg-bg-sheen) !important;
+  border-bottom: 1px solid var(--lg-border-color) !important;
+  box-shadow: inset 0 1px 0 var(--lg-inset-top), var(--lg-shadow-drop) !important;
+  backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+}
+html[data-liquid-glass="on"]:root .harbor-search-backdrop::before {
+  opacity: 0.2 !important;
+}
+
+/* Feishin & ElegantFin rails and controls */
+html[data-liquid-glass="on"]:root[data-theme-layout="custom"] .fsh-rail,
+html[data-liquid-glass="on"]:root aside[data-harbor-sidebar] {
+  background-color: var(--lg-bg-color) !important;
+  background-image: var(--lg-bg-sheen) !important;
+  border-color: var(--lg-border-color) !important;
+  box-shadow: inset 0 1px 0 var(--lg-inset-top), var(--lg-shadow-drop) !important;
+  backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+}
+
+/* HoverPreview crown bottom gradient blend */
+html[data-liquid-glass="on"] [data-harbor-glass="modal"] [data-stagger="0"] + div.pointer-events-none {
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--lg-bg-color) 45%, transparent) 55%,
+    var(--lg-bg-color) 100%
+  ) !important;
+}
+
+/* ==========================================================================
+   8. Accessibility & Feature Fallbacks
+   ========================================================================== */
+
+@media (prefers-reduced-transparency: reduce) {
+  html[data-liquid-glass="on"] [data-harbor-glass],
+  html[data-liquid-glass="on"] .modal-panel,
+  html[data-liquid-glass="on"] [data-dropdown-menu],
+  html[data-liquid-glass="on"] .animate-popover-in {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    filter: none !important;
+    --lg-fill-ratio: 96% !important;
+    background-image: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-liquid-glass="on"] [data-harbor-glass]::before {
+    animation: none !important;
+  }
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  html[data-liquid-glass="on"] [data-harbor-glass],
+  html[data-liquid-glass="on"] .modal-panel,
+  html[data-liquid-glass="on"] [data-dropdown-menu],
+  html[data-liquid-glass="on"] .animate-popover-in {
+    --lg-fill-ratio: 92% !important;
+  }
+}
+

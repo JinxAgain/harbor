@@ -323,6 +323,7 @@ export function SearchOverlay() {
         tabIndex={-1}
         aria-label={t("Close search")}
         onMouseDown={beginDragOrClose}
+        data-harbor-glass="scrim"
         className={`harbor-search-backdrop no-press absolute -inset-6 cursor-default ${
           closing ? "harbor-search-scrim-out" : "harbor-search-scrim-in"
         }`}
@@ -333,6 +334,8 @@ export function SearchOverlay() {
         className="relative mx-auto flex h-full w-full max-w-[1200px] flex-col px-6 py-6 sm:px-10 sm:py-10"
       >
         <div
+          data-harbor-glass="modal"
+          data-glass-tier="enhanced"
           className={`modal-panel relative flex max-h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-transparent bg-elevated/70 shadow-[0_24px_80px_-30px_rgba(0,0,0,0.7)] ${
             closing ? "harbor-search-panel-out" : "harbor-search-panel-in"
           }`}

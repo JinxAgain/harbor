@@ -54,6 +54,9 @@ export function SubStyleBar() {
       <div
         role="toolbar"
         aria-label={t("Subtitle appearance")}
+        data-harbor-glass="modal"
+        data-glass-tier="enhanced"
+        data-player-glass="panel"
         className="pointer-events-auto flex max-w-[calc(100vw-56px)] flex-wrap items-center justify-center gap-2 rounded-md bg-elevated px-2 py-2 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]"
       >
         <div className={GROUP}>

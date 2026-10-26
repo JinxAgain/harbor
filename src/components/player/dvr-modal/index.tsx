@@ -47,10 +47,14 @@ export function DvrModal({
 
   return createPortal(
     <div
+      data-harbor-glass="scrim"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       className="fixed inset-0 z-[210] flex items-center justify-center bg-black/72 backdrop-blur-md animate-in fade-in duration-200"
     >
       <div
+        data-harbor-glass="modal"
+        data-glass-tier="enhanced"
+        data-player-glass="panel"
         style={{
           backgroundColor: "var(--color-canvas)",
           backgroundImage: "linear-gradient(var(--color-elevated), var(--color-elevated))",

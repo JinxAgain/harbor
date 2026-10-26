@@ -70,6 +70,7 @@ export function SourceDrawer({
       <button
         onClick={onToggle}
         aria-expanded={open}
+        data-harbor-glass="pill"
         className="group flex w-fit items-center gap-3 rounded-full border border-edge-soft/70 bg-canvas/70 px-4 py-2 text-[11.5px] font-semibold uppercase tracking-[0.22em] text-ink-muted transition-all hover:border-edge hover:bg-canvas/90 hover:text-ink"
       >
         <ChevronDown
@@ -107,7 +108,10 @@ export function SourceDrawer({
         </div>
       )}
       {open && (
-        <ul className="overflow-hidden rounded-2xl border border-edge-soft/60 bg-canvas/80">
+        <ul
+          data-harbor-glass="modal"
+          className="overflow-hidden rounded-2xl border border-edge-soft/60 bg-canvas/80"
+        >
           {shown.slice(0, 80).map((s, i) => (
             <SourceRow
               key={`${s.addonId}-${s.infoHash ?? s.url ?? i}`}

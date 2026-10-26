@@ -55,7 +55,11 @@ function SeasonDropdown({
         <ChevronDown size={16} strokeWidth={2.4} className={`transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1.5 max-h-72 w-56 overflow-y-auto rounded-xl bg-neutral-900/95 p-1.5 ring-1 ring-white/12 shadow-[0_24px_60px_-16px_rgba(0,0,0,0.9)] backdrop-blur-xl [scrollbar-width:thin]">
+        <div
+          data-harbor-glass="popover"
+          data-player-glass="menu"
+          className="absolute left-0 top-full z-30 mt-1.5 max-h-72 w-56 overflow-y-auto rounded-xl bg-neutral-900/95 p-1.5 ring-1 ring-white/12 shadow-[0_24px_60px_-16px_rgba(0,0,0,0.9)] backdrop-blur-xl [scrollbar-width:thin]"
+        >
           {options.map((o) => (
             <button
               key={o.key}

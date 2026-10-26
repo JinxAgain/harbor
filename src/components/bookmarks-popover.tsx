@@ -63,6 +63,7 @@ export function BookmarksButton() {
   return (
     <div ref={wrapRef} className="relative">
       <button
+        data-harbor-glass="pill"
         aria-label={t("Bookmarks")}
         onClick={() => setOpen((v) => !v)}
         className="harbor-navbtn relative flex h-11 w-11 items-center justify-center rounded-xl bg-elevated/70 text-ink-muted transition-colors duration-150 hover:bg-elevated hover:text-ink"
@@ -70,7 +71,10 @@ export function BookmarksButton() {
         <Bookmark size={17} strokeWidth={1.9} />
       </button>
       {open && (
-        <div className="absolute end-0 top-[calc(100%+8px)] z-50 w-[20rem] overflow-hidden rounded-2xl border border-edge bg-elevated shadow-[0_18px_50px_-15px_rgba(0,0,0,0.7)] animate-popover-in">
+        <div
+          data-harbor-glass="popover"
+          className="absolute end-0 top-[calc(100%+8px)] z-50 w-[20rem] overflow-hidden rounded-2xl border border-edge bg-elevated shadow-[0_18px_50px_-15px_rgba(0,0,0,0.7)] animate-popover-in"
+        >
           <div className="flex items-center justify-between px-4 pb-2 pt-3">
             <span className="text-[13.5px] font-semibold text-ink">{t("Bookmarks")}</span>
             <span className="text-[11.5px] font-medium tabular-nums text-ink-subtle">

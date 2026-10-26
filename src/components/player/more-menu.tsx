@@ -128,6 +128,8 @@ export function MoreMenu({
             onClick={() => setOpen((o) => !o)}
             aria-label={t("More options")}
             aria-expanded={open}
+            data-harbor-glass="pill"
+            data-player-glass="pill"
             className={`flex h-10 w-10 items-center justify-center rounded-full border border-white/15 shadow-[0_14px_40px_-15px_rgba(0,0,0,0.85)] backdrop-blur-md transition-colors ${
               open
                 ? "bg-white/22 text-white"
@@ -138,7 +140,11 @@ export function MoreMenu({
           </button>
         </Tooltip>
         {open && (
-          <div className="absolute end-0 top-[calc(100%+10px)] w-64 max-w-[calc(100vw-32px)] overflow-hidden rounded-md bg-elevated p-1.5 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]">
+          <div
+            data-harbor-glass="popover"
+            data-player-glass="menu"
+            className="absolute end-0 top-[calc(100%+10px)] w-64 max-w-[calc(100vw-32px)] overflow-hidden rounded-md bg-elevated p-1.5 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]"
+          >
             {rows.map((r) => (
               <MoreRow key={r.key} spec={r} />
             ))}

@@ -114,7 +114,11 @@ export function FiltersMenu({ filters }: { filters: SwitcherFilters }) {
       </button>
 
       {open && (
-        <div className="absolute end-0 top-full z-30 mt-2 max-h-[68vh] w-[288px] overflow-y-auto rounded-md bg-elevated p-3 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]">
+        <div
+          data-harbor-glass="popover"
+          data-player-glass="menu"
+          className="absolute end-0 top-full z-30 mt-2 max-h-[68vh] w-[288px] overflow-y-auto rounded-md bg-elevated p-3 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]"
+        >
           <Section label={t("Sources")}>
             <div className="flex gap-1.5">
               {(

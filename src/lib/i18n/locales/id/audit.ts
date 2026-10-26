@@ -1446,6 +1446,10 @@ const audit: Record<string, string> = {
   "Use arrows and Select/Space to move focus between player controls. Turn this off to keep arrows for seeking and Space for play/pause.":
     "Gunakan tombol panah dan Select/Space untuk memindahkan fokus di antara kontrol pemutar. Nonaktifkan ini agar tombol panah tetap digunakan untuk menggeser posisi pemutaran dan Space untuk putar/jeda.",
   "Use default": "Gunakan opsi bawaan",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "Gunakan liquid glass di seluruh permukaan mengambang, menu, dialog, dok, dan overlay pemutar Harbor.",
+  "How solid glass surfaces look across Harbor.":
+    "Seberapa pekat tampilan permukaan kaca di Harbor.",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "Gunakan liquid glass untuk bidang pencarian berbentuk kapsul dan panah gulir baris. Pengaturan tampilan di bawah berlaku untuk semua elemen kaca di Harbor.",
   "Use your API key to Translate Chapters to Your Language. Get a key from the":

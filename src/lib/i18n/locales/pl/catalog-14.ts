@@ -515,6 +515,10 @@ const catalog14: Record<string, string> = {
   "Use in Nuvio": "Użyj w Nuvio",
   "Use it": "Użyj",
   "Use liquid glass": "Używaj płynnego szkła",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "Używaj płynnego szkła na ruchomych powierzchniach, menu, oknach dialogowych, dockach i nakładkach odtwarzacza Harbor.",
+  "How solid glass surfaces look across Harbor.":
+    "Jak jednolicie wyglądają szklane powierzchnie w Harbor.",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "Używaj płynnego szkła w polu wyszukiwania i strzałkach przewijania rzędów. Poniższe ustawienia wyglądu są wspólne dla wszystkich szklanych powierzchni w Harbor.",
   "Use live web context": "Używaj aktualnego kontekstu z internetu",

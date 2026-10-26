@@ -318,10 +318,12 @@ export function TogetherDeployModal({ onClose, inline = false }: { onClose: () =
 
   return (
     <div
+      data-harbor-glass="scrim"
       className="fixed inset-0 z-[60] flex items-center justify-center bg-canvas/70 backdrop-blur-md"
       onClick={onClose}
     >
       <div
+        data-harbor-glass="modal"
         onClick={(e) => e.stopPropagation()}
         className="flex max-h-[88vh] w-[560px] flex-col gap-5 overflow-y-auto rounded-2xl border border-edge bg-surface p-7 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.7)]"
       >

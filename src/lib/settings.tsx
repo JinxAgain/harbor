@@ -33,6 +33,7 @@ import type { Settings, StreamingService } from "./settings/types";
 import { markSectionDirty } from "./profile-sync/scheduler";
 import { configureLayoutStore } from "./layout-sync/store";
 import { SYNCED_SETTINGS_FIELDS } from "./layout-sync/sections";
+import { syncLiquidGlassRootState } from "@/lib/liquid-glass";
 
 export type {
   ContentCategory,
@@ -239,6 +240,29 @@ export function SettingsProvider({
   useEffect(() => {
     document.documentElement.style.setProperty("--poster-radius", `${settings.posterRadius}px`);
   }, [settings.posterRadius]);
+
+  useEffect(() => {
+    syncLiquidGlassRootState(settings);
+
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mTransparency = window.matchMedia("(prefers-reduced-transparency: reduce)");
+    const mMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+    const onMediaChange = () => {
+      syncLiquidGlassRootState(settingsRef.current);
+    };
+
+    mTransparency.addEventListener?.("change", onMediaChange);
+    mMotion.addEventListener?.("change", onMediaChange);
+    return () => {
+      mTransparency.removeEventListener?.("change", onMediaChange);
+      mMotion.removeEventListener?.("change", onMediaChange);
+    };
+  }, [
+    settings.liquidGlass,
+    settings.experimentalLiquidGlassEnabled,
+    settings.experimentalLiquidGlassOpacity,
+  ]);
 
   useEffect(() => {
     const scale = settings.uiScale > 0 ? settings.uiScale : 1;

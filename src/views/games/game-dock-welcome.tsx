@@ -43,7 +43,7 @@ export function GameDockWelcome({ eligible }: { eligible: boolean }) {
     return () => { unback(); document.removeEventListener("pointerdown", outside, true); };
   }, [open, eligible]);
   if (!open || !eligible || settings.showQuickGameLibrary) return null;
-  return <aside ref={root} className="game-library-dock game-dock-welcome" aria-labelledby={`${id}-title`}>
+  return <aside ref={root} data-harbor-glass="dock" className="game-library-dock game-dock-welcome" aria-labelledby={`${id}-title`}>
     <button className="game-dock-edge" aria-label={t("games.dock.welcomeTitle")} aria-controls={`${id}-prompt`} onClick={() => requestAnimationFrame(() => accept.current?.focus({ preventScroll: true }))} />
     <section id={`${id}-prompt`} className="game-dock-invitation" aria-labelledby={`${id}-title`}>
       <div className="game-dock-invitation-heading"><GamesIcon size={21} /><strong id={`${id}-title`}>{t("games.dock.welcomeTitle")}</strong></div>

@@ -266,6 +266,7 @@ export function EpisodePanel({
         aria-label={t("Dismiss episode panel")}
         onClick={onClose}
         tabIndex={open ? 0 : -1}
+        data-harbor-glass="scrim"
         className={`absolute inset-0 cursor-default bg-black/35 transition-opacity duration-300 ${
           open ? "opacity-100" : "opacity-0"
         }`}
@@ -273,6 +274,9 @@ export function EpisodePanel({
       <aside
         role="dialog"
         aria-label={t("Up next")}
+        data-harbor-glass="dock"
+        data-glass-tier="enhanced"
+        data-player-glass="panel"
         className={`absolute top-0 h-full w-full max-w-[440px] overflow-hidden shadow-[0_30px_80px_-30px_rgba(0,0,0,0.85)] transition-transform duration-300 ease-out ${
           corner === "top-left" || corner === "bottom-left"
             ? "left-0 rounded-r-[12px]"

@@ -423,6 +423,10 @@ const settingsFill: Record<string, string> = {
   "Use addon order": "Add-on-Reihenfolge verwenden",
   "Use community corrections": "Community-Korrekturen verwenden",
   "Use liquid glass": "Liquid Glass verwenden",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "Liquid Glass für alle schwebenden Oberflächen, Menüs, Dialoge, Docks und Player-Overlays in Harbor verwenden.",
+  "How solid glass surfaces look across Harbor.":
+    "Wie solide Glasoberflächen in ganz Harbor wirken.",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "Liquid Glass für das Suchfeld und die Scrollpfeile der Reihen verwenden. Die unten stehenden Darstellungseinstellungen gelten für alle Glasflächen in Harbor.",
   "Use model": "Modell verwenden",

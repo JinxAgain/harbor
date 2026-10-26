@@ -214,6 +214,10 @@ const settingsFill: Record<string, string> = {
     "Amplia suavemente os pôsteres próximos conforme você percorre uma linha de pôsteres, como um dock. Desativado por padrão.",
   "Liquid Glass": "Vidro líquido",
   "Use liquid glass": "Usar vidro líquido",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "Use vidro líquido nas superfícies flutuantes, menus, diálogos, docks e sobreposições do player do Harbor.",
+  "How solid glass surfaces look across Harbor.":
+    "Quão sólidas as superfícies de vidro parecem no Harbor.",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "Use vidro líquido na barra de pesquisa e nas setas de rolagem das fileiras. As configurações de aparência abaixo são compartilhadas pelas superfícies de vidro do Harbor.",
   "Enhanced liquid glass": "Vidro líquido aprimorado",

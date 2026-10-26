@@ -70,6 +70,8 @@ export function DraculaSidebar() {
         data-tv-focus-scope={editing || undefined}
         aria-hidden={chromeHidden}
         data-harbor-sidebar
+        data-harbor-glass="dock"
+        data-glass-tier="enhanced"
         className={`relative z-[60] flex w-[78px] shrink-0 flex-col transition-[opacity,transform,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
           collapsed ? "" : "lg:w-64"
         } ${

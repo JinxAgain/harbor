@@ -38,7 +38,10 @@ export function WindowControlButton({
   appearance?: "transparent" | "glass" | "filled";
 }) {
   const { settings } = useSettings();
-  const glassControls = (appearance ?? settings.topbarAppearance) === "glass";
+  const effectiveAppearance = appearance ?? settings.topbarAppearance;
+  const glassControls =
+    effectiveAppearance === "glass" ||
+    (settings.liquidGlass && effectiveAppearance !== "transparent");
   const button = (
     <button
       type="button"

@@ -9495,6 +9495,14 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
       "webgl",
       "glassy arrows",
       "watch together",
+      "docks",
+      "sidebars",
+      "modals",
+      "dialogs",
+      "dropdowns",
+      "popovers",
+      "hover preview",
+      "player overlays",
     ],
   },
   {
@@ -9504,11 +9512,10 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
     keywords: [
       "enhanced glass",
       "glass opacity",
-      "glass blur",
-      "glass tint",
       "richer glass",
       "glass appearance",
       "liquid glass",
+      "svg refraction",
     ],
   },
   {

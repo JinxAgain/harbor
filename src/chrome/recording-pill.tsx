@@ -39,6 +39,7 @@ export function RecordingPill() {
   return (
     <div ref={wrapRef} className="relative">
       <button
+        data-harbor-glass="pill"
         onClick={() => setOpen((v) => !v)}
         aria-label={t("Recordings")}
         className={`relative flex h-11 items-center gap-2 rounded-xl px-3 transition-colors duration-150 ${
@@ -72,7 +73,10 @@ export function RecordingPill() {
         )}
       </button>
       {open && (
-        <div className="absolute end-0 top-[calc(100%+10px)] z-50 w-[min(360px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-edge bg-elevated/97 shadow-[0_28px_72px_-20px_rgba(0,0,0,0.85)] animate-in fade-in zoom-in-95 duration-150">
+        <div
+          data-harbor-glass="popover"
+          className="absolute end-0 top-[calc(100%+10px)] z-50 w-[min(360px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-edge bg-elevated/97 shadow-[0_28px_72px_-20px_rgba(0,0,0,0.85)] animate-in fade-in zoom-in-95 duration-150"
+        >
           <div className="flex items-center justify-between border-b border-edge-soft px-4 py-3">
             <span className="text-[10.5px] font-semibold uppercase tracking-[0.22em] text-ink-subtle">
               {t("Recordings")}

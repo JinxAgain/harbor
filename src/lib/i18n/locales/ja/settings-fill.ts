@@ -207,6 +207,10 @@ const settingsFill: Record<string, string> = {
     "ポスター列を移動するとき、Dockのように周辺のポスターを滑らかに拡大します。デフォルトではオフです。",
   "Liquid Glass": "リキッドガラス",
   "Use liquid glass": "リキッドガラスを使用",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "Harborのフローティングサーフェス、メニュー、ダイアログ、ドック、プレイヤーオーバーレイにリキッドグラスを使用します。",
+  "How solid glass surfaces look across Harbor.":
+    "Harbor全体のガラス表面の不透明度。",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "検索ピルと列のスクロール矢印にリキッドガラスを使用します。以下の外観設定は、Harbor内のすべてのガラスサーフェスで共通です。",
   "Enhanced liquid glass": "強化リキッドガラス",

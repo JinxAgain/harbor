@@ -124,6 +124,8 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
           type="button"
           onClick={hasPanel ? () => setOpen((v) => !v) : undefined}
           aria-expanded={hasPanel ? open : undefined}
+          data-harbor-glass="pill"
+          data-player-glass="pill"
           className="flex h-9 items-center gap-2 rounded-full border border-edge bg-elevated/95 pe-2.5 ps-3 shadow-[0_16px_40px_-20px_rgba(0,0,0,0.85)] backdrop-blur-2xl transition-colors hover:bg-elevated aria-disabled:cursor-default motion-reduce:transition-none"
         >
           <Lead phase={phase} />
@@ -146,7 +148,12 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
         </button>
 
         {open && hasPanel && (
-          <div className="absolute top-full mt-2 w-[min(88vw,360px)] rounded-md bg-elevated p-3 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] animate-in fade-in slide-in-from-top-1 duration-200 motion-reduce:animate-none">
+          <div
+            data-harbor-glass="modal"
+            data-glass-tier="enhanced"
+            data-player-glass="panel"
+            className="absolute top-full mt-2 w-[min(88vw,360px)] rounded-md bg-elevated p-3 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] animate-in fade-in slide-in-from-top-1 duration-200 motion-reduce:animate-none"
+          >
             <span className="absolute -top-1.5 start-1/2 h-3 w-3 -translate-x-1/2 rotate-45 border-s border-t border-edge bg-elevated" />
             <button
               type="button"

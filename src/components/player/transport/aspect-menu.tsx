@@ -61,7 +61,11 @@ export function AspectMenu({
         </button>
       </Tooltip>
       {open && (
-        <div className="fixed end-14 bottom-[150px] flex max-h-[calc(100vh-174px)] w-[360px] max-w-[calc(100vw-72px)] flex-col overflow-y-auto rounded-md bg-elevated shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] animate-menu-pop">
+        <div
+          data-harbor-glass="popover"
+          data-player-glass="menu"
+          className="fixed end-14 bottom-[150px] flex max-h-[calc(100vh-174px)] w-[360px] max-w-[calc(100vw-72px)] flex-col overflow-y-auto rounded-md bg-elevated shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] animate-menu-pop"
+        >
           <div className="p-3">
             <div className="flex items-center justify-between px-1 pb-2">
               <span className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-ink-subtle">

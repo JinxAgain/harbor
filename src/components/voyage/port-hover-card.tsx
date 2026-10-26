@@ -144,6 +144,8 @@ export function PortHoverCard({ meta, anchor, id, onEnter, onLeave }: {
         visibility: spot ? "visible" : "hidden",
       }}
       className="voyage-info-bubble"
+      data-harbor-glass="modal"
+      data-glass-tier="enhanced"
     >
       <span aria-hidden className="voyage-info-pointer" style={horizontal ? { top: pointer } : { left: pointer }} />
       <div className="voyage-info-content">

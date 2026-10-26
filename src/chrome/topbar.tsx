@@ -282,7 +282,9 @@ export function TogetherButton({
   const { avatar: selfAvatar, color: selfColor } = useSelfIdentity();
   const { settings } = useSettings();
   const cleanModal = settings.topbarAppearance === "transparent";
-  const glassControls = settings.topbarAppearance === "glass";
+  const glassControls =
+    settings.topbarAppearance === "glass" ||
+    (settings.liquidGlass && settings.topbarAppearance !== "transparent");
   const t = useT();
   const live = snapshot.state === "joined";
   const wrapRef = useRef<HTMLDivElement>(null);

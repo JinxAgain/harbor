@@ -84,6 +84,9 @@ export function SubSyncBar({ delaySec, onDelay, onEnterSync, syncAvailable }: Pr
       <div
         role="toolbar"
         aria-label={t("Subtitle sync")}
+        data-harbor-glass="modal"
+        data-glass-tier="enhanced"
+        data-player-glass="panel"
         className="pointer-events-auto flex items-stretch gap-2.5 rounded-md bg-elevated px-2.5 py-2 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]"
       >
         {/* Left Side: Live Sync (Fixed width to center the middle section) */}

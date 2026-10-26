@@ -145,7 +145,11 @@ export function SubtitleFpsControl({
       </HoverTooltip>
 
       {open && (
-        <div className="absolute end-0 top-[calc(100%+6px)] z-[60] w-[300px] overflow-hidden rounded-md bg-elevated shadow-[0_18px_44px_-18px_rgba(0,0,0,0.85)] animate-menu-pop">
+        <div
+          data-harbor-glass="popover"
+          data-player-glass="menu"
+          className="absolute end-0 top-[calc(100%+6px)] z-[60] w-[300px] overflow-hidden rounded-md bg-elevated shadow-[0_18px_44px_-18px_rgba(0,0,0,0.85)] animate-menu-pop"
+        >
           <SubtitleFpsPanel
             track={track}
             engine={engine}

@@ -46,7 +46,11 @@ function AbLoopChip({ ab, visible }: { ab: AbLoopState; visible: boolean }) {
         visible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1"
       }`}
     >
-      <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/15 bg-black/70 px-3 py-1.5 text-[11.5px] font-medium text-white backdrop-blur-md">
+      <div
+        data-harbor-glass="pill"
+        data-player-glass="pill"
+        className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/15 bg-black/70 px-3 py-1.5 text-[11.5px] font-medium text-white backdrop-blur-md"
+      >
         <Repeat size={12} strokeWidth={2.2} />
         <span className="tabular-nums text-white/90">
           {ab.a != null ? formatTime(ab.a) : "—"}
@@ -79,6 +83,8 @@ function FrameToast({ toast }: { toast: FrameGrabToast }) {
       className="pointer-events-none absolute left-1/2 top-24 z-40 -translate-x-1/2 animate-[harbor-fade-in_200ms_ease-out]"
     >
       <div
+        data-harbor-glass="pill"
+        data-player-glass="pill"
         className={`pointer-events-auto flex items-center gap-2.5 rounded-full border py-2 ps-4 pe-2 text-[12.5px] font-medium backdrop-blur-md ${
           toast.kind === "ok"
             ? "border-white/20 bg-black/80 text-white"

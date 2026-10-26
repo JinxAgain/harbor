@@ -473,6 +473,10 @@ const catalog09: Record<string, string> = {
   "Use in Nuvio": "Usa in Nuvio",
   "Use it": "Usalo",
   "Use liquid glass": "Usa liquid glass",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "Usa liquid glass su superfici fluttuanti, menu, finestre di dialogo, dock e sovrapposizioni del lettore di Harbor.",
+  "How solid glass surfaces look across Harbor.":
+    "Quanto appaiono solide le superfici in vetro in Harbor.",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "Usa liquid glass per il campo di ricerca e le frecce di scorrimento delle righe. Le Impostazioni estetiche qui sotto sono condivise da tutte le superfici in vetro di Harbor.",
   "Use live web context": "Usa il contesto web in tempo reale",

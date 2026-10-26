@@ -44,10 +44,13 @@ export function LeaveConfirmModal() {
 
   return (
     <div
+      data-harbor-glass="scrim"
       className="absolute inset-0 z-[110] flex items-center justify-center bg-black/70 backdrop-blur-sm"
       onClick={closeLeaveConfirm}
     >
       <div
+        data-harbor-glass="modal"
+        data-player-glass="panel"
         className="mx-4 w-full max-w-md rounded-2xl border border-edge bg-surface p-7 text-center shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >

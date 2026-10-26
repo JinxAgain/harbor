@@ -141,6 +141,7 @@ export function AnimeSeasonPicker({
         createPortal(
           <div
             ref={menuRef}
+            data-harbor-glass="popover"
             onMouseDown={(e) => e.stopPropagation()}
             style={{ right: menu.right, top: menu.top, bottom: menu.bottom }}
             className="animate-fade-in fixed z-[200] w-[360px] max-w-[min(360px,calc(100vw-3rem))] overflow-hidden rounded-lg border border-edge bg-elevated py-1.5 shadow-[0_18px_44px_-12px_rgba(0,0,0,0.6)]"

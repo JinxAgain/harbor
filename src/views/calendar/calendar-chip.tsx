@@ -131,6 +131,7 @@ function ChipTooltip({
       ref={tipRef}
       onClick={(e) => e.stopPropagation()}
       style={{ left: pos.left, top: pos.top, opacity: pos.ready ? 1 : 0 }}
+      data-harbor-glass="popover"
       className={`pointer-events-none fixed z-[200] flex flex-col gap-3 rounded-2xl border border-edge bg-elevated/95 p-4 shadow-[0_24px_60px_-18px_rgba(0,0,0,0.7)] backdrop-blur-md transition-opacity duration-100 ${panelWidthClass}`}
     >
       <div className="flex items-start gap-3">

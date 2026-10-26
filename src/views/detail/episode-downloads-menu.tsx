@@ -81,6 +81,7 @@ export function EpisodeDownloadsMenu({ meta, episodes }: { meta: Meta; episodes:
         createPortal(
           <div
             role="menu"
+            data-harbor-glass="popover"
             style={{ left: menu.x, top: menu.y }}
             onMouseDown={(e) => e.stopPropagation()}
             className="fixed z-[320] flex w-[236px] flex-col rounded-xl border border-edge bg-elevated p-1 shadow-[0_18px_50px_-15px_rgba(0,0,0,0.7)] animate-popover-in"

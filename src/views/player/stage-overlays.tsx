@@ -95,7 +95,11 @@ export const StageOverlays = memo(function StageOverlays({
         <SvpIndicator engine={engine} chromeVisible={chromeVisible} suppressed={topVolumeShowing} />
       )}
       {holdSpeedActive && !pipMode && (
-        <div className="pointer-events-none absolute left-1/2 top-8 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-canvas/85 px-3.5 py-1.5 text-[13px] font-semibold text-ink backdrop-blur-md">
+        <div
+          data-harbor-glass="pill"
+          data-player-glass="hud"
+          className="pointer-events-none absolute left-1/2 top-8 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-canvas/85 px-3.5 py-1.5 text-[13px] font-semibold text-ink backdrop-blur-md"
+        >
           {snap.rate}x<span className="font-normal text-ink-muted">{t("speed")}</span>
         </div>
       )}
@@ -110,12 +114,20 @@ export const StageOverlays = memo(function StageOverlays({
         !holdSpeedActive &&
         !pipMode &&
         !(showVolumeIndicator && volumeHudPosition === "top") && (
-          <div className="pointer-events-none absolute left-1/2 top-8 z-30 -translate-x-1/2 rounded-full bg-canvas/85 px-3.5 py-1.5 text-[13px] font-semibold text-ink backdrop-blur-md">
+          <div
+            data-harbor-glass="pill"
+            data-player-glass="hud"
+            className="pointer-events-none absolute left-1/2 top-8 z-30 -translate-x-1/2 rounded-full bg-canvas/85 px-3.5 py-1.5 text-[13px] font-semibold text-ink backdrop-blur-md"
+          >
             {videoFillPill}
           </div>
         )}
       {subDropToast && !pipMode && (
-        <div className="pointer-events-none absolute bottom-28 left-1/2 z-30 -translate-x-1/2 rounded-full bg-canvas/90 px-4 py-2 text-[13px] font-medium text-ink backdrop-blur-md">
+        <div
+          data-harbor-glass="pill"
+          data-player-glass="hud"
+          className="pointer-events-none absolute bottom-28 left-1/2 z-30 -translate-x-1/2 rounded-full bg-canvas/90 px-4 py-2 text-[13px] font-medium text-ink backdrop-blur-md"
+        >
           {subDropToast}
         </div>
       )}

@@ -92,6 +92,7 @@ export function CodePopout({
       role="dialog"
       aria-modal="true"
       aria-label={t("Code")}
+      data-harbor-glass="modal"
       style={SUITE_CHROME}
       className={`pointer-events-auto fixed inset-0 z-[244] flex flex-col bg-surface text-ink-muted ${
         closing ? "animate-[editorOut_150ms_ease-in_forwards]" : "animate-[editorIn_220ms_ease-out]"

@@ -29,7 +29,11 @@ export function DurationMismatchChip(props: {
   if (dismissedKey === pairKey) return null;
 
   return (
-    <div className="pointer-events-auto absolute bottom-24 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-edge-soft bg-elevated/95 py-2 ps-4 pe-2 text-[12.5px] text-ink shadow-[0_18px_44px_-14px_rgba(0,0,0,0.7)] backdrop-blur-md">
+    <div
+      data-harbor-glass="pill"
+      data-player-glass="hud"
+      className="pointer-events-auto absolute bottom-24 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-edge-soft bg-elevated/95 py-2 ps-4 pe-2 text-[12.5px] text-ink shadow-[0_18px_44px_-14px_rgba(0,0,0,0.7)] backdrop-blur-md"
+    >
       <span className="whitespace-nowrap">
         {t("Your copy runs {guest}, host's runs {host}. Sync may drift.", {
           guest: formatRuntime(guestDurationSec),

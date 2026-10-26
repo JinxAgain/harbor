@@ -195,6 +195,10 @@ const settings: Record<string, string> = {
   "Badge art packs you installed from the community store. Remove one to put its badges back to default.":
     "你从社区商店安装的徽章图包。移除某个图包后，其中的徽章会恢复默认样式。",
   "View community badge packs": "查看社区徽章图包",
+  "Use liquid glass across Harbor's floating surfaces, menus, dialogs, docks, and player overlays.":
+    "在 Harbor 的悬浮控件、菜单、对话框、Dock 和播放器浮层中应用液体玻璃效果。",
+  "How solid glass surfaces look across Harbor.":
+    "Harbor 各处玻璃表面的凝实程度。",
   "Use liquid glass for the search pill and row scroll arrows. The appearance settings below are shared by glass surfaces across Harbor.":
     "为胶囊形搜索框和横栏滚动箭头使用液态玻璃效果。以下外观设置会应用于 Harbor 中的所有玻璃表面。",
   "Native-style hybrid bar": "原生风格混合标题栏",

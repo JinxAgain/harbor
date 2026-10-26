@@ -322,12 +322,18 @@ export function StreamSwitcher({
 
   return (
     <div
+      data-harbor-glass="scrim"
       className="pointer-events-auto absolute inset-0 z-[60] flex items-center justify-center bg-black/72 backdrop-blur-md animate-in fade-in duration-200"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex h-full max-h-[82vh] w-full max-w-[880px] flex-col overflow-hidden rounded-xl bg-elevated shadow-[0_28px_72px_-20px_rgba(0,0,0,0.85)] ring-1 ring-edge animate-in fade-in slide-in-from-bottom-2 duration-150 backdrop-blur-xl">
+      <div
+        data-harbor-glass="modal"
+        data-glass-tier="enhanced"
+        data-player-glass="panel"
+        className="flex h-full max-h-[82vh] w-full max-w-[880px] flex-col overflow-hidden rounded-xl bg-elevated shadow-[0_28px_72px_-20px_rgba(0,0,0,0.85)] ring-1 ring-edge animate-in fade-in slide-in-from-bottom-2 duration-150 backdrop-blur-xl"
+      >
         <header className="flex items-center justify-between gap-4 border-b border-edge-soft px-6 py-4">
           <div className="flex items-center gap-2.5">
             <HoverTooltip

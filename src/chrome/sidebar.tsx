@@ -60,6 +60,8 @@ export function Sidebar() {
         data-tv-focus-scope={editing || undefined}
         aria-hidden={chromeHidden}
         data-harbor-sidebar
+        data-harbor-glass="dock"
+        data-glass-tier="enhanced"
         data-collapsed={collapsed ? "true" : "false"}
         className={`relative z-[60] flex w-[72px] shrink-0 flex-col border-e border-edge-soft bg-canvas transition-[opacity,transform,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
           collapsed ? "" : "lg:w-60"

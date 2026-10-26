@@ -66,7 +66,7 @@ export function SimklRatingPicker({
   const activeRating = hoverRating || currentRating || 0;
 
   return (
-    <div className="flex items-center gap-3">
+    <div data-harbor-glass="pill" className="flex items-center gap-3">
       <div className="flex items-center gap-1.5" role="group" aria-label={t("SIMKL rating picker")}>
         {[1, 2, 3, 4, 5].map((n) => {
           const isFilled = 2 * n <= activeRating;
