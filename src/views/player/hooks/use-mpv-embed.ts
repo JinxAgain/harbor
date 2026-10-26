@@ -11,18 +11,20 @@ export function useMpvEmbed(params: {
 }) {
   const { engine, settings, ambientSources } = params;
 
-  usePlayerAmbientColor(ambientSources ?? []);
+  const hdrOpaqueWindow = isWindowsDesktop() && settings.playerHdrOpaqueWindow;
+  const needsTransparentWebView =
+    isLinuxDesktop() || isMacDesktop() || (isWindowsDesktop() && !hdrOpaqueWindow);
+  const mpvEmbedActive = engine === "mpv" && settings.playerMpvEmbed && needsTransparentWebView;
+
+  usePlayerAmbientColor(ambientSources ?? [], mpvEmbedActive && settings.liquidGlass);
 
   useEffect(() => {
-    const hdrOpaqueWindow = isWindowsDesktop() && settings.playerHdrOpaqueWindow;
-    const needsTransparentWebView =
-      isLinuxDesktop() || isMacDesktop() || (isWindowsDesktop() && !hdrOpaqueWindow);
-    if (engine !== "mpv" || !settings.playerMpvEmbed || !needsTransparentWebView) return;
+    if (!mpvEmbedActive) return;
     document.documentElement.dataset.mpvEmbed = "1";
     return () => {
       delete document.documentElement.dataset.mpvEmbed;
     };
-  }, [engine, settings.playerMpvEmbed, settings.playerHdrOpaqueWindow]);
+  }, [mpvEmbedActive]);
 
   useEffect(() => {
     if (engine !== "mpv" || !settings.playerMpvEmbed) return;

@@ -134,7 +134,9 @@ export function extractDominantColorFromPixels(data: Uint8ClampedArray): string 
   return hslToHex(h, tunedSat, tunedLight);
 }
 
-function probeSingleImage(src: string): Promise<string | null> {
+function probeSingleImage(originalSrc: string): Promise<string | null> {
+  // Key on the rewritten probe URL so poster/background variants of one image share a hit.
+  const src = rewriteProbeUrl(originalSrc);
   const cached = colorCache.get(src);
   if (cached !== undefined) return Promise.resolve(cached);
 
@@ -180,7 +182,7 @@ function probeSingleImage(src: string): Promise<string | null> {
       }
     };
 
-    img.src = rewriteProbeUrl(src);
+    img.src = src;
   }).finally(() => {
     inflight.delete(src);
   });
@@ -200,12 +202,16 @@ export async function resolveAmbientColor(
   return null;
 }
 
-export function usePlayerAmbientColor(candidates: Array<string | null | undefined>) {
+export function usePlayerAmbientColor(
+  candidates: Array<string | null | undefined>,
+  enabled = true,
+) {
   const primary = candidates[0] ?? null;
   const secondary = candidates[1] ?? null;
   const tertiary = candidates[2] ?? null;
 
   useEffect(() => {
+    if (!enabled) return;
     const root = document.documentElement;
     let alive = true;
 
@@ -222,6 +228,6 @@ export function usePlayerAmbientColor(candidates: Array<string | null | undefine
       alive = false;
       root.style.removeProperty("--harbor-player-ambient");
     };
-  }, [primary, secondary, tertiary]);
+  }, [enabled, primary, secondary, tertiary]);
 }
 

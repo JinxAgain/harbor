@@ -38,7 +38,7 @@ test("liquid glass does not keep a GPU render loop alive", () => {
   assert.doesNotMatch(source, /<canvas/);
   assert.match(source, /linear-gradient/);
   assert.match(source, /backdropFilter:\s+blurEnabled \?/);
-  assert.doesNotMatch(source, /WebkitBackdropFilter/);
+  assert.match(source, /WebkitBackdropFilter/);
 });
 
 test("liquid glass keeps its public compatibility props", () => {

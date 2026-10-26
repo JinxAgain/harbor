@@ -226,17 +226,18 @@ html[data-liquid-glass="on"] .harbor-search-backdrop {
    nothing to sample. Fake the material instead: a dense dark body, a 1px rim,
    a top specular sheen, fine grain and layered shadows. Optionally tinted by
    --harbor-player-ambient (poster/dominant colour) so panels relate to content. */
-html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-harbor-player] [data-harbor-glass],
-html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-player-glass],
+html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-harbor-player] [data-harbor-glass]:not([data-harbor-glass="scrim"]),
+html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-player-glass]:not([data-harbor-glass="scrim"]),
 html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-harbor-player] .modal-panel,
 html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-harbor-player] [data-dropdown-menu],
 html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-harbor-player] .animate-popover-in {
   --lg-ambient: var(--harbor-player-ambient, var(--color-accent));
+  --lg-mpv-base: #07080b;
   --lg-bg-color: color-mix(
     in srgb,
     color-mix(
         in srgb,
-        color-mix(in srgb, var(--lg-base-token, var(--color-elevated)) 26%, #07080b)
+        color-mix(in srgb, var(--lg-base-token, var(--color-elevated)) 26%, var(--lg-mpv-base))
           calc(100% - 9% * var(--lg-opacity)),
         var(--lg-ambient)
       )
@@ -268,7 +269,36 @@ html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-harbor-player] .anim
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
-/* ==========================================================================
+
+/* Light themes keep dark ink on panels, so the fake glass body must stay light. */
+html[data-liquid-glass="on"][data-mpv-embed="1"][data-theme-mode="light"]:root :is(
+    [data-harbor-player] [data-harbor-glass]:not([data-harbor-glass="scrim"]),
+    [data-player-glass]:not([data-harbor-glass="scrim"]),
+    [data-harbor-player] .modal-panel,
+    [data-harbor-player] [data-dropdown-menu],
+    [data-harbor-player] .animate-popover-in
+  ) {
+  --lg-mpv-base: #f6f7f9;
+  --lg-border-color: color-mix(in srgb, var(--lg-ambient) 28%, rgba(255, 255, 255, 0.7));
+  --lg-inset-top: rgba(255, 255, 255, 0.85);
+  --lg-inset-bottom: rgba(0, 0, 0, 0.12);
+  --lg-bg-sheen:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.12) 30%, transparent 56%),
+    radial-gradient(
+      120% 95% at 50% 0%,
+      color-mix(in srgb, var(--lg-ambient) calc(12% * var(--lg-opacity)), transparent) 0%,
+      transparent 72%
+    );
+  background-blend-mode: normal, normal;
+}
+
+/* Scrims over the native video only dim it; a tinted opaque wash would hide the picture. */
+html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-harbor-player] [data-harbor-glass="scrim"] {
+  --lg-bg-color: color-mix(in srgb, var(--harbor-player-ambient, #000000) 14%, rgba(0, 0, 0, 0.58));
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  filter: none !important;
+}/* ==========================================================================
    5. Nested Blur Suppression & Clean Nav Rules
    ========================================================================== */
 
