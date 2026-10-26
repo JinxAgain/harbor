@@ -131,5 +131,8 @@ dev.log*
 **/[Bb]in/
 **/[Oo]bj/
 
+# theme
+*.harborstyle
+
 #reference repo
 syncplay/
