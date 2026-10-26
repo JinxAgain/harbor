@@ -65,8 +65,8 @@ html[data-liquid-glass="on"] #ef-search {
   box-shadow: inset 0 1px 0 var(--lg-inset-top),
     inset 0 -1px 0 var(--lg-inset-bottom),
     var(--lg-shadow-drop) !important;
-  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
-  backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  -webkit-backdrop-filter: var(--lg-refract-filter, ) blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  backdrop-filter: var(--lg-refract-filter, ) blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
 }
 
 /* Light theme, Kids mode & light-scoped Studio panel token overrides */
@@ -222,17 +222,52 @@ html[data-liquid-glass="on"] .harbor-search-backdrop {
    4. Native libmpv Video Fallback (data-mpv-embed="1")
    ========================================================================== */
 
-html[data-liquid-glass="on"][data-mpv-embed="1"] [data-harbor-player] [data-harbor-glass],
-html[data-liquid-glass="on"][data-mpv-embed="1"] [data-player-glass],
-html[data-liquid-glass="on"][data-mpv-embed="1"] [data-harbor-player] .modal-panel,
-html[data-liquid-glass="on"][data-mpv-embed="1"] [data-harbor-player] [data-dropdown-menu],
-html[data-liquid-glass="on"][data-mpv-embed="1"] [data-harbor-player] .animate-popover-in {
-  --lg-fill-ratio: clamp(76%, calc(84% * var(--lg-opacity)), 92%);
-  --lg-inset-top: color-mix(in srgb, var(--color-ink) 34%, transparent);
-  --lg-blur: calc(18px + 10px * var(--lg-opacity));
-  --lg-shadow-drop: 0 24px 60px -16px rgba(0, 0, 0, 0.8), 0 4px 18px -4px rgba(0, 0, 0, 0.45);
-}
+/* The native libmpv surface lives outside the WebView, so backdrop-filter has
+   nothing to sample. Fake the material instead: a dense dark body, a 1px rim,
+   a top specular sheen, fine grain and layered shadows. Optionally tinted by
+   --harbor-player-ambient (poster/dominant colour) so panels relate to content. */
+html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-harbor-player] [data-harbor-glass],
+html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-player-glass],
+html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-harbor-player] .modal-panel,
+html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-harbor-player] [data-dropdown-menu],
+html[data-liquid-glass="on"][data-mpv-embed="1"]:root [data-harbor-player] .animate-popover-in {
+  --lg-ambient: var(--harbor-player-ambient, var(--color-accent));
+  --lg-bg-color: color-mix(
+    in srgb,
+    color-mix(
+        in srgb,
+        color-mix(in srgb, var(--lg-base-token, var(--color-elevated)) 26%, #07080b)
+          calc(100% - 9% * var(--lg-opacity)),
+        var(--lg-ambient)
+      )
+      clamp(80%, calc(90% * var(--lg-opacity)), 92%),
+    transparent
+  );
+  --lg-bg-sheen:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, calc(0.13 * var(--lg-opacity))) 0%,
+      rgba(255, 255, 255, calc(0.04 * var(--lg-opacity))) 22%,
+      transparent 46%
+    ),
+    radial-gradient(
+      120% 95% at 50% 0%,
+      color-mix(in srgb, var(--lg-ambient) calc(14% * var(--lg-opacity)), transparent) 0%,
+      transparent 72%
+    ),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.07'/%3E%3C/svg%3E");
+  --lg-border-color: color-mix(in srgb, var(--lg-ambient) 22%, rgba(255, 255, 255, 0.14));
+  --lg-inset-top: color-mix(in srgb, var(--lg-ambient) 18%, rgba(255, 255, 255, 0.3));
+  --lg-inset-bottom: rgba(0, 0, 0, 0.5);
+  --lg-shadow-drop:
+    0 28px 64px -18px rgba(0, 0, 0, 0.85),
+    0 10px 24px -10px rgba(0, 0, 0, 0.6),
+    0 2px 6px -2px rgba(0, 0, 0, 0.5);
 
+  background-blend-mode: normal, screen, soft-light;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
 /* ==========================================================================
    5. Nested Blur Suppression & Clean Nav Rules
    ========================================================================== */
@@ -307,8 +342,8 @@ html[data-liquid-glass="on"]:root[data-theme-card="noir"] header.fixed.top-0.z-\
   background-image: var(--lg-bg-sheen) !important;
   border-bottom: 1px solid var(--lg-border-color) !important;
   box-shadow: inset 0 1px 0 var(--lg-inset-top), var(--lg-shadow-drop) !important;
-  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
-  backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  -webkit-backdrop-filter: var(--lg-refract-filter, ) blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  backdrop-filter: var(--lg-refract-filter, ) blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
 }
 
 /* Kawaii topbar & search backdrop: let the outer header be transparent so inner dock glass blurs the page */
@@ -323,8 +358,8 @@ html[data-liquid-glass="on"]:root header.fixed.top-0.h-20.items-center.px-4 > di
   background-image: var(--lg-bg-sheen) !important;
   border-bottom: 1px solid var(--lg-border-color) !important;
   box-shadow: inset 0 1px 0 var(--lg-inset-top), var(--lg-shadow-drop) !important;
-  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
-  backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  -webkit-backdrop-filter: var(--lg-refract-filter, ) blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  backdrop-filter: var(--lg-refract-filter, ) blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
 }
 html[data-liquid-glass="on"]:root .harbor-search-backdrop::before {
   opacity: 0.2 !important;
@@ -337,8 +372,8 @@ html[data-liquid-glass="on"]:root aside[data-harbor-sidebar] {
   background-image: var(--lg-bg-sheen) !important;
   border-color: var(--lg-border-color) !important;
   box-shadow: inset 0 1px 0 var(--lg-inset-top), var(--lg-shadow-drop) !important;
-  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
-  backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  -webkit-backdrop-filter: var(--lg-refract-filter, ) blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
+  backdrop-filter: var(--lg-refract-filter, ) blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
 }
 
 /* HoverPreview crown bottom gradient blend */

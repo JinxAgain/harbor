@@ -1,10 +1,17 @@
 import { useEffect } from "react";
 import { modalOverlayClose, modalOverlaySync } from "@/lib/modal-overlay";
 import { isLinuxDesktop, isMacDesktop, isWindowsDesktop } from "@/lib/platform";
+import { usePlayerAmbientColor } from "@/lib/player/ambient-color";
 import type { Settings } from "@/lib/settings";
 
-export function useMpvEmbed(params: { engine: "html5" | "mpv"; settings: Settings }) {
-  const { engine, settings } = params;
+export function useMpvEmbed(params: {
+  engine: "html5" | "mpv";
+  settings: Settings;
+  ambientSources?: Array<string | null | undefined>;
+}) {
+  const { engine, settings, ambientSources } = params;
+
+  usePlayerAmbientColor(ambientSources ?? []);
 
   useEffect(() => {
     const hdrOpaqueWindow = isWindowsDesktop() && settings.playerHdrOpaqueWindow;

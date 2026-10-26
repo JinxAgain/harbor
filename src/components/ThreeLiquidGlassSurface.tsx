@@ -91,12 +91,14 @@ function PlainSurface({
   backdropBlur = true,
   ...wrapperProps
 }: LiquidGlassSurfaceProps & { blurRadius?: number; tintOpacity?: number }) {
+  const blurValue = backdropBlur !== false ? "blur(12px) saturate(1.2)" : "none";
   const plain: CSSProperties = {
     position: "relative",
     overflow: "hidden",
     borderRadius: radius,
     backgroundImage: "none",
-    backdropFilter: backdropBlur !== false ? "blur(12px) saturate(1.2)" : "none",
+    WebkitBackdropFilter: blurValue,
+    backdropFilter: blurValue,
     border: "none",
     backgroundColor: variantBg(_variant),
     boxShadow: "0 3px 12px -6px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,255,255,0.08)",
