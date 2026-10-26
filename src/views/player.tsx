@@ -1244,7 +1244,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   useMpvEmbed({
     engine,
     settings,
-    ambientSources: [src.meta.poster, src.meta.background, src.episode?.still],
+    docked,
+    pipDocked: src.pipDocked,
   });
 
   useSdrBoostGate({

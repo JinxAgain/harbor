@@ -124,8 +124,10 @@ export function ThreeLiquidGlassSurface({
   ...props
 }: LiquidGlassSurfaceProps) {
   const { settings } = useSettings();
+  const mpvEmbed =
+    typeof document !== "undefined" && document.documentElement.dataset.mpvEmbed === "1";
 
-  if (!settings.liquidGlass) {
+  if (!settings.liquidGlass || mpvEmbed) {
     return <PlainSurface {...props} style={style} />;
   }
 

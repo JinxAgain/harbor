@@ -25,6 +25,14 @@ const source = readFileSync(
   new URL("../src/components/ThreeLiquidGlassSurface.tsx", import.meta.url),
   "utf8",
 );
+const cssSource = readFileSync(
+  new URL("../src/styles/liquid-glass.css", import.meta.url),
+  "utf8",
+);
+const rankCardSource = readFileSync(
+  new URL("../src/components/top-rank-card.tsx", import.meta.url),
+  "utf8",
+);
 
 test("liquid glass does not ship the Three.js runtime or types", () => {
   assert.equal(packageJson.dependencies?.three, undefined);
@@ -248,5 +256,14 @@ test("settings loader migrates legacy 25% opacity to default 90% and clamps valu
     JSON.stringify({ _liquidGlassUnifiedV1: true, experimentalLiquidGlassOpacity: 25 }),
   );
   assert.equal(alreadyMigrated.experimentalLiquidGlassOpacity, 25);
+});
+
+test("mpv embed bypasses liquid glass, dock buttons get glass, and theme studio is excluded", () => {
+  assert.doesNotMatch(cssSource, /--lg-mpv-base/);
+  assert.match(cssSource, /html\[data-liquid-glass="on"\]:not\(\[data-mpv-embed="1"\]\)/);
+  assert.match(cssSource, /\.harbor-minui-button:not\(\[aria-current="page"\]\)/);
+  assert.doesNotMatch(cssSource, /\.harbor-studio-panel/);
+  assert.match(rankCardSource, /font-medium leading-\[1\.35\] text-ink/);
+  assert.doesNotMatch(rankCardSource, /text-ink-subtle/);
 });
 

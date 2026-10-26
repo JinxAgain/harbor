@@ -103,7 +103,6 @@ export function CheatSheet({ onClose }: { onClose: () => void }) {
 
   return createPortal(
     <div
-      data-harbor-glass="modal"
       className={`${closing ? "animate-scrim-out" : "animate-scrim-in"} fixed inset-0 z-[240] flex flex-col bg-surface animate-[editorIn_220ms_ease-out]`}
       style={SUITE_CHROME}
       role="dialog"

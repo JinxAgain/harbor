@@ -2743,8 +2743,8 @@ html[data-theme-card="glass"] .bg-elevated:not(button):not(.no-glass):not(.round
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-ink) 14%, transparent);
 }
 
-html[data-theme-card="minui"],
-html[data-theme-layout="minui"] {
+html[data-theme-card="minui"][data-theme-mode="light"],
+html[data-theme-layout="minui"][data-theme-mode="light"] {
   --service-logo-filter: brightness(0);
 }
 
@@ -2763,15 +2763,50 @@ html[data-theme-layout="minui"] .harbor-service-tile:hover {
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-canvas) 42%, transparent);
 }
 
-html[data-theme-card="minui"] .harbor-service-tile img,
-html[data-theme-layout="minui"] .harbor-service-tile img {
+html[data-theme-card="minui"][data-theme-mode="light"] .harbor-service-tile img,
+html[data-theme-layout="minui"][data-theme-mode="light"] .harbor-service-tile img {
   filter: brightness(0) !important;
   opacity: 0.78;
   transition: opacity 180ms ease;
 }
 
-html[data-theme-card="minui"] .harbor-service-tile:hover img,
-html[data-theme-layout="minui"] .harbor-service-tile:hover img {
+html[data-theme-card="minui"][data-theme-mode="light"] .harbor-service-tile:hover img,
+html[data-theme-layout="minui"][data-theme-mode="light"] .harbor-service-tile:hover img {
+  opacity: 1;
+}
+
+html[data-theme-card="minui"]:not([data-theme-mode="light"]),
+html[data-theme-layout="minui"]:not([data-theme-mode="light"]) {
+  --service-logo-filter: none;
+}
+
+html[data-theme-card="minui"]:not([data-theme-mode="light"]) .harbor-service-tile,
+html[data-theme-layout="minui"]:not([data-theme-mode="light"]) .harbor-service-tile {
+  background: color-mix(in srgb, var(--color-surface) 88%, transparent) !important;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--color-ink) 12%, transparent),
+    inset 0 0 0 1px var(--color-edge-soft),
+    0 10px 28px -12px rgba(0, 0, 0, 0.45);
+}
+
+html[data-theme-card="minui"]:not([data-theme-mode="light"]) .harbor-service-tile:hover,
+html[data-theme-layout="minui"]:not([data-theme-mode="light"]) .harbor-service-tile:hover {
+  background: color-mix(in srgb, var(--color-elevated) 94%, transparent) !important;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--color-ink) 18%, transparent),
+    inset 0 0 0 1px var(--color-edge),
+    0 14px 34px -12px rgba(0, 0, 0, 0.55);
+}
+
+html[data-theme-card="minui"]:not([data-theme-mode="light"]) .harbor-service-tile img,
+html[data-theme-layout="minui"]:not([data-theme-mode="light"]) .harbor-service-tile img {
+  filter: none !important;
+  opacity: 0.92;
+  transition: opacity 180ms ease;
+}
+
+html[data-theme-card="minui"]:not([data-theme-mode="light"]) .harbor-service-tile:hover img,
+html[data-theme-layout="minui"]:not([data-theme-mode="light"]) .harbor-service-tile:hover img {
   opacity: 1;
 }
 

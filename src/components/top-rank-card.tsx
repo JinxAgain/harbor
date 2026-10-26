@@ -127,7 +127,7 @@ export const TopRankCard = memo(function TopRankCard({ meta, rank }: { meta: Met
         {inWatchlist && <WatchlistDot />}
         <AwardDot name={meta.name} year={parseAwardYear(meta.releaseInfo)} />
       </div>
-      <p className="absolute top-[93cqw] end-0 w-[63%] truncate text-[12px] leading-[1.35] text-ink-subtle">
+      <p className="absolute top-[93cqw] end-0 w-[63%] truncate text-[12px] font-medium leading-[1.35] text-ink">
         {meta.name}
       </p>
     </button>
@@ -199,7 +199,7 @@ export const AnimeRankCard = memo(function AnimeRankCard({ meta, rank }: { meta:
         {inWatchlist && <WatchlistDot />}
         <AwardDot name={meta.name} year={parseAwardYear(meta.releaseInfo)} />
       </div>
-      <p className="absolute top-[93cqw] end-0 w-[63%] truncate text-[12px] leading-[1.35] text-ink-subtle">
+      <p className="absolute top-[93cqw] end-0 w-[63%] truncate text-[12px] font-medium leading-[1.35] text-ink">
         {meta.name}
       </p>
     </button>

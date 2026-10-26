@@ -152,7 +152,6 @@ export function ColorPopover({
               role="dialog"
               aria-label={t("{label} color", { label })}
               aria-modal="true"
-              data-harbor-glass="popover"
               onBlur={(e) => {
                 const next = e.relatedTarget as Node | null;
                 if (!next) return;

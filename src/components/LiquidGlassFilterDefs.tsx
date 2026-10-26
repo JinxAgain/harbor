@@ -35,7 +35,7 @@ export function LiquidGlassFilterDefs() {
         </defs>
       </svg>
       <style>{`
-        html[data-liquid-glass="on"][data-liquid-glass-tier="enhanced"] [data-glass-tier="enhanced"] {
+        html[data-liquid-glass="on"][data-liquid-glass-tier="enhanced"]:not([data-mpv-embed="1"]) [data-glass-tier="enhanced"] {
           --lg-refract-filter: url(#harbor-liquid-glass-refract);
           -webkit-backdrop-filter: url(#harbor-liquid-glass-refract) blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
           backdrop-filter: url(#harbor-liquid-glass-refract) blur(var(--lg-blur)) saturate(var(--lg-saturate)) !important;
