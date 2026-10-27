@@ -456,3 +456,72 @@ test("regression: Home onDismissCw clears localCw for candidate IDs, dismisses m
     "Home onDismissCw must immediately zero timeOffset in in-memory items state",
   );
 });
+
+test("regression: finishing a movie after an earlier pause clears stale pause state across localCw, externalCw, resume backfill, and Stremio sync", async () => {
+  const movieWatchedMod = await import("../src/lib/movie-watched.ts");
+  assert.equal(
+    typeof (movieWatchedMod as Record<string, unknown>).isMovieCompletedAfter,
+    "function",
+    "movie-watched must export isMovieCompletedAfter",
+  );
+  const { setMovieWatchedLocal, isMovieCompletedAfter } = movieWatchedMod as typeof movieWatchedMod & {
+    setMovieWatchedLocal: (id: string, watched: boolean, at?: number) => void;
+    isMovieCompletedAfter: (id: string, activityMs: number, altId?: string | null) => boolean;
+  };
+
+  // Pause happened at t = 1_000_000 (30m left); movie finished at t = 2_800_000
+  const pauseAt = 1_000_000;
+  const finishAt = 2_800_000;
+  setMovieWatchedLocal("tt38775487", true, finishAt);
+  setMovieWatchedLocal("tmdb:movie:1419747", true, finishAt);
+
+  // Earlier pause on cloud/tracker/local must be recognized as completed
+  assert.equal(isMovieCompletedAfter("tt38775487", pauseAt), true);
+  assert.equal(isMovieCompletedAfter("tmdb:movie:1419747", pauseAt), true);
+  // Same-session delayed scrobble echo within 60s of finish is also completed
+  assert.equal(isMovieCompletedAfter("tt38775487", finishAt + 30_000), true);
+  // A genuine rewatch on another device 2 hours later is NOT treated as completed
+  assert.equal(isMovieCompletedAfter("tt38775487", finishAt + 7_200_000), false);
+
+  // Local rewatch past 45s clears watched state so the movie can re-enter Continue Watching
+  setMovieWatchedLocal("tt38775487", false);
+  setMovieWatchedLocal("tmdb:movie:1419747", false);
+  assert.equal(isMovieCompletedAfter("tt38775487", pauseAt), false);
+
+  // Stremio cloud sync must zero timeOffset when a movie finishes and use isPlaybackFinished
+  assert.match(
+    stremioSyncSource,
+    /isPlaybackFinished/,
+    "useStremioSync must use isPlaybackFinished so movies finished at >=85% are flagged watched",
+  );
+  assert.match(
+    stremioSyncSource,
+    /timeOffset:\s*(?:finaleDone\s*\|\|\s*movieDone|movieDone\s*\|\|\s*finaleDone)\s*\?\s*0\s*:\s*offsetMs/,
+    "useStremioSync must reset timeOffset to 0 when a movie finishes",
+  );
+
+  // usePlayerExit must use isPlaybackFinished rather than only >= 0.92
+  assert.match(
+    playerExitSource,
+    /isPlaybackFinished/,
+    "usePlayerExit must check isPlaybackFinished before saving resume on close",
+  );
+
+  // useResumeAutosave must mark rid watched as well as id and evict externalCw on completion
+  assert.match(
+    autosaveSource,
+    /setMovieWatchedLocal\(rid,\s*true\)/,
+    "useResumeAutosave must mark resolvedImdbId watched when movie completes",
+  );
+  assert.match(
+    autosaveSource,
+    /evictExternalCwItem/,
+    "useResumeAutosave must evict finished item from externalCw",
+  );
+
+  // Home, Trakt playback, and Simkl playback must guard against completed movies
+  assert.match(homeSource, /isMovieCompletedAfter/);
+  assert.match(traktPlaybackSource, /isMovieCompletedAfter/);
+  assert.match(simklPlaybackSource, /isMovieCompletedAfter/);
+});
+

@@ -26,9 +26,17 @@ export function reconcileRemoteWatched(items: LibraryItem[]): void {
     if (reconciled.has(key)) continue;
     reconciled.add(key);
     if (!isSeries(i)) {
-      const remoteWatched = (i.state?.flaggedWatched ?? 0) > 0 || (i.state?.timesWatched ?? 0) > 0;
+      const dur = i.state?.duration ?? 0;
+      const off = i.state?.timeOffset ?? 0;
+      const inProgress = off > 0 && (dur <= 0 || off / dur < 0.85);
+      const remoteWatched =
+        (i.state?.flaggedWatched ?? 0) > 0 ||
+        ((i.state?.timesWatched ?? 0) > 0 && !inProgress);
       if (remoteWatched && !isMovieWatchedLocal(i._id)) {
-        setMovieWatchedLocal(i._id, true);
+        const lw = Date.parse(i.state?.lastWatched ?? "");
+        const mt = Date.parse(String(i._mtime ?? ""));
+        const at = Number.isFinite(lw) && lw > 0 ? lw : Number.isFinite(mt) && mt > 0 ? mt : Date.now();
+        setMovieWatchedLocal(i._id, true, at);
       }
       continue;
     }

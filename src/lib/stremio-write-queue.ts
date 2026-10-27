@@ -1,4 +1,10 @@
-import { invalidateLibraryCache, libraryGetOneStrict, libraryPut, type LibraryItem } from "@/lib/stremio";
+import {
+  applyLocalLibraryItemWrite,
+  invalidateLibraryCache,
+  libraryGetOneStrict,
+  libraryPut,
+  type LibraryItem,
+} from "@/lib/stremio";
 
 const KEY = "harbor.stremio.write-queue.v1";
 
@@ -51,6 +57,9 @@ export function queuedWatched(
 export async function cloudLibraryPut(authKey: string, item: LibraryItem): Promise<boolean> {
   load();
   const id = item._id;
+  if (typeof applyLocalLibraryItemWrite === "function") {
+    applyLocalLibraryItemWrite(item);
+  }
   try {
     await libraryPut(authKey, item);
     invalidateLibraryCache();

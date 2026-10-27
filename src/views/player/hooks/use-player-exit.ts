@@ -8,8 +8,10 @@ import {
 } from "@/lib/playback-history";
 import type { PlayerBridge } from "@/lib/player/bridge";
 import { getPlaybackPosition } from "@/lib/player/playback-clock";
+import { DEFAULT_WATCHED_THRESHOLD_PCT, isPlaybackFinished } from "@/lib/player/playback-finished";
 import { saveResumeMs } from "@/lib/resume";
 import { useProfiles } from "@/lib/profiles";
+import { useSettings } from "@/lib/settings";
 import { exitWindowFullscreenOnPlayerClose } from "@/lib/fullscreen-state";
 import type { PartialSyncState } from "@/lib/together/provider";
 import { useView, type PlayerSrc, type PlayerStreamRef } from "@/lib/view";
@@ -61,11 +63,17 @@ export function usePlayerExit(params: {
   } = params;
 
   const { activeProfile } = useProfiles();
+  const thresholdPct =
+    (typeof useSettings === "function" ? useSettings()?.settings?.watchedThreshold : undefined) ??
+    DEFAULT_WATCHED_THRESHOLD_PCT;
 
   const closePlayer = useCallback(async () => {
     const saveCurrent = (pos: number) => {
       const dur = snap?.durationSec ?? 0;
-      const finished = dur > 0 && pos >= dur * 0.92;
+      const finished =
+        dur > 0 &&
+        (pos >= dur * 0.92 ||
+          (typeof isPlaybackFinished === "function" && isPlaybackFinished(pos, dur, thresholdPct)));
       if (Number.isFinite(pos) && pos >= 5 && !finished) {
         saveResumeMs(
           src.meta.id,

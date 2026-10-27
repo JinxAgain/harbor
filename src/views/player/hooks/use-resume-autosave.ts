@@ -14,7 +14,8 @@ import { parseKitsuId } from "@/lib/providers/kitsu";
 import { profileFromMeta } from "@/lib/discover/profile";
 import { trackEvent } from "@/lib/discover/store";
 import { isExternalPlaylistId } from "@/lib/iptv/vod";
-import { clearLocalCw, localCwEntry, saveLocalCw } from "@/lib/local-cw";
+import { evictExternalCwItem } from "@/lib/feed/external-cw";
+import { clearLocalCw, listLocalCw, localCwEntry, saveLocalCw } from "@/lib/local-cw";
 import { recordWatchEvent } from "@/lib/watch-events";
 import { isLocalUrl } from "@/lib/player/local-url";
 import { isManuallyWatched, recordManualWatchedMeta, setManualWatched } from "@/lib/manual-watched";
@@ -273,9 +274,31 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
       clearLocalCw(id, current.ownerId);
       if (rv && rid && rid !== id) {
         clearLocalCw(rid, current.ownerId);
+        setMovieWatchedLocal(rid, true);
+      }
+      if (typeof listLocalCw === "function") {
+        const normName = (s.meta.name ?? "").trim().toLowerCase();
+        for (const priv of [false, true]) {
+          for (const entry of listLocalCw(priv)) {
+            if (
+              entry.type === "movie" &&
+              entry.id !== id &&
+              entry.id !== rid &&
+              normName.length > 0 &&
+              (entry.name ?? "").trim().toLowerCase() === normName
+            ) {
+              setMovieWatchedLocal(entry.id, true);
+              clearLocalCw(entry.id, current.ownerId);
+              clearResume(entry.id, se, ep, current.ownerId);
+            }
+          }
+        }
       }
     }
     if (finished) {
+      if (typeof evictExternalCwItem === "function") {
+        evictExternalCwItem(id, cs, ep, rv ? rid : null);
+      }
       recordWatchEvent({
         id,
         type: s.meta.type === "movie" ? "movie" : "series",
@@ -295,14 +318,19 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
     // must put it back in Continue Watching even when the Stremio cloud write is skipped (e.g.
     // signed out). Clearing the local watched marker and tracking it locally yields an in-progress
     // item with flaggedWatched=0 that isCwMember accepts, independent of authKey.
-    const movieWasWatched = s.meta.type === "movie" && isMovieWatchedLocal(id);
+    const movieWasWatched =
+      s.meta.type === "movie" &&
+      (isMovieWatchedLocal(id) || (rv && !!rid && isMovieWatchedLocal(rid)));
     const rewatchMovie =
       s.meta.type === "movie" &&
       sn.durationSec > 0 &&
       pos >= REWATCH_RESUME_SEC &&
       pos / sn.durationSec < WATCHED_RATIO &&
       (movieWasWatched || localCwEntry(id, true, current.ownerId) !== null);
-    if (rewatchMovie && movieWasWatched) setMovieWatchedLocal(id, false);
+    if (rewatchMovie && movieWasWatched) {
+      setMovieWatchedLocal(id, false);
+      if (rv && rid && rid !== id) setMovieWatchedLocal(rid, false);
+    }
     if (
       (s.meta.type === "series" || s.meta.type === "movie" || s.meta.type === "anime" || animeLocal) &&
       !(s.meta.type === "movie" && finished)

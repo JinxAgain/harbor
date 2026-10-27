@@ -170,6 +170,31 @@ export function listExternalCw(): LibraryItem[] {
   return items;
 }
 
+export function evictExternalCwItem(
+  metaId: string,
+  season?: number,
+  episode?: number,
+  altId?: string | null,
+): void {
+  if (items.length === 0) return;
+  const ids = new Set([metaId, altId].filter((x): x is string => Boolean(x)));
+  if (ids.size === 0) return;
+  const kept = items.filter((i) => {
+    if (!ids.has(i._id)) return true;
+    if (season != null && episode != null && i.type === "series") {
+      const se = episodeFromVideoId(i.state?.video_id);
+      const s = i.state?.season ?? se?.season;
+      const e = i.state?.episode ?? se?.episode;
+      return s !== season || e !== episode;
+    }
+    return false;
+  });
+  if (kept.length !== items.length) {
+    items = kept;
+    emit();
+  }
+}
+
 export function subscribeExternalCw(fn: () => void): () => void {
   subs.add(fn);
   return () => {

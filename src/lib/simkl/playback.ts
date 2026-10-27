@@ -2,6 +2,8 @@ import { simklRequest, SimklApiError } from "./client";
 import { getSession } from "./session";
 import { isCwDismissed } from "@/lib/cw-dismiss";
 import { localCwEntry } from "@/lib/local-cw";
+import { isMovieCompletedAfter } from "@/lib/movie-watched";
+import { tmdbImdbCached } from "@/lib/providers/tmdb";
 import { readResumeEntry, saveResumeBatch } from "@/lib/resume";
 import type { LibraryItem } from "@/lib/stremio";
 
@@ -185,6 +187,14 @@ export async function fetchSimklPlaybackItems(): Promise<LibraryItem[]> {
   for (const r of raw) {
     const item = toLibraryItem(r);
     if (!item?.state) continue;
+    const remoteT = Date.parse(item.state.lastWatched ?? "");
+    const remoteValid = Number.isFinite(remoteT) && remoteT > 0;
+    if (
+      item.type === "movie" &&
+      isMovieCompletedAfter(item._id, remoteValid ? remoteT : 0, tmdbImdbCached(item._id))
+    ) {
+      continue;
+    }
     const key = `${item._id}|${item.state.season ?? ""}|${item.state.episode ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -196,8 +206,6 @@ export async function fetchSimklPlaybackItems(): Promise<LibraryItem[]> {
     // Newer-wins backfill: overwrite a stale entry when the remote pause is newer
     // (paused_at) or, when the stored entry has no usable timestamp, further ahead.
     const existing = readResumeEntry(item._id, item.state.season, item.state.episode);
-    const remoteT = Date.parse(item.state.lastWatched ?? "");
-    const remoteValid = Number.isFinite(remoteT) && remoteT > 0;
     const isFirstParty = Boolean(existing && !existing.source);
     const shouldWrite =
       !existing ||

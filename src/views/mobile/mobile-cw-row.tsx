@@ -11,6 +11,12 @@ import { useHeroLogos } from "@/components/anime-hero/use-hero-logos";
 import { dismissCw, isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { reconcileCwItem } from "@/lib/continue-watching";
 import { clearLocalCw, listLocalCw, subscribeLocalCw, type LocalCwEntry } from "@/lib/local-cw";
+import {
+  isMovieCompletedAfter,
+  movieWatchedVersion,
+  subscribeMovieWatched,
+} from "@/lib/movie-watched";
+import { tmdbImdbCached } from "@/lib/providers/tmdb";
 import { dismissManualWatched } from "@/lib/manual-watched";
 import { resolveLocalPlayVersions } from "@/lib/local-library/playback";
 import { useExternalCw } from "@/lib/feed/external-cw";
@@ -133,6 +139,8 @@ export function useMobileCw(limit = 14): LibraryItem[] {
   }, [authKey]);
 
   useEffect(() => subscribeLocalCw(() => setLocalVersion((v) => v + 1)), []);
+  useEffect(() => subscribeMovieWatched(() => setLocalVersion((v) => v + 1)), []);
+  useSyncExternalStore(subscribeMovieWatched, movieWatchedVersion, () => 0);
 
   return useMemo(() => {
     void localVersion;
@@ -154,6 +162,7 @@ export function useMobileCw(limit = 14): LibraryItem[] {
           !i._id.startsWith("iptv:") &&
           !isCwDismissed(i) &&
           isCwMember(i) &&
+          !(i.type === "movie" && isMovieCompletedAfter(i._id, lastWatchedOf(i), tmdbImdbCached(i._id))) &&
           !(hideAnime && isAnimeCwItem(i)),
       )
       .map((i) => ({ i, k: cwSortKey(i) }))

@@ -11,6 +11,8 @@ import { recordAnimeCwId } from "@/lib/anime-cw-ids";
 import type { PlayerSrc } from "@/lib/view";
 import { resumeLibraryGetOne } from "@/lib/player/resume-start";
 import { playerLoadIdentity } from "@/lib/player/load-identity";
+import { isNaturalEnd } from "@/lib/player/playback-end";
+import { DEFAULT_WATCHED_THRESHOLD_PCT, isPlaybackFinished } from "@/lib/player/playback-finished";
 
 const ANIME_SCHEME = /^(kitsu|mal|anilist|anidb):/;
 
@@ -290,14 +292,24 @@ export function useStremioSync(params: {
 
   useEffect(() => {
     return () => {
-      const p = writeWithFreshBase(true, true);
+      const saved = progress.latest;
+      if (!saved) return;
+      const { src: s, snap: sn, authKey: ak, canonicalId: cid } = saved;
+      const vid = videoIdFor(s, cid);
+      if (!ak || !cid || !vid) return;
+      const pos = getPlaybackPosition() || progress.position;
+      if (pos < MIN_POSITION_SEC || sn.durationSec <= 0) return;
+      const base = baseItemRef.current?._id === cid ? baseItemRef.current : null;
+      const p = writeLibraryItem(ak, s, sn, base, cid, pos, true, vid).then((mt) => {
+        if (mt) lastWrittenMtimesRef.current.add(mt);
+      });
       inflightFlush = p;
       void p.finally(() => {
         if (inflightFlush === p) inflightFlush = null;
       });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [progress]);
 
   useEffect(() => {
     const onHide = () => {
@@ -415,10 +427,21 @@ async function writeLibraryItem(
   const priorDuration = typeof baseState.duration === "number" ? baseState.duration : 0;
   const durationShrunk =
     !src.episode && priorDuration > 0 && durationMs > 0 && durationMs < priorDuration * 0.7;
-  const playedReal = snap.status !== "error" && !durationShrunk;
-  const nowFlagged = durationMs > 0 && watchedRatio > CREDITS_RATIO && playedReal;
+  const playedReal =
+    (snap.status !== "error" || (snap.durationSec > 0 && positionSec >= snap.durationSec - 2)) &&
+    !durationShrunk;
+  const finishedByThreshold =
+    typeof isPlaybackFinished === "function"
+      ? isPlaybackFinished(positionSec, snap.durationSec, DEFAULT_WATCHED_THRESHOLD_PCT, [])
+      : watchedRatio >= 0.85;
+  const endedNaturally =
+    typeof isNaturalEnd === "function" ? isNaturalEnd(snap, positionSec) : false;
+  const nowFlagged =
+    durationMs > 0 &&
+    playedReal &&
+    (watchedRatio > CREDITS_RATIO || finishedByThreshold || endedNaturally);
   const meaningfulResume =
-    playedReal && durationMs > 0 && offsetMs >= 45000 && watchedRatio < CREDITS_RATIO;
+    playedReal && durationMs > 0 && offsetMs >= 45000 && !nowFlagged && watchedRatio < CREDITS_RATIO;
   const effPrevFlagged = videoChanged || meaningfulResume ? 0 : prevFlagged;
   let finaleDone = false;
   if (isTerminal && nowFlagged && isSeries && src.episode) {
@@ -428,11 +451,12 @@ async function writeLibraryItem(
       episode: metaIsTt ? (src.episode.imdbEpisode ?? src.episode.episode) : src.episode.episode,
     });
   }
+  const movieDone = !isSeries && nowFlagged;
 
   const state: StremioLibraryItemState = {
     lastWatched: now,
     timeWatched: offsetMs,
-    timeOffset: finaleDone ? 0 : offsetMs,
+    timeOffset: finaleDone || movieDone ? 0 : offsetMs,
     overallTimeWatched: prevOverall + (videoChanged ? prevTimeWatched : 0),
     timesWatched: nowFlagged && effPrevFlagged === 0 ? prevTimesWatched + 1 : prevTimesWatched,
     flaggedWatched: nowFlagged ? 1 : effPrevFlagged,

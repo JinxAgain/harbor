@@ -217,6 +217,27 @@ export function invalidateLibraryCache(): void {
   libraryCache = null;
 }
 
+const libraryWriteSubs = new Set<(item: LibraryItem) => void>();
+
+export function applyLocalLibraryItemWrite(item: LibraryItem): void {
+  if (libraryCache) {
+    const idx = libraryCache.items.findIndex((i) => i._id === item._id);
+    const nextItems =
+      idx >= 0
+        ? libraryCache.items.map((i, k) => (k === idx ? item : i))
+        : [item, ...libraryCache.items];
+    libraryCache = { ...libraryCache, sig: "", items: nextItems };
+  }
+  for (const fn of libraryWriteSubs) fn(item);
+}
+
+export function subscribeLibraryItemWrites(fn: (item: LibraryItem) => void): () => void {
+  libraryWriteSubs.add(fn);
+  return () => {
+    libraryWriteSubs.delete(fn);
+  };
+}
+
 export async function libraryGetOne(authKey: string, id: string): Promise<LibraryItem | null> {
   const items = await call<LibraryItem[]>("datastoreGet", {
     authKey,

@@ -50,6 +50,12 @@ import { publishResumeStates } from "@/lib/hover-preview/store";
 import { readResumeEntry, saveResumeBatch } from "@/lib/resume";
 import { dismissCw, isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { clearLocalCw, listLocalCw, localCwVersion, subscribeLocalCw } from "@/lib/local-cw";
+import {
+  isMovieCompletedAfter,
+  movieWatchedVersion,
+  subscribeMovieWatched,
+} from "@/lib/movie-watched";
+import { tmdbImdbCached } from "@/lib/providers/tmdb";
 import { reconcileCwItem } from "@/lib/continue-watching";
 import {
   dismissManualWatched,
@@ -74,6 +80,7 @@ import {
   libraryIfChanged,
   libraryMetaType,
   resumeSourceForItem,
+  subscribeLibraryItemWrites,
   type LibraryItem,
 } from "@/lib/stremio";
 import { setExternalCwSources, useExternalCw } from "@/lib/feed/external-cw";
@@ -529,7 +536,12 @@ export function Home({
             const lw = typeof w === "number" ? w : Date.parse(String(w ?? ""));
             const rawMt = Number.isFinite(lw) && lw > 0 ? lw : (i as { _mtime?: unknown })._mtime;
             const mt = typeof rawMt === "number" ? rawMt : Date.parse(String(rawMt ?? ""));
-            if (i.state?.timeOffset && i.state.timeOffset > 0) {
+            if (
+              i.state?.timeOffset &&
+              i.state.timeOffset > 0 &&
+              isCwMember(i) &&
+              !(i.type === "movie" && isMovieCompletedAfter(i._id, mt, tmdbImdbCached(i._id)))
+            ) {
               const vid = i.state.video_id ?? "";
               const kitsuThreeSeg =
                 /^(kitsu|mal|anilist|anidb):/.test(i._id) && vid.split(":").length === 3;
@@ -594,7 +606,21 @@ export function Home({
     };
   }, [authKey, active, hideSharedCw]);
 
+  useEffect(
+    () =>
+      subscribeLibraryItemWrites((updated) => {
+        setItems((prev) => {
+          const idx = prev.findIndex((i) => i._id === updated._id);
+          return idx >= 0
+            ? prev.map((i, k) => (k === idx ? updated : i))
+            : [updated, ...prev];
+        });
+      }),
+    [],
+  );
+
   const localCwVer = useSyncExternalStore(subscribeLocalCw, localCwVersion);
+  const movieWatchedVer = useSyncExternalStore(subscribeMovieWatched, movieWatchedVersion);
   const manualWatchedVer = useSyncExternalStore(subscribeManualWatched, manualWatchedVersion);
   const animeDetectVer = useDetectedAnimeVersion();
   const stremioWatchedIds = useMemo(() => {
@@ -653,6 +679,11 @@ export function Home({
         if ((i.type as string) === "other" || i._id.startsWith("iptv:")) return false;
         if (isCwDismissed(i)) return false;
         if (!isCwMember(i)) return false;
+        if (
+          i.type === "movie" &&
+          isMovieCompletedAfter(i._id, lastWatchedOf(i), tmdbImdbCached(i._id))
+        )
+          return false;
         if ((settings.animeOnlyInAnimeRoom || settings.hideContent.anime) && isAnimeCwItem(i)) return false;
         if (disabledSources.size > 0 && cwMemberViaResume(i)) {
           const src = resumeSourceForItem(i);
@@ -714,6 +745,7 @@ export function Home({
     localCwItems,
     cwVersion,
     cwRootVersion,
+    movieWatchedVer,
     settings.animeOnlyInAnimeRoom,
     settings.hideContent.anime,
     settings.cwSources,

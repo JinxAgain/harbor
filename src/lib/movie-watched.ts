@@ -2,11 +2,15 @@ import { persistCritical } from "./storage-recovery";
 
 const KEY_PREFIX = "harbor.moviewatched.v1.";
 const LEGACY_KEY = "harbor.moviewatched.v1";
+const AT_KEY_PREFIX = "harbor.moviewatched.at.v1.";
+const AT_LEGACY_KEY = "harbor.moviewatched.at.v1";
 const PROFILES_KEY = "harbor.profiles.v1";
+const COMPLETION_ECHO_MS = 60_000;
 
 const subs = new Set<() => void>();
 let version = 0;
 let cache: Set<string> | null = null;
+let atCache: Record<string, number> | null = null;
 
 function activeProfileId(): string {
   try {
@@ -48,6 +52,11 @@ function storeKey(): string {
   return id ? KEY_PREFIX + id : LEGACY_KEY;
 }
 
+function atStoreKey(): string {
+  const id = activeProfileId();
+  return id ? AT_KEY_PREFIX + id : AT_LEGACY_KEY;
+}
+
 function migrateLegacy(): void {
   try {
     const legacy = localStorage.getItem(LEGACY_KEY);
@@ -76,10 +85,35 @@ function load(): Set<string> {
   return cache;
 }
 
-function persist(next: Set<string>): void {
+function loadAt(): Record<string, number> {
+  if (atCache) return atCache;
+  try {
+    const raw = JSON.parse(localStorage.getItem(atStoreKey()) ?? "{}");
+    const next: Record<string, number> = {};
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof v === "number" && Number.isFinite(v) && v > 0) next[k] = v;
+      }
+    }
+    atCache = next;
+  } catch {
+    atCache = {};
+  }
+  return atCache;
+}
+
+function persist(next: Set<string>, nextAt?: Record<string, number>): void {
   cache = next;
+  if (nextAt) {
+    atCache = nextAt;
+    if (typeof localStorage !== "undefined") {
+      persistCritical(atStoreKey(), JSON.stringify(nextAt));
+    }
+  }
   version += 1;
-  persistCritical(storeKey(), JSON.stringify([...next]));
+  if (typeof localStorage !== "undefined") {
+    persistCritical(storeKey(), JSON.stringify([...next]));
+  }
   for (const fn of subs) fn();
 }
 
@@ -87,17 +121,57 @@ export function isMovieWatchedLocal(metaId: string): boolean {
   return load().has(metaId);
 }
 
+export function movieWatchedAt(metaId: string): number {
+  return loadAt()[metaId] ?? 0;
+}
+
+export function isMovieCompletedAfter(
+  metaId: string,
+  activityMs: number,
+  altId?: string | null,
+): boolean {
+  const watched = isMovieWatchedLocal(metaId) || (!!altId && isMovieWatchedLocal(altId));
+  if (!watched) return false;
+  const at = Math.max(movieWatchedAt(metaId), altId ? movieWatchedAt(altId) : 0);
+  if (at <= 0) return true;
+  if (!Number.isFinite(activityMs) || activityMs <= 0) return true;
+  return at + COMPLETION_ECHO_MS >= activityMs;
+}
+
 export function movieWatchedIds(): Set<string> {
   return load();
 }
 
-export function setMovieWatchedLocal(metaId: string, watched: boolean): void {
+export function setMovieWatchedLocal(
+  metaId: string,
+  watched: boolean,
+  at: number = Date.now(),
+): void {
   const cur = load();
-  if (cur.has(metaId) === watched) return;
+  const curAt = loadAt();
+  const validAt = Number.isFinite(at) && at > 0 ? at : Date.now();
+  if (cur.has(metaId) === watched) {
+    if (watched && (curAt[metaId] ?? 0) < validAt) {
+      const nextAt = { ...curAt, [metaId]: validAt };
+      atCache = nextAt;
+      if (typeof localStorage !== "undefined") {
+        persistCritical(atStoreKey(), JSON.stringify(nextAt));
+      }
+      version += 1;
+      for (const fn of subs) fn();
+    }
+    return;
+  }
   const next = new Set(cur);
-  if (watched) next.add(metaId);
-  else next.delete(metaId);
-  persist(next);
+  const nextAt = { ...curAt };
+  if (watched) {
+    next.add(metaId);
+    nextAt[metaId] = Math.max(nextAt[metaId] ?? 0, validAt);
+  } else {
+    next.delete(metaId);
+    delete nextAt[metaId];
+  }
+  persist(next, nextAt);
 }
 
 export function subscribeMovieWatched(fn: () => void): () => void {
@@ -118,6 +192,7 @@ if (typeof window !== "undefined") {
     if (p === lastProfile) return;
     lastProfile = p;
     cache = null;
+    atCache = null;
     version += 1;
     for (const fn of subs) fn();
   };

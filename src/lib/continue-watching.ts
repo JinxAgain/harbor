@@ -13,6 +13,7 @@ import {
   isCwMember,
   library,
   resumeSourceForItem,
+  subscribeLibraryItemWrites,
   type ExternalCwSource,
   type LibraryItem,
 } from "@/lib/stremio";
@@ -220,6 +221,17 @@ export function useContinueWatching(excludeId?: string, limit = 12): CwCard[] {
   }, [authKey]);
 
   useEffect(() => subscribeLocalCw(() => setLocalVersion((v) => v + 1)), []);
+  useEffect(() => {
+    if (typeof subscribeLibraryItemWrites !== "function") return;
+    return subscribeLibraryItemWrites((updated) => {
+      setItems((prev) => {
+        const idx = prev.findIndex((i) => i._id === updated._id);
+        return idx >= 0
+          ? prev.map((i, k) => (k === idx ? updated : i))
+          : [updated, ...prev];
+      });
+    });
+  }, []);
 
   return useMemo(() => {
     void localVersion;
