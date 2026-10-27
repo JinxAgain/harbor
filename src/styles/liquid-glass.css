@@ -279,11 +279,12 @@ html[data-liquid-glass="on"]:not([data-mpv-embed="1"])[data-theme-mode="light"]
 
 html[data-liquid-glass="on"]:not([data-mpv-embed="1"]) .harbor-minui-tooltip {
   --lg-opacity: var(--harbor-glass-opacity, 0.9);
-  background-color: color-mix(
-    in srgb,
-    var(--color-elevated) calc(72% * var(--lg-opacity)),
-    transparent
-  ) !important;
+  /*
+   * Tooltips sit over arbitrary artwork and gradients. Keep the surface
+   * opaque enough for the label to remain readable while retaining the
+   * liquid-glass edge, sheen, and backdrop treatment.
+   */
+  background-color: var(--color-elevated) !important;
   background-image: linear-gradient(
     145deg,
     color-mix(in srgb, var(--color-ink) calc(12% * var(--lg-opacity)), transparent) 0%,
@@ -300,11 +301,7 @@ html[data-liquid-glass="on"]:not([data-mpv-embed="1"]) .harbor-minui-tooltip {
 
 html[data-liquid-glass="on"]:not([data-mpv-embed="1"]) .harbor-minui-tooltip > span[aria-hidden],
 html[data-liquid-glass="on"]:not([data-mpv-embed="1"]) .harbor-minui-tooltip > span {
-  background: color-mix(
-    in srgb,
-    var(--color-elevated) calc(72% * var(--harbor-glass-opacity, 0.9)),
-    transparent
-  ) !important;
+  background: var(--color-elevated) !important;
   border-right-color: color-mix(in srgb, var(--color-ink) 20%, var(--color-edge)) !important;
   border-bottom-color: color-mix(in srgb, var(--color-ink) 20%, var(--color-edge)) !important;
 }
