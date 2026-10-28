@@ -965,7 +965,12 @@ export function useRoomSync(params: {
       return;
     }
     if (selfFrameReadyRef.current) {
-      if (!hasStarted) {
+      if (
+        !hasStarted ||
+        (roomSnapshot.started &&
+          roomSnapshot.syncState &&
+          !isDifferentMedia(roomSnapshot.syncState, src))
+      ) {
         const self = roomSnapshot.participants.find((p) => p.id === clientId);
         if (self && self.ready === false) {
           markReady(true);
@@ -991,6 +996,7 @@ export function useRoomSync(params: {
     resumeReady,
     isHost,
     hasStarted,
+    roomSnapshot.started,
     roomSnapshot.syncState,
     src,
     snap.videoWidth,

@@ -156,6 +156,7 @@ export type PlayerOverlayLayersProps = {
   chatCorner: Room["chatCorner"];
   chatHidden: boolean;
   isHost: boolean;
+  hasStarted: boolean;
   staleIds: Room["staleIds"];
   guestEscapeReady: boolean;
   onStart: () => void;
@@ -456,6 +457,7 @@ export const PlayerOverlayLayers = memo(function PlayerOverlayLayers(p: PlayerOv
         chatHidden={p.chatHidden}
         showWaiting={p.showWaiting}
         isHost={p.isHost}
+        hasStarted={p.hasStarted}
         staleIds={p.staleIds}
         guestEscapeReady={p.guestEscapeReady}
         onStart={p.onStart}

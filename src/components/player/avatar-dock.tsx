@@ -26,6 +26,7 @@ export function AvatarDock({
   now,
   corner = "top-right",
   hidden = false,
+  hasStarted = false,
 }: {
   participants: Participant[];
   selfId: string;
@@ -37,6 +38,7 @@ export function AvatarDock({
   now: number;
   corner?: PanelCorner;
   hidden?: boolean;
+  hasStarted?: boolean;
 }) {
   if (hidden) return null;
   if (participants.length === 0) return null;
@@ -50,7 +52,8 @@ export function AvatarDock({
     const stale = now - lastSeen > ACTIVE_THRESHOLD_MS;
     const loc = participantLocations.get(p.id);
     const leftPlayer = !!loc && loc.kind !== "player";
-    return stale || leftPlayer || p.id === lastPauserId || !p.ready;
+    const unreadyInLobby = !hasStarted && !p.ready;
+    return stale || leftPlayer || p.id === lastPauserId || unreadyInLobby;
   });
   const surface = visible || attention;
 
@@ -75,6 +78,7 @@ export function AvatarDock({
               isPauser={p.id === lastPauserId}
               isStale={stale}
               leftPlayer={leftPlayer}
+              hasStarted={hasStarted}
             />
           );
         })}
@@ -90,6 +94,7 @@ function Avatar({
   isPauser,
   isStale,
   leftPlayer,
+  hasStarted = false,
 }: {
   participant: Participant;
   isSelf: boolean;
@@ -97,6 +102,7 @@ function Avatar({
   isPauser: boolean;
   isStale: boolean;
   leftPlayer: boolean;
+  hasStarted?: boolean;
 }) {
   const t = useT();
   const { avatar: selfAvatar, color: selfColor } = useSelfIdentity();
@@ -107,7 +113,8 @@ function Avatar({
   const tint = isSelf
     ? selfColor ?? nameColor(participant.name)
     : participant.color ?? nameColor(participant.name);
-  const dim = isPauser || isStale || leftPlayer || !participant.ready;
+  const unreadyInLobby = !hasStarted && !participant.ready;
+  const dim = isPauser || isStale || leftPlayer || unreadyInLobby;
   return (
     <div className="group/avatar pointer-events-auto flex items-center gap-2">
       <span className="hidden whitespace-nowrap rounded-full bg-black/65 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-md group-hover/avatar:inline-flex">

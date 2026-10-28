@@ -1472,6 +1472,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     chatCorner,
     chatHidden,
     isHost,
+    hasStarted,
     staleIds: lobby.staleIds,
     guestEscapeReady: lobby.guestEscapeReady,
     onStart: lobby.startHost,

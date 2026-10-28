@@ -30,6 +30,7 @@ export const RoomLayer = memo(function RoomLayer({
   chatHidden,
   showWaiting,
   isHost,
+  hasStarted,
   staleIds,
   guestEscapeReady,
   onStart,
@@ -64,6 +65,7 @@ export const RoomLayer = memo(function RoomLayer({
   chatHidden: boolean;
   showWaiting: boolean;
   isHost: boolean;
+  hasStarted: boolean;
   staleIds: Set<string>;
   guestEscapeReady: boolean;
   onStart: () => void;
@@ -97,6 +99,7 @@ export const RoomLayer = memo(function RoomLayer({
           now={now}
           corner={avatarsCorner}
           hidden={avatarsHidden}
+          hasStarted={hasStarted}
         />
       )}
 

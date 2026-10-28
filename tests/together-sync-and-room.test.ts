@@ -2463,6 +2463,201 @@ test("worker Room handleInvite resets started, syncState, and peer readiness", (
   );
 });
 
+test("AvatarDock does not keep dock surfaced or dim avatars when hasStarted is true and guest ready is false", () => {
+  const dockSource = readFileSync(new URL("../src/components/player/avatar-dock.tsx", import.meta.url), "utf8");
+  const dockCode = ts.transpileModule(dockSource, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+      jsx: ts.JsxEmit.React,
+    },
+  }).outputText;
+
+  const mockReact = {
+    createElement: (type: any, props: any, ...children: any[]) => ({ type, props: { ...props, children } }),
+    useState: (v: any) => [v, () => {}],
+    useEffect: () => {},
+  };
+
+  const dockExports: any = {};
+  new Function("require", "exports", "React", dockCode)(
+    (name: string) => {
+      if (name === "react") return mockReact;
+      if (name === "lucide-react") return { Crown: "Crown", DoorOpen: "DoorOpen", Pause: "Pause", WifiOff: "WifiOff" };
+      if (name.includes("colors")) return { nameColor: () => "#ff0000" };
+      if (name.includes("use-self-identity")) return { useSelfIdentity: () => ({ avatar: null, color: null }) };
+      if (name.includes("i18n")) return { useT: () => (s: string) => s };
+      return {};
+    },
+    dockExports,
+    mockReact,
+  );
+
+  const { AvatarDock } = dockExports;
+
+  const participants = [
+    { id: "host", name: "Host", joinedAt: 1000, ready: true },
+    { id: "guest", name: "Guest", joinedAt: 1000, ready: false },
+  ];
+  const presenceMap = new Map([["guest", Date.now()]]);
+  const participantLocations = new Map([["guest", { kind: "player" }]]);
+
+  // Case 1: Active playback (hasStarted: true, visible: false, guest ready: false)
+  // For the Host (selfId: "host"):
+  const renderedPlaying = AvatarDock({
+    participants,
+    selfId: "host",
+    hostId: "host",
+    syncState: { playing: true, updatedBy: "host" },
+    visible: false,
+    presenceMap,
+    participantLocations,
+    now: Date.now(),
+    hasStarted: true,
+  });
+
+  assert.ok(
+    renderedPlaying.props.className.includes("opacity-0"),
+    "AvatarDock must hide (opacity-0) during active playback even if guest ready is false",
+  );
+  assert.equal(
+    renderedPlaying.props.className.includes("opacity-100"),
+    false,
+    "AvatarDock must not be forced to opacity-100 during active playback",
+  );
+
+  // Case 2: Pre-roll Lobby (hasStarted: false, visible: false, guest ready: false)
+  // For the Host (selfId: "host"):
+  const renderedLobby = AvatarDock({
+    participants,
+    selfId: "host",
+    hostId: "host",
+    syncState: { playing: false, updatedBy: "host" },
+    visible: false,
+    presenceMap,
+    participantLocations,
+    now: Date.now(),
+    hasStarted: false,
+  });
+
+  assert.ok(
+    renderedLobby.props.className.includes("opacity-100"),
+    "AvatarDock must surface (opacity-100) in lobby when guest is not ready",
+  );
+});
+
+test("useRoomSync re-asserts markReady(true) during active playback on same media when self.ready is false", () => {
+  const localExports: any = {};
+  const refs: any[] = [];
+  const effects: any[] = [];
+  let refIndex = 0;
+  let effectIndex = 0;
+
+  new Function("require", "exports", "window", syncCode)(
+    (name: string) => {
+      if (name.includes("player-utils")) return utilsExports;
+      if (name === "react") {
+        return {
+          useRef: (init: any) => {
+            const index = refIndex++;
+            if (!refs[index]) refs[index] = { current: init };
+            return refs[index];
+          },
+          useEffect: (fn: any, deps: any[]) => {
+            const index = effectIndex++;
+            const prev = effects[index];
+            let changed = true;
+            if (prev && prev.deps && deps) {
+              changed = deps.length !== prev.deps.length || deps.some((d, i) => !Object.is(d, prev.deps[i]));
+            }
+            if (changed) {
+              if (prev?.cleanup && typeof prev.cleanup === "function") prev.cleanup();
+              effects[index] = { deps, cleanup: fn() };
+            }
+          },
+        };
+      }
+      return {
+        getPlaybackPosition: () => 100,
+        usePlaybackFlag: () => false,
+        useSettings: () => ({ settings: {} }),
+        isDifferentMedia: (a: any, b: any) => {
+          if (!a || !b) return true;
+          if (a.mediaId !== b.meta?.id) return true;
+          const aSeason = a.episode?.season ?? null;
+          const bSeason = b.episode?.season ?? null;
+          const aEp = a.episode?.episode ?? null;
+          const bEp = b.episode?.episode ?? null;
+          return aSeason !== bSeason || aEp !== bEp;
+        },
+      };
+    },
+    localExports,
+    {
+      setInterval: () => 1,
+      clearInterval: () => {},
+      setTimeout: (cb: any) => cb(),
+      clearTimeout: () => {},
+    },
+  );
+  const { useRoomSync: hook } = localExports;
+
+  const markReadyCalls: boolean[] = [];
+  const markReady = (ready: boolean) => markReadyCalls.push(ready);
+  const selfFrameReadyRef = { current: true };
+
+  // Guest is already playing on Episode 1 (hasStarted: true, selfFrameReady: true)
+  // But due to reconnect or host claim, snapshot shows guest1.ready === false
+  refIndex = 0;
+  effectIndex = 0;
+  hook({
+    inRoom: true,
+    isHost: false,
+    hasStarted: true,
+    setHasStarted: () => {},
+    selfFrameReadyRef,
+    resumeReady: true,
+    resolvedStartSec: 0,
+    roomSnapshot: {
+      participants: [{ id: "host", ready: true }, { id: "guest1", ready: false }],
+      started: true,
+      hostClientId: "host",
+      syncState: {
+        mediaId: "tt123",
+        episode: { season: 1, episode: 1 },
+      },
+    },
+    clientId: "guest1",
+    src: {
+      url: "http://127.0.0.1:7000/play/ep1",
+      meta: { id: "tt123", name: "Show" },
+      episode: { season: 1, episode: 1 },
+    },
+    snap: {
+      status: "playing",
+      durationSec: 1500,
+      rate: 1.0,
+      buffering: false,
+      videoWidth: 1920,
+      videoHeight: 1080,
+    },
+    bridgeRef: { current: null },
+    hostSourceRef: { current: null },
+    guestPickRef: { current: false },
+    publishState: () => {},
+    onIncomingState: () => () => {},
+    onIncomingCommand: () => () => {},
+    markReady,
+    suppressOutgoingFor: () => {},
+    setForeignNotice: () => {},
+  });
+
+  assert.ok(
+    markReadyCalls.includes(true),
+    "Guest must re-assert markReady(true) during active playback on matching media if self.ready is false",
+  );
+});
+
 
 
 
