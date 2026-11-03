@@ -1,4 +1,5 @@
 import { activeProfileId } from "@/lib/active-profile-id";
+import { setItemWithRecovery } from "@/lib/storage-recovery";
 import type { WatchlistStatus } from "../list-status";
 
 export type SimklCacheItem = {
@@ -66,6 +67,23 @@ export function getLocalCache(): SimklCache | null {
   return memoryCache;
 }
 
+export function serializeCacheForStorage(cache: SimklCache, slimCompletedEpisodes: boolean): string {
+  if (!slimCompletedEpisodes) return JSON.stringify(cache);
+  const slimItems: Record<string, SimklCacheItem> = {};
+  for (const [k, item] of Object.entries(cache.items)) {
+    if (
+      item.watchedEpisodes &&
+      (item.status === "completed" || item.status === "dropped")
+    ) {
+      const { watchedEpisodes: _, ...rest } = item;
+      slimItems[k] = rest;
+    } else {
+      slimItems[k] = item;
+    }
+  }
+  return JSON.stringify({ ...cache, items: slimItems });
+}
+
 export function saveLocalCache(cache: SimklCache) {
   const profile = activeProfileId();
   const key = cacheKey();
@@ -78,7 +96,12 @@ export function saveLocalCache(cache: SimklCache) {
     writeTimeout = null;
     try {
       if (memoryCache && memoryCacheProfile === profile) {
-        localStorage.setItem(key, JSON.stringify(memoryCache));
+        const fullPayload = serializeCacheForStorage(memoryCache, false);
+        const ok = setItemWithRecovery(key, fullPayload);
+        if (!ok) {
+          const slimPayload = serializeCacheForStorage(memoryCache, true);
+          setItemWithRecovery(key, slimPayload);
+        }
       }
     } catch (e) {
       console.error("Failed to save SIMKL cache asynchronously", e);

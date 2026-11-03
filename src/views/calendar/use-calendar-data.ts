@@ -13,7 +13,9 @@ import {
   fetchSimklCalendar,
   fetchSimklPremieresCalendar,
   fetchTraktCalendar,
+  peekSimklCalendar,
 } from "@/lib/calendar-sources";
+import { subscribeSimklCalendarSnapshot } from "@/lib/simkl/calendar-snapshot";
 import type { Settings } from "@/lib/settings";
 import { t } from "@/lib/i18n";
 
@@ -38,23 +40,29 @@ export function useCalendarData({
   month,
   animeDub,
 }: Args) {
-  const [items, setItems] = useState<CalendarItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const initialSnapshot =
+    source === "simkl" && simklConnected ? peekSimklCalendar(year, month) : null;
+  const [items, setItems] = useState<CalendarItem[]>(() => initialSnapshot ?? []);
+  const [loading, setLoading] = useState(() => !initialSnapshot && source !== "games");
   const [error, setError] = useState<string | null>(null);
-  const prevSourceRef = useRef(source);
+  const navKey = `${source}:${year}:${month}:${simklConnected}`;
+  const prevNavKeyRef = useRef(navKey);
 
-  if (prevSourceRef.current !== source) {
-    prevSourceRef.current = source;
-    setItems([]);
-    setLoading(true);
+  if (prevNavKeyRef.current !== navKey) {
+    prevNavKeyRef.current = navKey;
+    const snap = source === "simkl" && simklConnected ? peekSimklCalendar(year, month) : null;
+    setItems(snap ?? []);
+    setLoading(!snap && source !== "games");
     setError(null);
   }
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    const run = (p: Promise<CalendarItem[]>) => {
-      setLoading(true);
+    const run = (p: Promise<CalendarItem[]>, opts?: { silent?: boolean }) => {
+      if (!opts?.silent) {
+        setLoading(true);
+      }
       p.then((rows) => {
         if (!cancelled) setItems(rows);
       })
@@ -87,7 +95,11 @@ export function useCalendarData({
       }
       if (source === "simkl") {
         if (!simklConnected) return stop();
-        return run(fetchSimklCalendar(year, month, { tmdbKey: settings.tmdbKey }));
+        const snap = peekSimklCalendar(year, month);
+        return run(
+          fetchSimklCalendar(year, month, { tmdbKey: settings.tmdbKey }),
+          { silent: !!snap },
+        );
       }
       if (source === "simkl-anticipated") {
         return run(fetchSimklPremieresCalendar(year, month));
@@ -158,7 +170,15 @@ export function useCalendarData({
   ]);
 
   useEffect(() => {
-    if (simklConnected && source !== "games") {
+    if (source !== "simkl" || !simklConnected) return;
+    const unsubscribe = subscribeSimklCalendarSnapshot(year, month, (updatedItems) => {
+      setItems(updatedItems);
+    });
+    return unsubscribe;
+  }, [source, simklConnected, year, month]);
+
+  useEffect(() => {
+    if (simklConnected && source !== "games" && source !== "simkl") {
       void fetchSimklPremieresCalendar(year, month).catch(() => {});
     }
   }, [simklConnected, year, month, source]);

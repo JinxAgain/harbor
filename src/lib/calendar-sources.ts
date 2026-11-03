@@ -23,12 +23,30 @@ import {
   type SimklUserEntry,
 } from "./simkl/calendar";
 import { getLocalCache, syncWatchlistCache } from "./simkl/activities";
+import { subscribeActivitiesMutation } from "./simkl/activities/gate";
 import { isAuthenticated as simklConnected } from "./simkl/session";
+import {
+  invalidateSimklCalendarSnapshots,
+  peekSimklCalendar,
+  readSimklCalendarSnapshot,
+  writeSimklCalendarSnapshot,
+} from "./simkl/calendar-snapshot";
 import { fetchAniListAiringCalendar as fetchAniListAiring } from "./anilist/airing";
 import { fetchDubSchedule } from "./providers/anime-dub-sub";
 
 export { fetchLibraryCalendar } from "./calendar-library";
 export { buildSimklUserEntries, matchSimklCdnToUserCalendar, type SimklUserEntry };
+export { peekSimklCalendar };
+
+export type AdjacentMonthRelation = "curr" | "prev" | "next";
+
+export function adjacentMonthForTimezone(
+  tzOffsetMinutes: number,
+): ("curr" | "prev" | "next")[] {
+  if (tzOffsetMinutes < 0) return ["curr", "prev"];
+  if (tzOffsetMinutes > 0) return ["curr", "next"];
+  return ["curr"];
+}
 
 interface CacheEntry {
   items: CalendarItem[];
@@ -83,7 +101,16 @@ function withCalendarCache(
 export function clearCalendarSourceCache() {
   calendarCache.clear();
   calendarInFlight.clear();
+  invalidateSimklCalendarSnapshots({ purgeStorage: true });
 }
+
+subscribeActivitiesMutation(() => {
+  for (const k of calendarCache.keys()) {
+    if (k.startsWith("simkl-calendar:")) {
+      calendarCache.delete(k);
+    }
+  }
+});
 
 export async function fetchSimklPremieresCalendar(
   year: number,
@@ -155,15 +182,25 @@ async function fetchSimklMonthCdnCatalog(
   const nextDate = new Date(year, month + 1, 1);
   const today = new Date();
   const monthDiff = (year - today.getFullYear()) * 12 + (month - today.getMonth());
-  const tasks: Promise<SimklCdnItem[]>[] = [
-    fetchSimklCdnArchiveCached(year, month, catalog).catch(() => []),
-    fetchSimklCdnArchiveCached(prevDate.getFullYear(), prevDate.getMonth(), catalog).catch(
-      () => [],
-    ),
-    fetchSimklCdnArchiveCached(nextDate.getFullYear(), nextDate.getMonth(), catalog).catch(
-      () => [],
-    ),
-  ];
+  const rels = adjacentMonthForTimezone(new Date().getTimezoneOffset());
+  const tasks: Promise<SimklCdnItem[]>[] = [];
+  for (const rel of rels) {
+    if (rel === "curr") {
+      tasks.push(fetchSimklCdnArchiveCached(year, month, catalog).catch(() => []));
+    } else if (rel === "prev") {
+      tasks.push(
+        fetchSimklCdnArchiveCached(prevDate.getFullYear(), prevDate.getMonth(), catalog).catch(
+          () => [],
+        ),
+      );
+    } else if (rel === "next") {
+      tasks.push(
+        fetchSimklCdnArchiveCached(nextDate.getFullYear(), nextDate.getMonth(), catalog).catch(
+          () => [],
+        ),
+      );
+    }
+  }
   if (monthDiff >= -1 && monthDiff <= 1) {
     tasks.push(fetchSimklCdnRollingCached(catalog).catch(() => []));
   }
@@ -186,26 +223,84 @@ async function fetchSimklMonthCdnCatalog(
   return out;
 }
 
+function revalidateSimklCalendarOnSync(
+  year: number,
+  month: number,
+  cacheKey: string,
+  previousLastSync: string | null | undefined,
+): void {
+  void syncWatchlistCache()
+    .then(async (updatedCache) => {
+      if (!updatedCache || updatedCache.lastSync === previousLastSync) return;
+      const [reTv, reAnime, reMovie] = await Promise.all([
+        fetchSimklMonthCdnCatalog(year, month, "tv"),
+        fetchSimklMonthCdnCatalog(year, month, "anime"),
+        fetchSimklMonthCdnCatalog(year, month, "movie"),
+      ]);
+      const reUserEntries = buildSimklUserEntries(updatedCache, []);
+      const { items: reMatched } = matchSimklCdnToUserCalendar(
+        year,
+        month,
+        { tv: reTv, anime: reAnime, movie: reMovie },
+        reUserEntries,
+      );
+      reMatched.sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
+      calendarCache.set(cacheKey, { items: reMatched, timestamp: Date.now() });
+      writeSimklCalendarSnapshot(year, month, reMatched, updatedCache.lastSync);
+    })
+    .catch(() => {});
+}
+
 export async function fetchSimklCalendar(
   year: number,
   month: number,
   opts: { tmdbKey: string },
 ): Promise<CalendarItem[]> {
   if (!simklConnected()) return [];
+
   const cacheKey = `simkl-calendar:${year}-${month}`;
+  const snap = readSimklCalendarSnapshot(year, month);
+  const localCache = getLocalCache();
+
+  if (snap && !snap.isStale && localCache && snap.lastSync === localCache.lastSync) {
+    revalidateSimklCalendarOnSync(year, month, cacheKey, localCache.lastSync);
+    return snap.items;
+  }
+
+  if (snap?.isStale) {
+    calendarCache.delete(cacheKey);
+  }
+
   return withCalendarCache(cacheKey, async () => {
-    const [cache, watchlist, watching, hold, cdnTv, cdnAnime, cdnMovie] = await Promise.all([
-      syncWatchlistCache().catch(() => getLocalCache()),
-      fetchSimklWatchlist().catch(() => []),
-      fetchWatchingItems().catch(() => []),
-      fetchHoldItems().catch(() => []),
+    let cache = getLocalCache();
+    if (!cache || Object.keys(cache.items).length === 0) {
+      cache = await syncWatchlistCache().catch(() => getLocalCache());
+    } else {
+      revalidateSimklCalendarOnSync(year, month, cacheKey, cache.lastSync);
+    }
+
+    const [cdnTv, cdnAnime, cdnMovie] = await Promise.all([
       fetchSimklMonthCdnCatalog(year, month, "tv"),
       fetchSimklMonthCdnCatalog(year, month, "anime"),
       fetchSimklMonthCdnCatalog(year, month, "movie"),
     ]);
 
-    const userEntries = buildSimklUserEntries(cache, [...watching, ...watchlist, ...hold]);
-    if (userEntries.length === 0) return [];
+    let userEntries: SimklUserEntry[] = [];
+    if (cache && Object.keys(cache.items).length > 0) {
+      userEntries = buildSimklUserEntries(cache, []);
+    } else {
+      const [watchlist, watching, hold] = await Promise.all([
+        fetchSimklWatchlist().catch(() => []),
+        fetchWatchingItems().catch(() => []),
+        fetchHoldItems().catch(() => []),
+      ]);
+      userEntries = buildSimklUserEntries(cache, [...watching, ...watchlist, ...hold]);
+    }
+
+    if (userEntries.length === 0) {
+      writeSimklCalendarSnapshot(year, month, [], cache?.lastSync ?? null);
+      return [];
+    }
 
     const { items: cdnMatched, matchedKeys } = matchSimklCdnToUserCalendar(
       year,
@@ -213,6 +308,20 @@ export async function fetchSimklCalendar(
       { tv: cdnTv, anime: cdnAnime, movie: cdnMovie },
       userEntries,
     );
+
+    const today = new Date();
+    const monthDiff = (year - today.getFullYear()) * 12 + (month - today.getMonth());
+
+    const cdnHasMonthData =
+      cdnTv.some((item) => item.date && inMonth(localDateTimeFromIso(item.date).date, year, month)) ||
+      cdnAnime.some((item) => item.date && inMonth(localDateTimeFromIso(item.date).date, year, month)) ||
+      cdnMovie.some((item) => item.date && inMonth(localDateTimeFromIso(item.date).date, year, month));
+
+    if (cdnHasMonthData || monthDiff <= 1) {
+      cdnMatched.sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
+      writeSimklCalendarSnapshot(year, month, cdnMatched, cache?.lastSync ?? null);
+      return cdnMatched;
+    }
 
     const candidates: SavedCandidate[] = [];
     const seenCandidateIds = new Set<string>();
@@ -245,10 +354,14 @@ export async function fetchSimklCalendar(
 
     if (candidates.length === 0) {
       cdnMatched.sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
+      writeSimklCalendarSnapshot(year, month, cdnMatched, cache?.lastSync ?? null);
       return cdnMatched;
     }
 
-    const fallbackItems = await resolveSavedCalendar(candidates, year, month, opts).catch(
+    candidates.sort((a, b) => b.mtime - a.mtime);
+    const boundedCandidates = candidates.slice(0, 24);
+
+    const fallbackItems = await resolveSavedCalendar(boundedCandidates, year, month, opts).catch(
       () => [] as CalendarItem[],
     );
     const combined = [...cdnMatched];
@@ -276,6 +389,7 @@ export async function fetchSimklCalendar(
       combined.push(item);
     }
     combined.sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
+    writeSimklCalendarSnapshot(year, month, combined, cache?.lastSync ?? null);
     return combined;
   });
 }

@@ -8,6 +8,7 @@ import {
   type SimklCdnItem,
   type SimklUserEntry,
 } from "./calendar-data";
+import { invalidateSimklCalendarSnapshots } from "./calendar-snapshot";
 export {
   buildSimklUserEntries,
   matchSimklCdnToUserCalendar,
@@ -68,17 +69,20 @@ function mapCdnItem(item: SimklCdnItem, type: "tv" | "movie", isAnime: boolean):
   };
 }
 
+const RAW_CACHE_TTL_MS = 30 * 60 * 1000;
+
+interface RawCacheEntry {
+  promise: Promise<SimklCdnItem[]>;
+  timestamp: number;
+}
+
 export async function fetchSimklCdnRollingRaw(
   catalog: "tv" | "anime" | "movie",
 ): Promise<SimklCdnItem[]> {
   const filename = catalog === "movie" ? "movie_release.json" : `${catalog}.json`;
-  try {
-    const res = await fetch(cdnUrl(filename), { headers: { "User-Agent": UA } });
-    if (!res.ok) return [];
-    return parseSimklCalendar(await res.json());
-  } catch {
-    return [];
-  }
+  const res = await fetch(cdnUrl(filename), { headers: { "User-Agent": UA } });
+  if (!res.ok) throw new Error(`SIMKL CDN rolling HTTP ${res.status}`);
+  return parseSimklCalendar(await res.json());
 }
 
 export async function fetchSimklCdnArchiveRaw(
@@ -88,21 +92,21 @@ export async function fetchSimklCdnArchiveRaw(
 ): Promise<SimklCdnItem[]> {
   const filename = catalog === "movie" ? "movie_release.json" : `${catalog}.json`;
   const simklMonth = month + 1;
-  try {
-    const res = await fetch(cdnUrl(`${year}/${simklMonth}/${filename}`), {
-      headers: { "User-Agent": UA },
-    });
-    if (!res.ok) return [];
-    return parseSimklCalendar(await res.json());
-  } catch {
-    return [];
-  }
+  const res = await fetch(cdnUrl(`${year}/${simklMonth}/${filename}`), {
+    headers: { "User-Agent": UA },
+  });
+  if (!res.ok) throw new Error(`SIMKL CDN archive HTTP ${res.status}`);
+  return parseSimklCalendar(await res.json());
 }
 
 export async function fetchSimklCdnRolling(catalog: "tv" | "anime" | "movie"): Promise<CalendarItem[]> {
-  const data = await fetchSimklCdnRollingRaw(catalog);
-  const type = catalog === "movie" ? "movie" : "tv";
-  return data.map((item) => mapCdnItem(item, type, catalog === "anime"));
+  try {
+    const data = await fetchSimklCdnRollingCached(catalog);
+    const type = catalog === "movie" ? "movie" : "tv";
+    return data.map((item) => mapCdnItem(item, type, catalog === "anime"));
+  } catch {
+    return [];
+  }
 }
 
 export async function fetchSimklCdnArchive(
@@ -110,14 +114,18 @@ export async function fetchSimklCdnArchive(
   month: number,
   catalog: "tv" | "anime" | "movie",
 ): Promise<CalendarItem[]> {
-  const data = await fetchSimklCdnArchiveRaw(year, month, catalog);
-  const type = catalog === "movie" ? "movie" : "tv";
-  return data.map((item) => mapCdnItem(item, type, catalog === "anime"));
+  try {
+    const data = await fetchSimklCdnArchiveCached(year, month, catalog);
+    const type = catalog === "movie" ? "movie" : "tv";
+    return data.map((item) => mapCdnItem(item, type, catalog === "anime"));
+  } catch {
+    return [];
+  }
 }
 
 const calendarCache = new Map<string, Promise<CalendarItem[]>>();
-const rawArchiveCache = new Map<string, Promise<SimklCdnItem[]>>();
-const rawRollingCache = new Map<string, Promise<SimklCdnItem[]>>();
+const rawArchiveCache = new Map<string, RawCacheEntry>();
+const rawRollingCache = new Map<string, RawCacheEntry>();
 
 export function fetchSimklCdnArchiveCached(
   year: number,
@@ -125,23 +133,33 @@ export function fetchSimklCdnArchiveCached(
   catalog: "tv" | "anime" | "movie",
 ): Promise<SimklCdnItem[]> {
   const key = `${year}-${month}-${catalog}`;
-  let p = rawArchiveCache.get(key);
-  if (!p) {
-    p = fetchSimklCdnArchiveRaw(year, month, catalog);
-    rawArchiveCache.set(key, p);
+  const now = Date.now();
+  const existing = rawArchiveCache.get(key);
+  if (existing && now - existing.timestamp < RAW_CACHE_TTL_MS) {
+    return existing.promise;
   }
-  return p;
+  const promise = fetchSimklCdnArchiveRaw(year, month, catalog).catch((err) => {
+    rawArchiveCache.delete(key);
+    throw err;
+  });
+  rawArchiveCache.set(key, { promise, timestamp: now });
+  return promise;
 }
 
 export function fetchSimklCdnRollingCached(
   catalog: "tv" | "anime" | "movie",
 ): Promise<SimklCdnItem[]> {
-  let p = rawRollingCache.get(catalog);
-  if (!p) {
-    p = fetchSimklCdnRollingRaw(catalog);
-    rawRollingCache.set(catalog, p);
+  const now = Date.now();
+  const existing = rawRollingCache.get(catalog);
+  if (existing && now - existing.timestamp < RAW_CACHE_TTL_MS) {
+    return existing.promise;
   }
-  return p;
+  const promise = fetchSimklCdnRollingRaw(catalog).catch((err) => {
+    rawRollingCache.delete(catalog);
+    throw err;
+  });
+  rawRollingCache.set(catalog, { promise, timestamp: now });
+  return promise;
 }
 
 export function fetchSimklCdnCalendar(year: number, month: number): Promise<CalendarItem[]> {
@@ -166,4 +184,5 @@ export function clearCalendarCache() {
   calendarCache.clear();
   rawArchiveCache.clear();
   rawRollingCache.clear();
+  invalidateSimklCalendarSnapshots({ purgeStorage: true });
 }

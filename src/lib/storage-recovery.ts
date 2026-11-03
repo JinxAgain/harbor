@@ -60,6 +60,7 @@ const PRUNABLE_PREFIXES = [
   "harbor.ebook.openlibrary.v1.",
   "harbor.tvdbo.",
   "harbor.playback-history.v1.",
+  "harbor.simkl.calendar.v1.",
 ];
 
 function isPrunable(key: string): boolean {
