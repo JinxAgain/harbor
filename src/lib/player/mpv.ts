@@ -342,6 +342,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
   let lastCachedEnd: number | null = null;
   let lastSeekableRanges: Array<{ start: number; end: number }> = [];
   let awaitingFileLoaded = false;
+  let hasActiveFile = false;
 
   const computeBufferedSec = (currentPos: number): number => {
     if (lastSeekableRanges.length > 0) {
@@ -668,8 +669,16 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
     }
     if (raw.event === "player-failure") {
       awaitingFileLoaded = false;
+      hasActiveFile = false;
       const reason = String((raw as { reason?: unknown }).reason ?? "");
       snap = mpvFailureSnapshot(snap, reason);
+      snap.buffering = false;
+      snap.firstFrameReady = false;
+      snap.durationSec = 0;
+      snap.positionSec = 0;
+      snap.bufferedSec = 0;
+      lastCachedEnd = null;
+      lastSeekableRanges = [];
       mediaRevision += 1;
       invalidateSubtitleSelections();
       clearPreparedSubtitles();
@@ -681,6 +690,9 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
     } else if (raw.event === "property-change") {
       const name = raw.name;
       const data = raw.data;
+      if (name === "pause" && typeof data === "boolean") {
+        observedPaused = data;
+      }
       if (
         awaitingFileLoaded &&
         (name === "time-pos" || name === "duration" || name === "pause" || name === "eof-reached")
@@ -697,7 +709,11 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       if (name === "duration" && typeof data === "number") snap.durationSec = data;
       if (name === "pause" && typeof data === "boolean") {
         observedPaused = data;
-        snap.status = data ? "paused" : "playing";
+        // Never allow pause property changes on an idle/dead mpv instance to resurrect
+        // error/ended status back into active playback.
+        if (hasActiveFile && snap.status !== "error" && snap.status !== "ended") {
+          snap.status = data ? "paused" : "playing";
+        }
       }
       if (name === "eof-reached" && data === true) snap.status = "ended";
       if (name === "volume" && typeof data === "number") snap.volume = data / 100;
@@ -861,16 +877,25 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       const reason = (raw as { reason?: string }).reason?.toLowerCase();
       if (reason === "stop" || reason === "quit" || reason === "redirect") return;
       if (Date.now() < suppressEndFileUntil) return;
+      hasActiveFile = false;
+      snap.buffering = false;
       if (reason && reason !== "eof") {
         snap.status = "error";
         snap.errorCode = "decode";
         snap.errorMessage = `mpv ended playback: ${reason}`;
+        snap.firstFrameReady = false;
+        snap.durationSec = 0;
+        snap.positionSec = 0;
+        snap.bufferedSec = 0;
+        lastCachedEnd = null;
+        lastSeekableRanges = [];
       } else {
         snap.status = "ended";
       }
       emit();
     } else if (raw.event === "file-loaded") {
       awaitingFileLoaded = false;
+      hasActiveFile = true;
       markPlaybackTrace(activeTraceId, "file-loaded");
       snap.status = observedPaused === true ? "paused" : "playing";
       snap.errorCode = null;
@@ -885,6 +910,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       ) {
         return;
       }
+      hasActiveFile = true;
       snap.status = observedPaused === true ? "paused" : "playing";
       snap.buffering = false; // Playback recovered, including when the user remains paused.
       snap.firstFrameReady = true;
@@ -962,6 +988,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       mediaRevision += 1;
       invalidateSubtitleSelections();
       svpFilterFailed = false;
+      hasActiveFile = false;
       awaitingFileLoaded = true;
       snap.status = "loading";
       snap.errorCode = null;

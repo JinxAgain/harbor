@@ -30,6 +30,8 @@ export function useBridgeLoad(params: {
   acknowledgeResume: (action: "resume" | "start-over") => void;
   pendingSeekSec: number | null;
   clearPendingSeek: () => void;
+  clearResolvedStart: () => void;
+  loadedWithStartAt: boolean;
   sourceKey: string;
   resumeReady: boolean;
   resolvedStartSec: number | null;
@@ -58,6 +60,7 @@ export function useBridgeLoad(params: {
   const [pendingResumeSec, setPendingResumeSec] = useState<number | null>(null);
   const [pendingSeekSec, setPendingSeekSec] = useState<number | null>(null);
   const [readyLoadKey, setReadyLoadKey] = useState<string | null>(null);
+  const [loadedWithStartAtKey, setLoadedWithStartAtKey] = useState<string | null>(null);
   const [resolvedStart, setResolvedStart] = useState<{ key: string; sec: number } | null>(null);
   const ackRef = useRef<((action: "resume" | "start-over") => void) | null>(null);
   const sourceIdentity = playerLoadIdentity(src, transcodedUrl ?? src.url, season, episode);
@@ -82,6 +85,7 @@ export function useBridgeLoad(params: {
     setPlaybackClock(0, 0);
     setPendingResumeSec(null);
     setPendingSeekSec(null);
+    setLoadedWithStartAtKey(null);
     ackRef.current = null;
     const isFirstLoad = firstLoadRef.current;
     const isAutoRetry = (src.attempt ?? 0) > 0;
@@ -147,6 +151,8 @@ export function useBridgeLoad(params: {
         resumePromptRef.current &&
         startSec > RESUME_PROMPT_MIN_SEC &&
         !guestInRoom;
+      const startAtSec =
+        !guestInRoom && !eligibleForPrompt && startSec > 5 ? startSec : undefined;
       setResolvedStart({ key: loadKey, sec: !guestInRoom && startSec > 5 ? startSec : 0 });
       try {
         await bridge.load({
@@ -159,7 +165,7 @@ export function useBridgeLoad(params: {
           headers: src.headers,
           // Supply resume to the initial load so mpv/HTML5 never start at zero
           // while a later seek races automatic intro skipping.
-          startAtSec: !guestInRoom && !eligibleForPrompt && startSec > 5 ? startSec : undefined,
+          startAtSec,
         });
       } catch (e) {
         if (!cancelled) console.warn("[player] load failed", e);
@@ -168,6 +174,7 @@ export function useBridgeLoad(params: {
       if (cancelled) return;
       lastLoadedUrlRef.current = loadKey;
       firstLoadRef.current = false;
+      setLoadedWithStartAtKey(startAtSec != null ? loadKey : null);
       setReadyLoadKey(loadKey);
       if (eligibleForPrompt) {
         bridge.pause();
@@ -219,12 +226,18 @@ export function useBridgeLoad(params: {
   };
 
   const clearPendingSeek = () => setPendingSeekSec(null);
+  const clearResolvedStart = () => {
+    setResolvedStart((prev) => (prev ? { key: prev.key, sec: 0 } : { key: sourceKey, sec: 0 }));
+    setPendingSeekSec(null);
+  };
 
   return {
     pendingResumeSec: readyLoadKey === sourceKey ? pendingResumeSec : null,
     acknowledgeResume,
     pendingSeekSec: readyLoadKey === sourceKey ? pendingSeekSec : null,
     clearPendingSeek,
+    clearResolvedStart,
+    loadedWithStartAt: readyLoadKey === sourceKey && loadedWithStartAtKey === sourceKey,
     sourceKey,
     resumeReady:
       bridgeReady &&

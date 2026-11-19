@@ -107,6 +107,10 @@ export function useAutoRetry(params: {
   const livePlayedRef = useRef(false);
   const truncatedReloadedRef = useRef(false);
   const resumedAfterTruncatedRef = useRef(false);
+  const firstFrameRenderedRef = useRef(false);
+  if (snap.firstFrameReady || snap.videoWidth > 0) {
+    firstFrameRenderedRef.current = true;
+  }
   const [transcodedUrl, setTranscodedUrl] = useState<string | null>(null);
   const [sourceError, setSourceError] = useState<SourceError | null>(null);
   useEffect(() => {
@@ -123,6 +127,7 @@ export function useAutoRetry(params: {
     livePlayedRef.current = false;
     truncatedReloadedRef.current = false;
     resumedAfterTruncatedRef.current = false;
+    firstFrameRenderedRef.current = false;
     dlRef.current = { bytes: 0, at: Date.now() };
     setTranscodedUrl(null);
   }, [src.url]);
@@ -244,7 +249,14 @@ export function useAutoRetry(params: {
       console.warn(`[player] live channel: ignoring "${snap.errorCode}", mpv handles reconnection`);
       return;
     }
-    if (getPlaybackPosition() > 5) return;
+    // Only skip error recovery after playback has actually rendered a frame; an
+    // initial startAtSec failure can advance time-pos before dying without video.
+    if (
+      getPlaybackPosition() > 5 &&
+      (firstFrameRenderedRef.current || snap.firstFrameReady || selfFrameReadyRef.current)
+    ) {
+      return;
+    }
     if (
       isP2pEngine &&
       !engineFailure &&

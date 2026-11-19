@@ -104,3 +104,27 @@ test("HTML5 reports an active stall and does not buffer after playback ends", ()
   assert.equal(h.snap.status, "ended");
   assert.equal(h.snap.buffering, false);
 });
+
+test("MPV end-file error clears stale position/duration/firstFrameReady and ignores subsequent pause toggles", async () => {
+  const h = mpvBridgeHarness();
+  await h.bridge.load({ url: "https://media.example/ep4.mkv", startAtSec: 454 });
+  h.emitEvent({ event: "file-loaded" });
+  h.emit("duration", 2800);
+  h.emit("time-pos", 454);
+  h.emit("pause", true);
+  assert.equal(h.snapshot().status, "paused");
+  assert.equal(h.snapshot().durationSec, 2800);
+  assert.equal(h.snapshot().positionSec, 454);
+
+  h.emitEvent({ event: "end-file", reason: "error" });
+  assert.equal(h.snapshot().status, "error");
+  assert.equal(h.snapshot().durationSec, 0);
+  assert.equal(h.snapshot().positionSec, 0);
+  assert.equal(h.snapshot().firstFrameReady, false);
+
+  h.emit("pause", false);
+  assert.equal(h.snapshot().status, "error", "play toggle on idle/dead mpv must not resurrect playing");
+  h.emit("pause", true);
+  assert.equal(h.snapshot().status, "error", "pause toggle on idle/dead mpv must not resurrect paused");
+  await h.bridge.destroy();
+});

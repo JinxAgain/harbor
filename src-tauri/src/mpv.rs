@@ -442,6 +442,9 @@ fn apply_pre_init(
     set("osd-level", "0");
     set("cursor-autohide", "200");
     set("volume-max", "600");
+    // Give WASAPI and other audio outputs extra soft-buffer headroom (default 0.2s)
+    // to absorb transient libass osd_render and GPU pipeline spikes without underruns.
+    set("audio-buffer", "0.5");
     set("sub-codepage", "utf-8");
     let _ = init.set_property("background-color", "#000000");
     let _ = init.set_property("background", "color");

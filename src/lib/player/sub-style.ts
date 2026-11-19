@@ -73,7 +73,17 @@ export type SubRenderContext = {
   imageNativeActive: boolean;
   assScale?: number;
   sdhFilterAllowed?: boolean;
+  sessionKey?: string | number;
 };
+
+let lastSessionKey: string | number | null = null;
+const lastSentProps = new Map<string, unknown>();
+
+/** Reset the cached subtitle style map when an mpv session tears down. */
+export function resetSubStyleCache(): void {
+  lastSessionKey = null;
+  lastSentProps.clear();
+}
 
 export async function applySubStyle(
   s: Settings,
@@ -112,6 +122,14 @@ export async function applySubStyle(
       ? clamp(normScale, 0.2, 6)
       : Math.min(4, Math.max(0.4, baseFontSize / 32));
 
+  // mpv treats sub-shadow-color as an alias for sub-back-color, so emit a single
+  // deterministic value instead of racing both concurrently.
+  const backColor = isBox
+    ? mpvColor(s.subBoxColor, boxOpacity * opacity)
+    : isShadow
+      ? mpvColor("#000000", opacity)
+      : "#00000000";
+
   const props: Array<[string, unknown]> = [
     ["sub-filter-sdh", hideSdh],
     ["sub-filter-sdh-harder", false],
@@ -121,8 +139,7 @@ export async function applySubStyle(
     ["sub-color", mpvColor(s.subFontColor, opacity)],
     ["sub-border-color", mpvColor(s.subBorderColor, opacity)],
     ["sub-border-size", s.subBorderSize],
-    ["sub-back-color", isBox ? mpvColor(s.subBoxColor, boxOpacity * opacity) : "#00000000"],
-    ["sub-shadow-color", mpvColor("#000000", opacity)],
+    ["sub-back-color", backColor],
     ["sub-shadow-offset", isShadow ? 1.4 : 0],
     ["sub-margin-y", marginY],
     ["sub-align-x", s.subAlignX],
@@ -145,9 +162,27 @@ export async function applySubStyle(
     }
   }
 
+  let entries = Array.from(propMap.entries());
+  if (context.sessionKey != null) {
+    if (lastSessionKey !== context.sessionKey) {
+      lastSessionKey = context.sessionKey;
+      lastSentProps.clear();
+    } else {
+      entries = entries.filter(([name, value]) => !Object.is(lastSentProps.get(name), value));
+    }
+  }
+  if (entries.length === 0) return;
+
   await Promise.all(
-    Array.from(propMap.entries()).map(([name, value]) =>
-      invoke("mpv_set_property", { name, value }).catch(() => {}),
-    ),
+    entries.map(async ([name, value]) => {
+      try {
+        await invoke("mpv_set_property", { name, value });
+        if (context.sessionKey != null && lastSessionKey === context.sessionKey) {
+          lastSentProps.set(name, value);
+        }
+      } catch {
+        // Ignore individual property failures when mpv is transitioning state.
+      }
+    }),
   );
 }

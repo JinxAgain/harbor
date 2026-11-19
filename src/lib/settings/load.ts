@@ -152,7 +152,8 @@ export function parseStoredSettings(raw: string | null): Settings {
       ...DEFAULT,
       seekBackStepSec: sanitizeSeekStep(legacySeekStep("back"), DEFAULT.seekBackStepSec),
       seekForwardStepSec: sanitizeSeekStep(legacySeekStep("forward"), DEFAULT.seekForwardStepSec),
-    };
+      _d3d11LineFreeOffV1: true,
+    } as Settings;
   }
   try {
     const parsed = JSON.parse(raw) as Partial<Settings> & {
@@ -165,6 +166,7 @@ export function parseStoredSettings(raw: string | null): Settings {
       _mpvEmbedV4?: boolean;
       _mpvBufferSizeV1?: boolean;
       _anime4kIndicatorOffV1?: boolean;
+      _d3d11LineFreeOffV1?: boolean;
       _pickerLayoutStremio?: boolean;
       _pickerLayoutStremioV2?: boolean;
       _stremioDeeplinkOnByDefault?: boolean;
@@ -299,6 +301,12 @@ export function parseStoredSettings(raw: string | null): Settings {
     if (!parsed._anime4kIndicatorOffV1) {
       parsed.playerAnime4kIndicator = false;
       parsed._anime4kIndicatorOffV1 = true;
+    }
+    if (!parsed._d3d11LineFreeOffV1) {
+      // Clear the legacy inverted default so Windows uses flip-model presentation
+      // unless the user opts back into line-free mode.
+      parsed.playerD3d11Flip = false;
+      parsed._d3d11LineFreeOffV1 = true;
     }
     if (!parsed._subStyleV2) {
       if (parsed.subFontSize === 55) parsed.subFontSize = DEFAULT.subFontSize;

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { isLinuxDesktop, isMacDesktop } from "@/lib/platform";
 import { applyMotionInterp } from "@/lib/player/motion-interp";
 import { applyRtxVideo, resetRtxVideoState } from "@/lib/player/rtx-video";
-import { applySubStyle } from "@/lib/player/sub-style";
+import { applySubStyle, resetSubStyleCache } from "@/lib/player/sub-style";
 import type { useSettings } from "@/lib/settings";
 
 export function useSubStyleApply(params: {
@@ -43,6 +43,7 @@ export function useSubStyleApply(params: {
       imageNativeActive,
       assScale,
       sdhFilterAllowed,
+      sessionKey: bridgeKey,
     });
   }, [
     engine,
@@ -73,6 +74,7 @@ export function useSubStyleApply(params: {
     settings.mpvExtraOptions,
   ]);
 
+  useEffect(() => () => resetSubStyleCache(), [bridgeKey]);
   useEffect(() => () => resetRtxVideoState(), [bridgeKey]);
 
   useEffect(() => {

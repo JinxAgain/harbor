@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 // @ts-expect-error Node test types are intentionally outside the browser-only tsconfig.
 import test from "node:test";
 import type { Settings } from "../src/lib/settings/types.ts";
-import { applySubStyle } from "../src/lib/player/sub-style.ts";
+import { applySubStyle, resetSubStyleCache } from "../src/lib/player/sub-style.ts";
 import {
   computeAssBaseFactor,
   assScaleFromFactor,
@@ -215,4 +215,52 @@ test("isAssTrack detects external ASS tracks via format, externalFilename, or ur
     url: "https://example.com/subs/episode1.srt",
   };
   assert.equal(isAssTrack(trackSrt), false);
+});
+
+test("applySubStyle resolves sub-back-color without sub-shadow-color race and deduplicates per sessionKey", async () => {
+  resetSubStyleCache();
+  const calls: Array<{ name: string; value: unknown }> = [];
+  (globalThis as unknown as { window: unknown }).window = {
+    __TAURI_INTERNALS__: {
+      invoke: async (command: string, args: { name: string; value: unknown }) => {
+        if (command === "mpv_set_property") {
+          calls.push({ name: args.name, value: args.value });
+        }
+        return undefined;
+      },
+    },
+  };
+
+  const shadowSettings = createMockSettings({ subStyle: "shadow", subOpacity: 1 });
+  await applySubStyle(shadowSettings, {
+    assNativeActive: false,
+    imageNativeActive: false,
+    sessionKey: "s1",
+  });
+  assert.ok(!calls.some((c) => c.name === "sub-shadow-color"));
+  assert.equal(calls.find((c) => c.name === "sub-back-color")?.value, "#FF000000");
+
+  calls.length = 0;
+  await applySubStyle(shadowSettings, {
+    assNativeActive: false,
+    imageNativeActive: false,
+    sessionKey: "s1",
+  });
+  assert.equal(calls.length, 0, "unchanged subtitle style should not resend IPC properties");
+
+  await applySubStyle(createMockSettings({ subStyle: "box", subOpacity: 1, subBoxOpacity: 0.5 }), {
+    assNativeActive: false,
+    imageNativeActive: false,
+    sessionKey: "s1",
+  });
+  assert.ok(calls.length > 0, "changed subStyle must emit updated properties");
+  assert.equal(calls.find((c) => c.name === "sub-back-color")?.value, "#80000000");
+
+  calls.length = 0;
+  await applySubStyle(createMockSettings({ subStyle: "box", subOpacity: 1, subBoxOpacity: 0.5 }), {
+    assNativeActive: false,
+    imageNativeActive: false,
+    sessionKey: "s2",
+  });
+  assert.ok(calls.length > 10, "new sessionKey must flush full property set");
 });

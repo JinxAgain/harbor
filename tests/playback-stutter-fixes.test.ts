@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 // @ts-expect-error Node test types are intentionally outside the browser-only tsconfig.
 import test from "node:test";
+import { DEFAULT } from "../src/lib/settings/defaults.ts";
+import { parseStoredSettings } from "../src/lib/settings/load.ts";
 
 const mpvSource = readFileSync(new URL("../src/lib/player/mpv.ts", import.meta.url), "utf8");
 const exitSnapshotSource = readFileSync(
@@ -194,5 +196,31 @@ test("Task 4: onWindowFocusRestore does not issue ao-reload during active playba
     /scheduleAudioDeviceReload\(\);/,
     "onWindowFocusRestore should still schedule reload when paused/idle after screensaver",
   );
+});
+
+test("Issue 3: playerD3d11Flip defaults to false and migrates legacy true once", () => {
+  assert.equal(DEFAULT.playerD3d11Flip, false);
+  const fresh = parseStoredSettings(null);
+  assert.equal(fresh.playerD3d11Flip, false);
+
+  const migrated = parseStoredSettings(JSON.stringify({ playerD3d11Flip: true }));
+  assert.equal(migrated.playerD3d11Flip, false);
+  assert.equal((migrated as { _d3d11LineFreeOffV1?: boolean })._d3d11LineFreeOffV1, true);
+
+  const userOptIn = parseStoredSettings(
+    JSON.stringify({ playerD3d11Flip: true, _d3d11LineFreeOffV1: true }),
+  );
+  assert.equal(userOptIn.playerD3d11Flip, true);
+});
+
+test("Issue 3: mpv sets audio-buffer to 0.5 pre-init before extra_options", () => {
+  const preInit = rustMpvSource.slice(
+    rustMpvSource.indexOf("fn apply_pre_init("),
+    rustMpvSource.indexOf("fn parse_extra_option_lines("),
+  );
+  const audioBufIdx = preInit.indexOf('set("audio-buffer", "0.5")');
+  const initOnlyIdx = preInit.indexOf("for (key, value) in &joined_init_only");
+  assert.ok(audioBufIdx >= 0, "apply_pre_init must set audio-buffer to 0.5");
+  assert.ok(audioBufIdx < initOnlyIdx, "audio-buffer default must precede extra init options");
 });
 

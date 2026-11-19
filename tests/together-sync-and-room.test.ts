@@ -2658,6 +2658,236 @@ test("useRoomSync re-asserts markReady(true) during active playback on same medi
   );
 });
 
+test("Issue 2: Host explicit seek to 0 clears resolvedStartSec fallback across lobby seed, play, and guest command", () => {
+  let livePos = 454;
+  let resumeReady = true;
+  let resolvedStartSec = 454;
+  let snapPos = 454;
+  const publishedStates: any[] = [];
+  const hostSeekCalls: number[] = [];
+  let incomingCmdCb: ((from: string, cmd: any) => void) | null = null;
+  const refs: any[] = [];
+  const effects: { deps: any[] | undefined; cleanup: any }[] = [];
+  let refIndex = 0;
+  let effectIndex = 0;
+
+  const localExports: any = {};
+  new Function("require", "exports", "window", syncCode)(
+    (name: string) => {
+      if (name.includes("player-utils")) return utilsExports;
+      if (name.includes("playback-clock")) {
+        return {
+          getPlaybackPosition: () => livePos,
+          getPlaybackBuffered: () => 10,
+        };
+      }
+      return {
+        useRef: (init: any) => refs[refIndex++] ?? (refs[refIndex - 1] = { current: init }),
+        useEffect: (fn: any, deps?: any[]) => {
+          const index = effectIndex++;
+          const prev = effects[index];
+          const changed =
+            !prev ||
+            !deps ||
+            !prev.deps ||
+            deps.length !== prev.deps.length ||
+            deps.some((d, i) => !Object.is(d, prev.deps[i]));
+          if (changed) {
+            if (typeof prev?.cleanup === "function") prev.cleanup();
+            effects[index] = { deps, cleanup: fn() };
+          }
+        },
+      };
+    },
+    localExports,
+    {
+      setInterval: () => 1,
+      clearInterval: () => {},
+      setTimeout: (cb: any) => cb(),
+      clearTimeout: () => {},
+    },
+  );
+  const { useRoomSync: hook } = localExports;
+
+  const mockBridge = {
+    seek: (p: number) => {
+      hostSeekCalls.push(p);
+      livePos = p;
+      snapPos = p;
+    },
+    setRate: () => {},
+    play: async () => {},
+    pause: () => {},
+  };
+
+  let explicitSeekCallbackCount = 0;
+  const render = (hasStarted: boolean) => {
+    refIndex = 0;
+    effectIndex = 0;
+    return hook({
+      inRoom: true,
+      isHost: true,
+      hasStarted,
+      setHasStarted: () => {},
+      selfFrameReadyRef: { current: true },
+      resumeReady,
+      resolvedStartSec,
+      roomSnapshot: {
+        participants: [{ id: "host", ready: true }, { id: "guest1", ready: true }],
+        started: hasStarted,
+        hostClientId: "host",
+      },
+      clientId: "host",
+      src: { url: "http://127.0.0.1:7000/play/ep4", meta: { id: "tt123" }, episode: { season: 1, episode: 4 } },
+      snap: {
+        status: "paused",
+        durationSec: 2800,
+        positionSec: snapPos,
+        rate: 1.0,
+        buffering: false,
+        firstFrameReady: true,
+      },
+      bridgeRef: { current: mockBridge },
+      hostSourceRef: { current: null },
+      guestPickRef: { current: false },
+      publishState: (s: any) => publishedStates.push(s),
+      onIncomingState: () => () => {},
+      onIncomingCommand: (cb: any) => { incomingCmdCb = cb; return () => {}; },
+      markReady: () => {},
+      suppressOutgoingFor: () => {},
+      setForeignNotice: () => {},
+      onHostExplicitSeek: () => {
+        explicitSeekCallbackCount++;
+        resolvedStartSec = 0;
+      },
+    });
+  };
+
+  // Lobby seeds initial resume timestamp 454
+  const api = render(false);
+  assert.equal(publishedStates.at(-1)?.positionSeconds, 454);
+
+  // Host explicitly seeks to 0 while paused in lobby
+  publishedStates.length = 0;
+  livePos = 0;
+  snapPos = 0;
+  api.notifyHostSeek(0);
+  assert.equal(explicitSeekCallbackCount, 1);
+  assert.equal(publishedStates.at(-1)?.positionSeconds, 0);
+
+  // Re-render lobby effect with snap.positionSec === 0 and even stale resolvedStartSec
+  publishedStates.length = 0;
+  resolvedStartSec = 454;
+  render(false);
+  assert.ok(
+    publishedStates.every((s) => s.positionSeconds === 0),
+    `Lobby seed must not snap back to 454 after explicit seek to 0 (got ${JSON.stringify(publishedStates)})`,
+  );
+
+  // Host starts playback from 0 (publishHostStateNow with no explicit positionSeconds)
+  publishedStates.length = 0;
+  api.notifyHostPlayPause(true);
+  assert.equal(publishedStates.at(-1)?.positionSeconds, 0);
+
+  // Guest command seek to 0 on Host clears fallback too
+  resolvedStartSec = 454;
+  livePos = 454;
+  snapPos = 454;
+  incomingCmdCb!("guest1", { action: "seek", positionSeconds: 0, seq: 2 });
+  assert.equal(hostSeekCalls.at(-1), 0);
+  assert.equal(resolvedStartSec, 0);
+  assert.equal(publishedStates.at(-1)?.positionSeconds, 0);
+});
+
+test("Issue 2: Duplicate guest seeks for the same target within 300ms are collapsed", () => {
+  const seekCalls: number[] = [];
+  let incomingCb: ((s: any) => void) | null = null;
+  const refs: any[] = [];
+  const effects: { deps: any[] | undefined; cleanup: any }[] = [];
+  let refIndex = 0;
+  let effectIndex = 0;
+
+  const localExports: any = {};
+  new Function("require", "exports", "window", syncCode)(
+    (name: string) => {
+      if (name.includes("player-utils")) return utilsExports;
+      if (name.includes("playback-clock")) {
+        return { getPlaybackPosition: () => 0, getPlaybackBuffered: () => 10 };
+      }
+      return {
+        useRef: (init: any) => refs[refIndex++] ?? (refs[refIndex - 1] = { current: init }),
+        useEffect: (fn: any, deps?: any[]) => {
+          const index = effectIndex++;
+          const prev = effects[index];
+          const changed =
+            !prev ||
+            !deps ||
+            !prev.deps ||
+            deps.length !== prev.deps.length ||
+            deps.some((d, i) => !Object.is(d, prev.deps[i]));
+          if (changed) {
+            if (typeof prev?.cleanup === "function") prev.cleanup();
+            effects[index] = { deps, cleanup: fn() };
+          }
+        },
+      };
+    },
+    localExports,
+    { setInterval: () => 1, clearInterval: () => {}, setTimeout: (cb: any) => cb(), clearTimeout: () => {} },
+  );
+  const { useRoomSync: hook } = localExports;
+
+  const mockBridge = {
+    seek: (p: number) => seekCalls.push(p),
+    setRate: () => {},
+    play: async () => {},
+    pause: () => {},
+  };
+
+  hook({
+    inRoom: true,
+    isHost: false,
+    hasStarted: false,
+    setHasStarted: () => {},
+    selfFrameReadyRef: { current: true },
+    roomSnapshot: {
+      participants: [{ id: "host", ready: true }, { id: "guest1", ready: true }],
+      started: false,
+      hostClientId: "host",
+      syncState: {
+        mediaId: "tt123",
+        positionSeconds: 140.417,
+        playing: false,
+        updatedAt: Date.now(),
+        updatedBy: "host",
+      },
+    },
+    clientId: "guest1",
+    src: { url: "http://127.0.0.1:7000/play/ep3", meta: { id: "tt123" } },
+    snap: { status: "paused", durationSec: 2800, rate: 1.0, buffering: false, firstFrameReady: true },
+    bridgeRef: { current: mockBridge },
+    hostSourceRef: { current: null },
+    guestPickRef: { current: false },
+    publishState: () => {},
+    onIncomingState: (cb: any) => { incomingCb = cb; return () => {}; },
+    onIncomingCommand: () => () => {},
+    markReady: () => {},
+    suppressOutgoingFor: () => {},
+    setForeignNotice: () => {},
+  });
+
+  // Lobby effect already issued one seek to 140.417; an immediate duplicate incoming-state must collapse.
+  incomingCb!({
+    mediaId: "tt123",
+    positionSeconds: 140.417,
+    playing: false,
+    updatedAt: Date.now(),
+    updatedBy: "host",
+    doSeek: true,
+  });
+  assert.deepEqual(seekCalls, [140.417]);
+});
+
 
 
 

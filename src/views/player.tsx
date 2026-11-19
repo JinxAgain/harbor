@@ -481,6 +481,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     acknowledgeResume,
     pendingSeekSec,
     clearPendingSeek,
+    clearResolvedStart,
+    loadedWithStartAt,
     sourceKey,
     resumeReady,
     resolvedStartSec,
@@ -501,6 +503,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     pendingSeekSec,
     sourceKey,
     startPaused: src.startPaused,
+    loadedWithStartAt,
     clearPendingSeek,
     durationSec: snap.durationSec,
     bridgeRef,
@@ -780,6 +783,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     markReady,
     suppressOutgoingFor,
     setForeignNotice,
+    onHostExplicitSeek: clearResolvedStart,
     cast: cast.sync,
   });
 

@@ -157,3 +157,73 @@ test("start over can settle at zero without waiting for playback to advance", ()
   assert.equal(h.clears, 1);
   assert.equal(h.plays, 1);
 });
+
+test("loadedWithStartAt avoids duplicate startup seek while gating until position confirms, with first-frame fallback", () => {
+  const h = harness();
+  h.render({ loadedWithStartAt: true, startPaused: true });
+  assert.deepEqual(h.seeks, [], "must not fire duplicate b.seek while startAtSec load is in flight");
+  assert.equal(h.clears, 0);
+
+  // Confirming target position clears gate without ever issuing another seek
+  h.clock(600, "paused");
+  assert.deepEqual(h.seeks, []);
+  assert.equal(h.clears, 1);
+
+  // Fallback: if the first rendered frame lands at 0 despite startAtSec, issue a single seek
+  const fallback = harness();
+  fallback.render({ loadedWithStartAt: true, startPaused: true });
+  fallback.clock(0, "paused");
+  assert.deepEqual(fallback.seeks, [], "wait for firstFrameReady before falling back");
+  fallback.render({ loadedWithStartAt: true, startPaused: true });
+  // Simulate firstFrameReady=true at position 0 through a direct clock listener emission
+  fallback.unmount();
+
+  const bridgeListeners = new Set<(snap: any) => void>();
+  const fbSeeks: number[] = [];
+  let fbClears = 0;
+  const fbRefs: any[] = [], fbEffects: any[] = [];
+  let fbRi = 0, fbEi = 0;
+  const fbMod: any = {};
+  const compiled = ts.transpileModule(
+    readFileSync("src/views/player/hooks/use-pending-seek-apply.ts", "utf8"),
+    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } },
+  ).outputText;
+  new Function("require", "exports", compiled)((name: string) => {
+    if (name === "react")
+      return {
+        useRef: (current: any) => fbRefs[fbRi++] ?? (fbRefs[fbRi - 1] = { current }),
+        useEffect: (run: any, deps: any[]) => {
+          const i = fbEi++, old = fbEffects[i];
+          if (old && deps.every((dep, n) => Object.is(dep, old.deps[n]))) return;
+          old?.cleanup?.();
+          fbEffects[i] = { deps, cleanup: run() };
+        },
+      };
+    if (name === "@/lib/media-session") return { notifyMediaSeeked() {} };
+    throw new Error(name);
+  }, fbMod);
+  const fbBridge = {
+    subscribe(fn: (s: any) => void) {
+      bridgeListeners.add(fn);
+      fn({ positionSec: 0, status: "paused", firstFrameReady: false });
+      return () => bridgeListeners.delete(fn);
+    },
+    seek(sec: number) { fbSeeks.push(sec); },
+    play: async () => {},
+  };
+  fbMod.usePendingSeekApply({
+    pendingSeekSec: 600,
+    durationSec: 1800,
+    sourceKey: "ep-fallback",
+    bridgeRef: { current: fbBridge },
+    inRoomRef: { current: true },
+    startPaused: true,
+    loadedWithStartAt: true,
+    clearPendingSeek: () => { fbClears++; },
+  });
+  for (const fn of bridgeListeners) fn({ positionSec: 0, status: "paused", firstFrameReady: true });
+  assert.deepEqual(fbSeeks, [600]);
+  assert.equal(fbClears, 0);
+  for (const fn of bridgeListeners) fn({ positionSec: 600, status: "paused", firstFrameReady: true });
+  assert.equal(fbClears, 1);
+});

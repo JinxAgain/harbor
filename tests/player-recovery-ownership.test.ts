@@ -203,3 +203,22 @@ test("manual source recovery failure does not silently choose another title or s
   assert.equal(h.bridge.destroyed, 0);
   assert.equal(h.render().sourceError?.host, "media.test");
 });
+
+test("initial startAtSec failure before first frame still retries even when positionSec > 5", async () => {
+  const h = recoveryHarness();
+  h.clock(454);
+  h.fail();
+  await settle();
+  assert.equal(h.bridge.loads.length, 1, "same-URL retry should run without startAtSec");
+  assert.equal(h.bridge.loads[0].startAtSec, undefined);
+
+  const started = recoveryHarness();
+  started.render({
+    selfFrameReadyRef: { current: true },
+    snap: { ...emptySnapshot, status: "playing", firstFrameReady: true },
+  });
+  started.clock(454);
+  started.fail();
+  await settle();
+  assert.equal(started.bridge.loads.length, 0, "error after first frame with pos > 5 should not auto-reload");
+});

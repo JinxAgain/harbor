@@ -22,6 +22,7 @@ function harness() {
     "@/lib/player/startup-profile": { playbackStartupProfile: () => "standard" },
     "@/lib/player/live-src": { isLivePlaybackSrc: (src: any) => !!src.live },
     "@/lib/player/load-identity": { playerLoadIdentity },
+    "@/lib/player/playback-clock": { setPlaybackClock() {} },
     "@/lib/stream-proxy": { releaseStreamProxy() {}, retainStreamProxy() {} },
   });
   return { ...h, args, settings, loads, get plays() { return plays; }, get pauses() { return pauses; },
@@ -33,6 +34,7 @@ test("resume is passed into the initial load and auto-skip stays gated until con
   assert.equal(h.loads[0].startAtSec, 600);
   const state = h.render();
   assert.equal(state.pendingSeekSec, 600);
+  assert.equal(state.loadedWithStartAt, true);
   assert.equal(state.resumeReady, false);
   state.clearPendingSeek();
   assert.equal(h.render().resumeReady, true);
@@ -56,6 +58,7 @@ test("resume prompt waits for the user's choice", async () => {
   assert.equal(h.loads[0].startAtSec, undefined);
   const state = h.render();
   assert.equal(state.pendingResumeSec, 600);
+  assert.equal(state.loadedWithStartAt, false);
   assert.equal(state.resumeReady, false);
   assert.equal(h.plays, 0);
   state.acknowledgeResume("start-over");
@@ -72,6 +75,7 @@ test("live, start-over, disabled resume and room guests do not load at saved pro
     h.render(); await flushPromises();
     assert.equal(h.loads[0].startAtSec, undefined, mode);
     assert.equal(h.render().pendingSeekSec, null, mode);
+    assert.equal(h.render().loadedWithStartAt, false, mode);
     if (mode === "guest") assert.equal(h.plays, 0);
   }
 });
@@ -89,4 +93,21 @@ test("unmount before resume resolution prevents any playback side effects", asyn
   h.resolver(() => new Promise(r => { finish = r; }));
   h.render(); h.unmount(); finish({ ms: 600000, finished: false }); await flushPromises();
   assert.equal(h.loads.length, 0); assert.equal(h.plays, 0);
+});
+
+test("clearResolvedStart clears both resolvedStartSec and pendingSeekSec after explicit seek", async () => {
+  const h = harness();
+  h.args.inRoomRef.current = true;
+  h.args.isHostRef.current = true;
+  h.render();
+  await flushPromises();
+  const initial = h.render();
+  assert.equal(initial.resolvedStartSec, 600);
+  assert.equal(initial.pendingSeekSec, 600);
+  assert.equal(initial.loadedWithStartAt, true);
+  initial.clearResolvedStart();
+  const cleared = h.render();
+  assert.equal(cleared.resolvedStartSec, 0);
+  assert.equal(cleared.pendingSeekSec, null);
+  assert.equal(cleared.resumeReady, true);
 });

@@ -77,6 +77,7 @@ export function useRoomSync(params: {
   markReady: (ready: boolean) => void;
   suppressOutgoingFor: (ms: number) => void;
   setForeignNotice: (n: ForeignNotice | null) => void;
+  onHostExplicitSeek?: () => void;
   syncSettings?: {
     togetherSlowOnDesync?: boolean;
     togetherRewindThresholdSec?: number;
@@ -123,6 +124,8 @@ export function useRoomSync(params: {
   resumeReadyRef.current = resumeReady;
   const resolvedStartSecRef = useRef(resolvedStartSec);
   resolvedStartSecRef.current = resolvedStartSec;
+  const onHostExplicitSeekRef = useRef(params.onHostExplicitSeek);
+  onHostExplicitSeekRef.current = params.onHostExplicitSeek;
 
   let settingsCtx: { settings?: Record<string, any> } | null = null;
   try {
@@ -157,6 +160,7 @@ export function useRoomSync(params: {
   const behindResetUntilRef = useRef(0);
   const lastAppliedStateAtRef = useRef(0);
   const lastSeekAtRef = useRef(0);
+  const lastSeekTargetRef = useRef<number | null>(null);
   const bufferingRef = useRef(snap.buffering);
   bufferingRef.current = snap.buffering;
   const guestReportsRef = useRef<
@@ -184,12 +188,16 @@ export function useRoomSync(params: {
   const hostPendingPlayRef = useRef<{ playing: boolean; until: number } | null>(null);
   const guestSeekGraceRef = useRef<{ targetPos: number; until: number } | null>(null);
   const guestPlayGraceRef = useRef<{ playing: boolean; until: number } | null>(null);
+  const hostExplicitSeekRef = useRef(false);
+  const lobbySeededRef = useRef(false);
+  const lastLobbySeedPosRef = useRef<number | null>(null);
   const mediaKey = `${src.meta.id}|${src.episode?.season ?? ""}|${src.episode?.episode ?? ""}`;
   const prevMediaKeyRef = useRef(mediaKey);
   if (prevMediaKeyRef.current !== mediaKey) {
     prevMediaKeyRef.current = mediaKey;
     if (inRoomRef.current) {
       hasStartedRef.current = false;
+      hostExplicitSeekRef.current = false;
       lastHostPosRef.current = 0;
       lastHostTickAtRef.current = 0;
       selfFrameReadyRef.current = false;
@@ -221,6 +229,7 @@ export function useRoomSync(params: {
     behindSinceRef.current = null;
     behindResetUntilRef.current = 0;
     lastAppliedStateAtRef.current = 0;
+    lastSeekTargetRef.current = null;
     guestReportsRef.current.clear();
     hostSeekGraceUntilRef.current = 0;
     hostRewindCooldownUntilRef.current = 0;
@@ -232,6 +241,7 @@ export function useRoomSync(params: {
     hostPendingPlayRef.current = null;
     guestSeekGraceRef.current = null;
     guestPlayGraceRef.current = null;
+    hostExplicitSeekRef.current = false;
     prevAudioIdRef.current = selectedAudioId;
     prevSubIdRef.current = selectedSubId;
     hostBaseRateRef.current = snap.rate || 1;
@@ -277,6 +287,7 @@ export function useRoomSync(params: {
     if (
       opts?.positionSeconds == null &&
       !hasStartedRef.current &&
+      !hostExplicitSeekRef.current &&
       pos <= 0.5 &&
       (resolvedStartSecRef.current ?? 0) > 5
     ) {
@@ -351,6 +362,10 @@ export function useRoomSync(params: {
     const targetPos =
       dur > 0 ? Math.max(0, Math.min(targetSec, dur - 0.5)) : Math.max(0, targetSec);
     const now = Date.now();
+    hostExplicitSeekRef.current = true;
+    onHostExplicitSeekRef.current?.();
+    lobbySeededRef.current = true;
+    lastLobbySeedPosRef.current = targetPos;
     hostSeekGraceUntilRef.current = now + 5000;
     hostPendingSeekRef.current = { targetPos, at: now, until: now + 2500 };
     hostBehindSinceRef.current = null;
@@ -843,12 +858,17 @@ export function useRoomSync(params: {
           now - lastSeekAtRef.current < SYNC_SEEK_COOLDOWN_MS &&
           absDrift < SYNC_SEEK_JUMP_S &&
           state.doSeek !== true;
-        if (!inCooldown && (!bufferingRef.current || absDrift >= SYNC_SEEK_JUMP_S)) {
+        const isDuplicateSeek =
+          lastSeekTargetRef.current != null &&
+          now - lastSeekAtRef.current < 300 &&
+          Math.abs(lastSeekTargetRef.current - target) < 0.5;
+        if (!inCooldown && !isDuplicateSeek && (!bufferingRef.current || absDrift >= SYNC_SEEK_JUMP_S)) {
           console.info(
             `[together] hard-seek to ${target.toFixed(2)}s (drift ${signedDrift.toFixed(2)}s, doSeek: ${state.doSeek === true})`,
           );
           b.seek(target);
           lastSeekAtRef.current = now;
+          lastSeekTargetRef.current = target;
           if (syncSpeedAdjustedRef.current !== 0) {
             b.setRate(rate);
             syncSpeedAdjustedRef.current = 0;
@@ -1035,7 +1055,16 @@ export function useRoomSync(params: {
         seed.positionSeconds >= Math.max(0, snap.durationSec - 20)
           ? 0
           : seed.positionSeconds;
-      bridgeRef.current?.seek(safeTarget);
+      const now = Date.now();
+      const isDuplicateSeek =
+        lastSeekTargetRef.current != null &&
+        now - lastSeekAtRef.current < 300 &&
+        Math.abs(lastSeekTargetRef.current - safeTarget) < 0.5;
+      if (!isDuplicateSeek) {
+        lastSeekAtRef.current = now;
+        lastSeekTargetRef.current = safeTarget;
+        bridgeRef.current?.seek(safeTarget);
+      }
     }
     if (snap.status === "playing") bridgeRef.current?.pause();
   }, [
@@ -1051,18 +1080,19 @@ export function useRoomSync(params: {
     src,
   ]);
 
-  const lobbySeededRef = useRef(false);
-  const lastLobbySeedPosRef = useRef<number | null>(null);
   useEffect(() => {
     lobbySeededRef.current = false;
     lastLobbySeedPosRef.current = null;
   }, [src.url, mediaKey]);
   useEffect(() => {
     if (!inRoom || !isHost || hasStarted || !resumeReady) return;
+    if (snap.status === "error" || snap.status === "ended" || snap.status === "idle") return;
     if (snap.durationSec <= 0) return;
     const rawPos = getPlaybackPosition();
     const effectivePos =
-      rawPos > 0.5 ? rawPos : Math.max(0, resolvedStartSecRef.current ?? 0);
+      hostExplicitSeekRef.current || rawPos > 0.5
+        ? rawPos
+        : Math.max(0, resolvedStartSecRef.current ?? 0);
     const safePos =
       Number.isFinite(effectivePos) &&
       effectivePos >= 0 &&
@@ -1098,6 +1128,7 @@ export function useRoomSync(params: {
     hasStarted,
     resumeReady,
     resolvedStartSec,
+    snap.status,
     snap.durationSec,
     snap.positionSec,
     publishState,
