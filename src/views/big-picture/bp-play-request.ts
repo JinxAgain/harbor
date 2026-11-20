@@ -1,9 +1,10 @@
 const TTL_MS = 15_000;
 
 export type BpResumeAt = { season: number; episode: number };
-export type BpPlayIntent = { resumeAt: BpResumeAt | null };
+export type BpPlayIntent = { resumeAt: BpResumeAt | null; forcePicker?: boolean };
 
-let pending: { metaId: string; at: number; resumeAt: BpResumeAt | null } | null = null;
+let pending: { metaId: string; at: number; resumeAt: BpResumeAt | null; forcePicker: boolean } | null =
+  null;
 let version = 0;
 const listeners = new Set<() => void>();
 
@@ -16,8 +17,12 @@ const listeners = new Set<() => void>();
 // under instantPlay, and use-stremio-sync then writes S1E1 over the real resume
 // point in Stremio cloud. Unrecoverable, and it propagates to every device. Any
 // caller that already knows the episode must say so here.
-export function requestBpPlay(metaId: string, resumeAt?: BpResumeAt | null): void {
-  pending = { metaId, at: Date.now(), resumeAt: resumeAt ?? null };
+export function requestBpPlay(
+  metaId: string,
+  resumeAt?: BpResumeAt | null,
+  forcePicker = false,
+): void {
+  pending = { metaId, at: Date.now(), resumeAt: resumeAt ?? null, forcePicker };
   version += 1;
   for (const fn of listeners) fn();
 }
@@ -54,7 +59,10 @@ export function bpPlayResumeAt(metaId: string): BpResumeAt | null {
 // makes that regression a compile error instead of a data-loss bug.
 export function takeBpPlayIntent(metaId: string): BpPlayIntent | null {
   if (!bpPlayPending(metaId)) return null;
-  const intent: BpPlayIntent = { resumeAt: pending?.resumeAt ?? null };
+  const intent: BpPlayIntent = {
+    resumeAt: pending?.resumeAt ?? null,
+    forcePicker: pending?.forcePicker ?? false,
+  };
   pending = null;
   return intent;
 }

@@ -15,6 +15,7 @@ import { EpisodeWatchedMenu, type WatchedMenuTarget } from "@/components/episode
 import { manualWatchedVersion, subscribeManualWatched } from "@/lib/manual-watched";
 import { useT } from "@/lib/i18n";
 import { AnimeEpisodeRow } from "./anime-episodes/episode-row";
+import { animePlayEpisode, animeSeasonKey } from "./anime-episodes/anime-season-key";
 import { AnimeSeasonPicker } from "./anime-episodes/anime-season-picker";
 import { mapSeasonToEntry } from "./anime-episodes/anime-season-art";
 import { MovieEntryCard } from "./anime-episodes/movie-entry-card";
@@ -213,7 +214,7 @@ export function AnimeEpisodes({
   );
   const routing = useAnimeWatchedRouting(meta, franchise, trackId);
   const effectiveOrder = order;
-  const { openMeta } = useView();
+  const { openMeta, openPicker } = useView();
   const [activeEntryId, setActiveEntryId] = useState(currentId);
   useEffect(() => {
     setActiveEntryId(currentId);
@@ -373,6 +374,20 @@ export function AnimeEpisodes({
   ) => {
     e.preventDefault();
     setWatchedMenu({ x: e.clientX, y: e.clientY, season, episode, watched, metaId: sourceMetaId });
+  };
+
+  const chooseEpisodeSource = (target: WatchedMenuTarget) => {
+    const matches = (ep: KitsuEpisode) =>
+      animeSeasonKey(ep) === target.season &&
+      ep.number === target.episode &&
+      (target.metaId == null || ep.sourceMetaId === target.metaId);
+    const found = displayEpisodes.find(matches) ?? entryEpisodes.find(matches);
+    const epMeta = found ? routing.metaForEp(found) : meta;
+    openPicker(
+      epMeta,
+      found ? animePlayEpisode(found) : { season: target.season, episode: target.episode },
+      { autoPlay: false, resume: false },
+    );
   };
 
   const { progressFor, nextUpId, spoilerFor, allWatched } = useAnimeProgressMap({
@@ -715,6 +730,7 @@ export function AnimeEpisodes({
               episode: ep.number,
               released: ep.airdate ?? null,
             }))}
+          onChooseSource={() => chooseEpisodeSource(watchedMenu)}
           onClose={() => setWatchedMenu(null)}
         />
       )}

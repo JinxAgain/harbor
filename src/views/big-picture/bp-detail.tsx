@@ -205,6 +205,13 @@ export function BpDetail({
         const intent = takeBpPlayIntent(metaId);
         if (!intent) return;
         const at = intent.resumeAt;
+        if (intent.forcePicker) {
+          const ep = at
+            ? bpEpisodeAt(at.season, at.episode, episodeIds)
+            : (mark.ep ?? (isSeries ? bpEpisodeAt(1, 1, episodeIds) : undefined));
+          onSources(meta, ep, false, false, false);
+          return;
+        }
         if (at) play(bpEpisodeAt(at.season, at.episode, episodeIds), false, true);
         else play();
       },

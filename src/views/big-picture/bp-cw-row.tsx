@@ -160,6 +160,14 @@ export function BpCwCard({
       }}
       onFocus={() => publishBpMeta(meta, item)}
       onClick={onPress}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        const resume = bpCwResume(item, progress);
+        const metaId = `${meta.type}:${meta.id}`;
+        forceBpMeta(meta);
+        requestBpPlay(metaId, resume?.resumeAt ?? null, true);
+        pushBigPicture({ kind: "detail", metaId });
+      }}
       aria-label={bpCwCardLabel(item, ep, left, card, t)}
       className={`group relative overflow-hidden rounded-[var(--bp-r-xs)] bg-[var(--bp-panel)] text-start ${
         fluid ? "w-full" : "shrink-0"

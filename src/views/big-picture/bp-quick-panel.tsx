@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { LogOut, Volume2, VolumeX, Images, Plus, Check, Info, EyeOff } from "lucide-react";
+import { LogOut, Volume2, VolumeX, Images, Plus, Check, Info, EyeOff, ListVideo } from "lucide-react";
 import { Play } from "@/components/icons/play-filled";
 import { Search } from "@/components/icons/search-icon";
 import { useGamepads } from "@/lib/gamepad/store";
@@ -13,6 +13,7 @@ import { forceBpMeta, readBpCwItem, useBpFocusedMeta } from "./bp-focus-meta";
 import { pushBpBack } from "./bp-back";
 import { requestBpPlay } from "./bp-play-request";
 import { dismissCw } from "@/lib/cw-dismiss";
+import { episodeFromVideoId, isAnimeCwItem } from "@/lib/stremio";
 import { useAuth } from "@/lib/auth";
 import { useBpT } from "./bp-i18n";
 import { bpSoundLabel } from "./bp-settings-catalog";
@@ -157,6 +158,31 @@ export function BpQuickPanel({ onClose }: { onClose: () => void }) {
               }}
               autofocus
             />
+            {cwItem && (
+              <BpQuickAction
+                icon={<ListVideo size={17} strokeWidth={2.2} />}
+                label={t("Choose source")}
+                onPress={() => {
+                  onClose();
+                  const metaId = `${focused.type}:${focused.id}`;
+                  let resumeAt: { season: number; episode: number } | null = null;
+                  if (cwItem.type !== "movie" && !isAnimeCwItem(cwItem)) {
+                    const s = cwItem.state?.season ?? 0;
+                    const e = cwItem.state?.episode ?? 0;
+                    const at =
+                      e > 0
+                        ? { season: s, episode: e }
+                        : episodeFromVideoId(cwItem.state?.video_id ?? "");
+                    if (at && at.season > 0 && at.episode > 0) {
+                      resumeAt = { season: at.season, episode: at.episode };
+                    }
+                  }
+                  forceBpMeta(focused);
+                  requestBpPlay(metaId, resumeAt, true);
+                  pushBigPicture({ kind: "detail", metaId });
+                }}
+              />
+            )}
             <BpQuickAction
               icon={saved ? <Check size={17} strokeWidth={2.4} /> : <Plus size={17} strokeWidth={2.4} />}
               label={saved ? t("Saved") : t("Watchlist")}

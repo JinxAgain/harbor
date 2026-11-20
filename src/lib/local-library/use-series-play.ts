@@ -11,7 +11,7 @@ import { mediaServerItems } from "@/lib/media-server/index-store";
 import { matchingServerItems, serverPlayableCopies } from "@/lib/media-server/selectors";
 import { createMediaServerPlayerSrc, decidePlaybackSource } from "@/lib/media-server/playback";
 
-type PlayOpts = { autoPlay?: boolean; resume?: boolean };
+type PlayOpts = { autoPlay?: boolean; resume?: boolean; forceChooser?: boolean };
 
 export function useLocalAwareSeriesPlay() {
   const { openPicker, openPlayer } = useView();
@@ -26,7 +26,8 @@ export function useLocalAwareSeriesPlay() {
     }) => {
       const { meta, episode, opts, imdbId } = args;
       const srcIsAnime = metaIsAnime(meta);
-      const stream = () => openPicker(meta, episode, opts);
+      const stream = () =>
+        openPicker(meta, episode, { autoPlay: opts?.autoPlay, resume: opts?.resume });
       const m = meta.id.match(/^tmdb:tv:(\d+)$/);
       const tmdbId = m ? parseInt(m[1], 10) : null;
       const seriesImdb = imdbId ?? (meta.id.startsWith("tt") ? meta.id : null);
@@ -47,35 +48,42 @@ export function useLocalAwareSeriesPlay() {
         episode.episode,
       );
       const serverCopies = serverPlayableCopies(serverItems, connections);
-      const decision = decidePlaybackSource(settings, versions.length, serverCopies);
-      if (decision.kind === "online") {
-        stream();
-        return;
-      }
-      if (decision.kind === "local" && versions[0]) {
-        openPlayer(localPlayerSrc(versions[0], srcIsAnime, episode));
-        return;
-      }
-      if (decision.kind === "home-server") {
-        const item = serverItems.find(
-          (candidate) =>
-            candidate.connectionId === decision.copy.connectionId &&
-            candidate.id === decision.copy.itemId,
-        );
-        const connection =
-          item && connections.find((candidate) => candidate.id === item.connectionId);
-        if (item && connection)
-          openPlayer(
-            await createMediaServerPlayerSrc({
-              meta,
-              imdbId: seriesImdb ?? undefined,
-              episode,
-              connection,
-              item,
-              versionId: decision.copy.version.id,
-            }),
+      if (opts?.forceChooser) {
+        if (versions.length === 0 && serverCopies.length === 0) {
+          stream();
+          return;
+        }
+      } else {
+        const decision = decidePlaybackSource(settings, versions.length, serverCopies);
+        if (decision.kind === "online") {
+          stream();
+          return;
+        }
+        if (decision.kind === "local" && versions[0]) {
+          openPlayer(localPlayerSrc(versions[0], srcIsAnime, episode));
+          return;
+        }
+        if (decision.kind === "home-server") {
+          const item = serverItems.find(
+            (candidate) =>
+              candidate.connectionId === decision.copy.connectionId &&
+              candidate.id === decision.copy.itemId,
           );
-        return;
+          const connection =
+            item && connections.find((candidate) => candidate.id === item.connectionId);
+          if (item && connection)
+            openPlayer(
+              await createMediaServerPlayerSrc({
+                meta,
+                imdbId: seriesImdb ?? undefined,
+                episode,
+                connection,
+                item,
+                versionId: decision.copy.version.id,
+              }),
+            );
+          return;
+        }
       }
       openLocalVersions({
         title: meta.name,

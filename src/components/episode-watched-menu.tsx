@@ -1,4 +1,4 @@
-import { Ban, Check, Eye, EyeOff } from "lucide-react";
+import { Ban, Check, Eye, EyeOff, ListVideo } from "lucide-react";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "@/lib/i18n";
@@ -37,12 +37,14 @@ export function EpisodeWatchedMenu({
   meta,
   target,
   allEpisodes,
+  onChooseSource,
   onClose,
 }: {
   metaId: string;
   meta: ManualWatchedMeta;
   target: WatchedMenuTarget;
   allEpisodes?: Array<{ season: number; episode: number; released?: string | null }>;
+  onChooseSource?: () => void;
   onClose: () => void;
 }) {
   const t = useT();
@@ -88,16 +90,32 @@ export function EpisodeWatchedMenu({
     onClose();
   };
 
-  const left = Math.min(target.x, window.innerWidth - 232);
-  const top = Math.min(target.y, window.innerHeight - 128);
+  const estimatedHeight = (onChooseSource ? 45 : 0) + (settings.episodeHiding ? 176 : 128);
+  const left = Math.max(8, Math.min(target.x, window.innerWidth - 232));
+  const top = Math.max(8, Math.min(target.y, window.innerHeight - estimatedHeight));
 
   return createPortal(
     <div
       role="menu"
       style={{ left, top }}
       onMouseDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
       className="fixed z-[320] flex w-[224px] flex-col rounded-xl border border-edge bg-elevated p-1 shadow-[0_18px_50px_-15px_rgba(0,0,0,0.7)] animate-popover-in"
     >
+      {onChooseSource && (
+        <>
+          <Item
+            icon={<ListVideo size={14} strokeWidth={2} />}
+            label={t("Choose source")}
+            onClick={() => {
+              onClose();
+              onChooseSource();
+            }}
+            accent
+          />
+          <div className="mx-1 my-1 h-px bg-edge-soft/70" />
+        </>
+      )}
       {target.watched ? (
         <Item
           icon={<EyeOff size={14} strokeWidth={2} />}
@@ -189,18 +207,22 @@ function Item({
   icon,
   label,
   onClick,
+  accent,
 }: {
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
+  accent?: boolean;
 }) {
   return (
     <button
       role="menuitem"
       onClick={onClick}
-      className="flex h-9 items-center gap-2.5 rounded-lg px-3 text-start text-[13px] text-ink transition-colors hover:bg-raised"
+      className={`flex h-9 items-center gap-2.5 rounded-lg px-3 text-start text-[13px] transition-colors hover:bg-raised ${
+        accent ? "text-accent" : "text-ink"
+      }`}
     >
-      <span className="text-ink-muted">{icon}</span>
+      <span className={accent ? "text-accent" : "text-ink-muted"}>{icon}</span>
       {label}
     </button>
   );

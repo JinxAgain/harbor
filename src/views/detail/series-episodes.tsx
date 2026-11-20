@@ -9,6 +9,7 @@ import { EpisodeSearchBar, EpisodeSearchToggle } from "./series-episodes/episode
 import { EpisodeWatchedMenu, type WatchedMenuTarget } from "@/components/episode-watched-menu";
 import { manualEpisodeKeys, manualWatchedVersion, subscribeManualWatched } from "@/lib/manual-watched";
 import { useHiddenEpisodes } from "@/lib/hidden-episodes";
+import { useLocalAwareSeriesPlay } from "@/lib/local-library/use-series-play";
 import type { Meta } from "@/lib/cinemeta";
 import { getEpisodeProgress, resumeDefaultSeason } from "@/lib/episode-progress";
 import { scrollToDataEp } from "@/lib/episode-scroll";
@@ -71,6 +72,7 @@ export function SeriesEpisodes({
 }) {
   const t = useT();
   const { settings, update } = useSettings();
+  const playLocalAware = useLocalAwareSeriesPlay();
   const { isConnected: traktConnected } = useTrakt();
   const { isConnected: simklConnected } = useSimkl();
   const mwVersion = useSyncExternalStore(subscribeManualWatched, manualWatchedVersion);
@@ -348,6 +350,36 @@ export function SeriesEpisodes({
     [enrichedEpisodes],
   );
 
+  const chooseEpisodeSource = (target: WatchedMenuTarget) => {
+    const pool = altActive ? orderedEps : enrichedEpisodes;
+    const ep = pool.find(
+      (e) => e.seasonNumber === target.season && e.episodeNumber === target.episode,
+    );
+    const tmdbStill = ep?.stillPath
+      ? ep.stillPath.startsWith("http")
+        ? ep.stillPath
+        : `https://image.tmdb.org/t/p/${settings.hdEpisodeImages ? "original" : "w300"}${ep.stillPath}`
+      : ep?.stillUrl;
+    const cinemetaEp = cinemetaVideos?.find(
+      (v) => v.season === target.season && v.episode === target.episode,
+    );
+    void playLocalAware({
+      meta,
+      episode: {
+        season: target.season,
+        episode: target.episode,
+        runtime: ep?.runtime ?? undefined,
+        name: ep?.name || undefined,
+        still: tmdbStill ?? cinemetaEp?.thumbnail,
+        overview: ep?.overview || undefined,
+        imdbId: cinemetaEp?.id ?? undefined,
+      },
+      opts: { autoPlay: false, resume: false, forceChooser: true },
+      imdbId,
+      videos: cinemetaVideos,
+    });
+  };
+
   return (
     <div data-episodes className="flex scroll-mt-24 flex-col gap-6">
       <div className="flex items-start justify-between gap-4">
@@ -527,6 +559,7 @@ export function SeriesEpisodes({
             episode: ep.episodeNumber,
             released: ep.airDate ?? null,
           }))}
+          onChooseSource={() => chooseEpisodeSource(watchedMenu)}
           onClose={() => setWatchedMenu(null)}
         />
       )}

@@ -23,7 +23,7 @@ export type SubtitleContextDetails = {
 };
 
 export type ContextMenuTarget =
-  | { kind: "meta"; meta: Meta }
+  | { kind: "meta"; meta: Meta; onChooseSource?: () => void }
   | { kind: "view"; view: ViewSummonable; label: string }
   | { kind: "addon"; addonId: string; label: string }
   | { kind: "edit"; element: HTMLElement | null; selection: string }

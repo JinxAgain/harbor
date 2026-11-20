@@ -165,6 +165,25 @@ export function CinemetaEpisodes({
     ],
   );
 
+  const chooseEpisodeSource = (target: WatchedMenuTarget) => {
+    const found = activeEps.find(
+      (ep, i) => episodeSeason(ep) === target.season && episodeNumber(ep, i) === target.episode,
+    );
+    void playLocalAware({
+      meta,
+      episode: {
+        season: target.season,
+        episode: target.episode,
+        videoId: found?.id || undefined,
+        runtime: found?.runtime ?? undefined,
+        name: found?.name || found?.title || undefined,
+        still: found?.thumbnail || undefined,
+        overview: found?.overview ?? found?.description,
+      },
+      opts: { autoPlay: false, resume: false, forceChooser: true },
+    });
+  };
+
   if (grouped.length === 0) return null;
 
   return (
@@ -248,6 +267,7 @@ export function CinemetaEpisodes({
           }}
           target={watchedMenu}
           allEpisodes={allEpisodesOrdered}
+          onChooseSource={() => chooseEpisodeSource(watchedMenu)}
           onClose={() => setWatchedMenu(null)}
         />
       )}

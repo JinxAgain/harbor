@@ -667,6 +667,21 @@ export const ContinueCard = memo(function ContinueCard({
   };
 
 
+  const onChooseSource = async () => {
+    const episode = await resolveEpisode();
+    await openAvailableSources(episode, true);
+  };
+
+  const openCardContextMenu = (e: React.MouseEvent) => {
+    openContextMenu(e, {
+      kind: "meta",
+      meta,
+      onChooseSource: () => {
+        void onChooseSource();
+      },
+    });
+  };
+
   const onPlay = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const episode = await resolveEpisode();
@@ -678,12 +693,14 @@ export const ContinueCard = memo(function ContinueCard({
   };
 
   return (
-    <div className="group relative w-full min-w-0">
+    <div
+      className="group relative w-full min-w-0"
+      onContextMenu={openCardContextMenu}
+    >
       <button
         ref={cardRef}
         type="button"
         onClick={(e) => void onPlay(e)}
-        onContextMenu={(e) => openContextMenu(e, { kind: "meta", meta })}
         aria-label={t("Play {name}", { name: displayTitle })}
         title={t("Play")}
         className="block w-full min-w-0 rounded-xl text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"

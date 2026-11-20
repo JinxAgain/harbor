@@ -17,6 +17,7 @@ import {
   Heart,
   Info,
   Link2,
+  ListVideo,
   Magnet,
   Maximize,
   Navigation,
@@ -318,6 +319,7 @@ export function ContextMenu() {
 
   if (state.target.kind === "meta") {
     const meta = state.target.meta;
+    const onChooseSource = state.target.onChooseSource;
     const handleDetails = () => {
       openMeta(meta);
       close();
@@ -346,6 +348,21 @@ export function ContextMenu() {
       openMeta(meta);
       close();
     };
+    if (onChooseSource && !playerActions) {
+      items.push(
+        <Item
+          key="choose-source"
+          icon={<ListVideo size={14} strokeWidth={2} />}
+          label={t("Choose source")}
+          onClick={() => {
+            close();
+            onChooseSource();
+          }}
+          accent
+        />,
+        <Separator key="choose-source-sep" />,
+      );
+    }
     if (!playerActions) {
       items.push(
         <Item
