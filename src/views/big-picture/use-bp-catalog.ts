@@ -9,7 +9,7 @@ import {
 } from "@/views/home/home-rows";
 import { isAnimeRow } from "@/views/anime";
 import { loadAddonRows, type AddonRow } from "@/lib/addons";
-import { applyHomeRowCustomization } from "@/lib/home-customization";
+import { applyHomeRowCustomization, dedupeAgainstPinnedRows } from "@/lib/home-customization";
 import { bpHomeCacheLoad, bpHomeCacheSave } from "./bp-home-cache";
 import { useBpExtraRows } from "./use-bp-extra-rows";
 import { useBpTop10Base } from "./bp-top10-feed";
@@ -111,7 +111,8 @@ export function useBpCatalog(): BpCatalog {
   const ordered = useMemo(() => {
     const seen = new Set<string>();
     const all: HomeRow[] = [];
-    for (const row of [...extra.before, ...built.rows, ...extra.after]) {
+    const builtRows = dedupeAgainstPinnedRows(built.rows, extra.before);
+    for (const row of [...extra.before, ...builtRows, ...extra.after]) {
       if (seen.has(row.key)) continue;
       seen.add(row.key);
       all.push(row);

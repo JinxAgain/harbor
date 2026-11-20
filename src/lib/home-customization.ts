@@ -73,12 +73,63 @@ export function moveRow(
   return { ...custom, order: next };
 }
 
+export const PINNED_ROW_PREFIX = "pinned:";
+
+/** Build the Home row key used for a catalog or tracker rail pinned to Home. */
+export function pinnedRowKey(id: string): string {
+  return `${PINNED_ROW_PREFIX}${id}`;
+}
+
+/** Extract the underlying catalog/rail id from a pinned Home row key, or null. */
+export function pinnedCatalogIdFromRowKey(rowKey: string): string | null {
+  return rowKey.startsWith(PINNED_ROW_PREFIX)
+    ? rowKey.slice(PINNED_ROW_PREFIX.length)
+    : null;
+}
+
+/** Drop auto-loaded rows already represented in `pinnedRows` (as `pinned:<id>` or exact key). */
+export function dedupeAgainstPinnedRows(
+  rows: HomeRow[],
+  pinnedRows: HomeRow[],
+): HomeRow[] {
+  if (pinnedRows.length === 0 || rows.length === 0) return rows;
+  const shadowed = new Set<string>();
+  for (const row of pinnedRows) {
+    shadowed.add(row.key);
+    const catalogId = pinnedCatalogIdFromRowKey(row.key);
+    if (catalogId) shadowed.add(catalogId);
+  }
+  return rows.filter((row) => !shadowed.has(row.key));
+}
+
+export function hideRow(custom: HomeRowCustomization, key: string): HomeRowCustomization {
+  if (custom.hidden.includes(key)) return custom;
+  return { ...custom, hidden: [...custom.hidden, key] };
+}
+
+export function showRow(custom: HomeRowCustomization, key: string): HomeRowCustomization {
+  if (!custom.hidden.includes(key)) return custom;
+  return { ...custom, hidden: custom.hidden.filter((k) => k !== key) };
+}
+
 export function toggleRowHidden(custom: HomeRowCustomization, key: string): HomeRowCustomization {
-  const has = custom.hidden.includes(key);
-  return {
-    ...custom,
-    hidden: has ? custom.hidden.filter((k) => k !== key) : [...custom.hidden, key],
-  };
+  return custom.hidden.includes(key) ? showRow(custom, key) : hideRow(custom, key);
+}
+
+/** Keep Home row visibility synchronized when pinning or removing a catalog from Home. */
+export function syncHomeRowsForCatalogPinChange(
+  custom: HomeRowCustomization,
+  catalogKey: string,
+  action: "added" | "removed",
+  opts: { hideAutoLoadedOnRemove?: boolean } = {},
+): HomeRowCustomization {
+  if (action === "added") {
+    return showRow(custom, pinnedRowKey(catalogKey));
+  }
+  // Auto-loaded Stremio addon catalogs render on Home even when unpinned, so removing
+  // one from Home must also hide its auto-loaded row key.
+  if (opts.hideAutoLoadedOnRemove === false) return custom;
+  return hideRow(custom, catalogKey);
 }
 
 export function renameRow(

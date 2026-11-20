@@ -1,8 +1,11 @@
 import { browseFetcher, type BrowseCatalog } from "./catalog-browse";
 import type { Meta } from "./cinemeta";
+import { pinnedRowKey } from "./home-customization";
 import type { HomeRow } from "@/views/home/home-types";
 import type { PinnedCatalog } from "./pinned-catalogs";
 import { isExtensionCatalogueBase } from "./streams/plugins";
+
+export { pinnedRowKey };
 
 const MAX_PER_ROW = 30;
 const PAGE_HINT = 20;
@@ -20,10 +23,6 @@ function toBrowseCatalog(desc: PinnedCatalog): BrowseCatalog | null {
     genreExtra: null,
     genres: [],
   };
-}
-
-export function pinnedRowKey(id: string): string {
-  return `pinned:${id}`;
 }
 
 export async function buildPinnedCatalogRows(

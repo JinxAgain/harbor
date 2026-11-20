@@ -16,6 +16,7 @@ import { Row, ScrollRootContext } from "@/components/row";
 import {
   addListRow,
   applyHomeRowCustomization,
+  dedupeAgainstPinnedRows,
   effectiveOrder,
   moveRow,
   renameRow,
@@ -1152,6 +1153,10 @@ export function Home({
   );
 
   const pinnedRows = usePinnedRows();
+  const dedupedRestRows = useMemo(
+    () => dedupeAgainstPinnedRows(restRows, pinnedRows),
+    [restRows, pinnedRows],
+  );
   const filterableRows = useMemo(
     () => [
       ...listHomeRows,
@@ -1163,7 +1168,7 @@ export function Home({
       ...traktRows,
       ...simklRows,
       ...letterboxdRows,
-      ...restRows,
+      ...dedupedRestRows,
       ...animeRows,
     ],
     [
@@ -1176,7 +1181,7 @@ export function Home({
       traktRows,
       simklRows,
       letterboxdRows,
-      restRows,
+      dedupedRestRows,
       animeRows,
     ],
   );

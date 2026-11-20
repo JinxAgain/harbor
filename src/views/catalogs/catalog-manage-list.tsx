@@ -2,7 +2,10 @@ import { useMemo, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, Eye, EyeOff, Pin, PinOff } from "lucide-react";
 import { NavGlyph } from "@/components/icons/nav-glyph";
 import { catalogTypeLabelKey, type BrowseCatalog } from "@/lib/catalog-browse";
-import { togglePinnedCatalog, useIsPinned } from "@/lib/pinned-catalogs";
+import { syncHomeRowsForCatalogPinChange } from "@/lib/home-customization";
+import { isPinned, pinCatalog, unpinCatalog, useIsPinned } from "@/lib/pinned-catalogs";
+import { useSettings } from "@/lib/settings";
+import { isExtensionCatalogueBase } from "@/lib/streams/plugins";
 import { useT } from "@/lib/i18n";
 import type { AddonGroup } from "./use-catalog-list";
 
@@ -24,6 +27,29 @@ export function CatalogManageList({
   onMovePin: (key: string, dir: -1 | 1) => void;
 }) {
   const t = useT();
+  const { settings, update } = useSettings();
+  const handleToggleHome = (catalog: BrowseCatalog) => {
+    if (isPinned(catalog.key)) {
+      unpinCatalog(catalog.key);
+      const nextHomeRows = syncHomeRowsForCatalogPinChange(
+        settings.homeRows,
+        catalog.key,
+        "removed",
+        { hideAutoLoadedOnRemove: !isExtensionCatalogueBase(catalog.base) },
+      );
+      if (nextHomeRows !== settings.homeRows) update({ homeRows: nextHomeRows });
+      return;
+    }
+    const added = pinCatalog({
+      id: catalog.key,
+      source: "catalog",
+      name: catalog.name,
+      params: { base: catalog.base, type: catalog.type, id: catalog.id },
+    });
+    if (!added) return;
+    const nextHomeRows = syncHomeRowsForCatalogPinChange(settings.homeRows, catalog.key, "added");
+    if (nextHomeRows !== settings.homeRows) update({ homeRows: nextHomeRows });
+  };
   const rest = useMemo<AddonGroup[]>(() => {
     const m = new Map<string, AddonGroup>();
     for (const c of filtered) {
@@ -59,6 +85,7 @@ export function CatalogManageList({
                 catalog={c}
                 pinned
                 hidden={hiddenSet.has(c.key)}
+                onToggleHome={() => handleToggleHome(c)}
                 onTogglePin={() => onTogglePin(c.key)}
                 onToggleHide={() => onToggleHide(c.key)}
                 moveUp={i > 0 ? () => onMovePin(c.key, -1) : undefined}
@@ -89,6 +116,7 @@ export function CatalogManageList({
                 catalog={c}
                 pinned={false}
                 hidden={hiddenSet.has(c.key)}
+                onToggleHome={() => handleToggleHome(c)}
                 onTogglePin={() => onTogglePin(c.key)}
                 onToggleHide={() => onToggleHide(c.key)}
               />
@@ -104,6 +132,7 @@ function ManageRow({
   catalog,
   pinned,
   hidden,
+  onToggleHome,
   onTogglePin,
   onToggleHide,
   moveUp,
@@ -112,6 +141,7 @@ function ManageRow({
   catalog: BrowseCatalog;
   pinned: boolean;
   hidden: boolean;
+  onToggleHome: () => void;
   onTogglePin: () => void;
   onToggleHide: () => void;
   moveUp?: () => void;
@@ -120,13 +150,6 @@ function ManageRow({
   const t = useT();
   const pinnedHome = useIsPinned(catalog.key);
   const typeLabelKey = catalogTypeLabelKey(catalog.type);
-  const toggleHome = () =>
-    togglePinnedCatalog({
-      id: catalog.key,
-      source: "catalog",
-      name: catalog.name,
-      params: { base: catalog.base, type: catalog.type, id: catalog.id },
-    });
   return (
     <div
       className={`flex items-center gap-3 rounded-xl border border-edge-soft bg-elevated/25 py-2.5 pe-2.5 ps-3.5 transition-opacity ${
@@ -165,7 +188,7 @@ function ManageRow({
 
       <IconBtn
         label={pinnedHome ? t("Remove from Home") : t("Add to Home Screen")}
-        onClick={toggleHome}
+        onClick={onToggleHome}
         active={pinnedHome}
       >
         <NavGlyph name="home" className="h-[17px] w-[17px]" />
