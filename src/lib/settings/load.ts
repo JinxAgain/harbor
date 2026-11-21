@@ -28,6 +28,7 @@ import {
 } from "@/lib/gamepad/cursor";
 
 const RETIRED_GEMINI = new Set([
+  "gemini-3.5-flash",
   "gemini-2.0-flash",
   "gemini-2.0-flash-lite",
   "gemini-2.0-flash-exp",
@@ -189,6 +190,7 @@ export function parseStoredSettings(raw: string | null): Settings {
       _streamCacheCapV1?: boolean;
       _playbackSourcePreferenceV1?: boolean;
       _playbackSourcePreferenceV2?: boolean;
+      _songIdGemini38V1?: boolean;
     };
     if (!parsed._playbackSourcePreferenceV1) {
       parsed.playbackSourcePreference = parsed.localPlaybackMode === "local" ? "local" : "online";
@@ -269,10 +271,31 @@ export function parseStoredSettings(raw: string | null): Settings {
       parsed._tennisWtaV1 = true;
     }
     if (
+      parsed.songIdProvider !== "shazam" &&
+      parsed.songIdProvider !== "audd" &&
+      parsed.songIdProvider !== "ai"
+    ) {
+      parsed.songIdProvider = DEFAULT.songIdProvider;
+    }
+    if (
       typeof parsed.songIdAiModel === "string" &&
       RETIRED_GEMINI.has(parsed.songIdAiModel.trim())
     ) {
       parsed.songIdAiModel = DEFAULT.songIdAiModel;
+    }
+    if (!parsed._songIdGemini38V1) {
+      const currentModel =
+        typeof parsed.songIdAiModel === "string" ? parsed.songIdAiModel.trim() : "";
+      if (!currentModel || currentModel === "gemini-3.6-flash") {
+        parsed.songIdAiModel = DEFAULT.songIdAiModel;
+      }
+      parsed._songIdGemini38V1 = true;
+    }
+    if (typeof parsed.songIdGeminiGrounding !== "boolean") {
+      parsed.songIdGeminiGrounding = DEFAULT.songIdGeminiGrounding;
+    }
+    if (typeof parsed.songIdShazamFallbackGemini !== "boolean") {
+      parsed.songIdShazamFallbackGemini = DEFAULT.songIdShazamFallbackGemini;
     }
     if (parsed.aiSearchModel) parsed.aiSearchModel = migrateModelId(parsed.aiSearchModel);
     if (typeof parsed.steamSearchShortcut !== "boolean") parsed.steamSearchShortcut = DEFAULT.steamSearchShortcut;

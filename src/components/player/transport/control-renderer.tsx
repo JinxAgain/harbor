@@ -75,6 +75,7 @@ import { EpisodeNavBtn } from "./episode-nav-btn";
 import { TimeStart, TimeEnd } from "./time-display";
 import { WindowControlButtons } from "./window-control-buttons";
 import { IdentifySongButton } from "@/components/identify-song-button";
+import { mediaContextFromPlayer } from "@/lib/song-id";
 
 export type ControlContext = {
   t?: (key: string, vars?: Record<string, string | number>) => string;
@@ -591,7 +592,18 @@ export function renderControl(id: PlayerControlId, ctx: ControlContext): ReactNo
     }
     case "song-id": {
       if (ctx.tight) return null;
-      return <IdentifySongButton editing={ctx.editing} iconUrl={iconUrl} />;
+      return (
+        <IdentifySongButton
+          editing={ctx.editing}
+          iconUrl={iconUrl}
+          mediaContext={mediaContextFromPlayer({
+            title: ctx.metaTitle ?? ctx.title,
+            releaseDate: ctx.metaReleaseDate,
+            season: ctx.season,
+            episode: ctx.episode,
+          })}
+        />
+      );
     }
     case "pip": {
       if (!ctx.capabilities.pictureInPicture) return null;

@@ -370,6 +370,13 @@ async fn home_rows() -> Result<Vec<MusicCatalogRow>, String> {
     Ok(rows)
 }
 
+pub(crate) async fn search_itunes_songs(
+    query: &str,
+    limit: usize,
+) -> Result<Vec<MusicTrack>, String> {
+    settle("iTunes", itunes::songs(query, limit)).await
+}
+
 async fn search_catalog(query: &str, limit: usize) -> Result<MusicSearchResults, String> {
     let (albums, artists, tracks) = tokio::join!(
         settle("iTunes", itunes::albums(query, limit)),

@@ -28,6 +28,29 @@ use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use tauri::Manager;
 
+pub(crate) struct TrackLookupHit {
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+    pub artwork: String,
+}
+
+pub(crate) async fn lookup_itunes_tracks(
+    query: &str,
+    limit: usize,
+) -> Result<Vec<TrackLookupHit>, String> {
+    let tracks = connectors::catalog::search_itunes_songs(query, limit).await?;
+    Ok(tracks
+        .into_iter()
+        .map(|track| TrackLookupHit {
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            artwork: track.artwork,
+        })
+        .collect())
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicTrack {

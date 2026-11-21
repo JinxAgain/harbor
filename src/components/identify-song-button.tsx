@@ -1,7 +1,12 @@
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 import { AudioLines } from "lucide-react";
 import { useSettings } from "@/lib/settings";
-import { identifyNowPlaying } from "@/lib/song-id";
+import {
+  getSongIdStage,
+  identifyNowPlaying,
+  subscribeSongIdStage,
+  type SongIdMediaContext,
+} from "@/lib/song-id";
 import { Tooltip } from "@/components/player/transport/tooltip";
 import { useT } from "@/lib/i18n";
 
@@ -10,31 +15,36 @@ export function IdentifySongButton({
   tight,
   editing,
   iconUrl,
+  mediaContext,
 }: {
   className?: string;
   tight?: boolean;
   editing?: boolean;
   iconUrl?: string;
+  mediaContext?: SongIdMediaContext;
 }) {
   const t = useT();
   const { settings } = useSettings();
-  const [pending, setPending] = useState(false);
+  const stage = useSyncExternalStore(
+    subscribeSongIdStage,
+    getSongIdStage,
+    () => "idle" as const,
+  );
+  const pending = stage !== "idle";
 
   if (!settings.songIdEnabled && !editing) return null;
 
-  const onClick = async () => {
+  const onClick = () => {
     if (pending) return;
-    setPending(true);
-    try {
-      await identifyNowPlaying({
-        provider: settings.songIdProvider,
-        auddKey: settings.auddKey ?? "",
-        aiKey: settings.songIdAiKey ?? "",
-        aiModel: settings.songIdAiModel ?? "",
-      });
-    } finally {
-      setPending(false);
-    }
+    void identifyNowPlaying({
+      provider: settings.songIdProvider,
+      auddKey: settings.auddKey ?? "",
+      aiKey: settings.songIdAiKey ?? "",
+      aiModel: settings.songIdAiModel ?? "",
+      geminiGrounding: settings.songIdGeminiGrounding ?? true,
+      shazamFallbackGemini: settings.songIdShazamFallbackGemini ?? false,
+      context: mediaContext,
+    });
   };
 
   return (

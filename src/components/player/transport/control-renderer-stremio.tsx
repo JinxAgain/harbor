@@ -49,6 +49,7 @@ import { StremioVolume } from "./stremio-volume";
 import { renderCustomIconControlStremio } from "./custom-icon-renderer";
 import { WindowControlButtons } from "./window-control-buttons";
 import { IdentifySongButton } from "@/components/identify-song-button";
+import { mediaContextFromPlayer } from "@/lib/song-id";
 import { FullscreenClock } from "@/components/player/fullscreen-clock";
 
 function qualityInfoOn(): boolean {
@@ -476,7 +477,17 @@ export function RenderedStremioControl({
         </Tooltip>
       );
     case "song-id":
-      return <IdentifySongButton editing={ctx.editing} />;
+      return (
+        <IdentifySongButton
+          editing={ctx.editing}
+          mediaContext={mediaContextFromPlayer({
+            title: ctx.metaTitle ?? ctx.title,
+            releaseDate: ctx.metaReleaseDate,
+            season: ctx.season,
+            episode: ctx.episode,
+          })}
+        />
+      );
     case "pip":
       if (!ctx.capabilities.pictureInPicture) return null;
       return (

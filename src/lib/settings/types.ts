@@ -442,9 +442,11 @@ export type Settings = {
   customHoverId: string;
   mdblistKey: string;
   auddKey: string;
-  songIdProvider: "audd" | "ai";
+  songIdProvider: "shazam" | "audd" | "ai";
   songIdAiKey: string;
   songIdAiModel: string;
+  songIdGeminiGrounding: boolean;
+  songIdShazamFallbackGemini: boolean;
   aiSearchKey: string;
   steamSearchShortcut: boolean;
   gameAgeRatingAgency: "ESRB" | "PEGI";

@@ -2656,6 +2656,7 @@ dependencies = [
  "whisper-rs",
  "window-vibrancy 0.6.0",
  "windows 0.62.2",
+ "windows-core 0.62.2",
  "yaml-rust2",
  "zbus",
  "zeroize",

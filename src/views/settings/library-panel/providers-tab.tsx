@@ -12,6 +12,11 @@ import { hasCustomMetaAddon, hasCustomMetaAddonAsync } from "@/lib/meta-resource
 import { useT } from "@/lib/i18n";
 import { Section, Segmented, ToggleRow } from "../shared";
 import { ROW_ACTION, SettingGroup, SettingRow, Nested } from "../kit";
+import {
+  fetchGeminiSongModels,
+  SONG_ID_GEMINI_MODELS,
+  type SongIdProvider,
+} from "@/lib/song-id";
 import { EpisodeOrderSetting } from "../episode-order-setting";
 import { SportsApiSetting } from "../sports-api-setting";
 import { GameMetadataSetting } from "../game-metadata-setting";
@@ -118,13 +123,54 @@ export function ProvidersTab(props: ProviderKeysArgs) {
             <Segmented
               value={settings.songIdProvider}
               options={[
+                { value: "shazam", label: t("Shazam (Free)") },
                 { value: "audd", label: t("AudD") },
                 { value: "ai", label: t("AI (Gemini)") },
               ]}
-              onChange={(v) => update({ songIdProvider: v as "audd" | "ai" })}
+              onChange={(v) => update({ songIdProvider: v as SongIdProvider })}
             />
           </SettingRow>
-          <Nested>{settings.songIdProvider === "ai" ? keyRow("songai") : keyRow("audd")}</Nested>
+          <Nested>
+            {settings.songIdProvider === "shazam" && (
+              <>
+                <SettingRow
+                  label={t("Shazam (Free)")}
+                  desc={t(
+                    "Free acoustic fingerprinting on Windows. No API key required.",
+                  )}
+                />
+                <ToggleRow
+                  label={t("Fall back to Gemini if no match")}
+                  sub={t(
+                    "Automatically try Gemini ({model}) on the same audio clip when Shazam cannot match it (requires a Gemini API key).",
+                    { model: settings.songIdAiModel },
+                  )}
+                  value={settings.songIdShazamFallbackGemini}
+                  onChange={(v) => update({ songIdShazamFallbackGemini: v })}
+                />
+                {settings.songIdShazamFallbackGemini && keyRow("songai")}
+              </>
+            )}
+            {settings.songIdProvider === "audd" && keyRow("audd")}
+            {settings.songIdProvider === "ai" && (
+              <>
+                {keyRow("songai")}
+                <GeminiModelSetting
+                  model={settings.songIdAiModel}
+                  apiKey={settings.songIdAiKey}
+                  onSelect={(v) => update({ songIdAiModel: v })}
+                />
+                <ToggleRow
+                  label={t("Use movie & show context")}
+                  sub={t(
+                    "Share the current title and episode with Gemini and allow Google Search to verify soundtracks.",
+                  )}
+                  value={settings.songIdGeminiGrounding}
+                  onChange={(v) => update({ songIdGeminiGrounding: v })}
+                />
+              </>
+            )}
+          </Nested>
         </SettingGroup>
       </Section>
 
@@ -134,6 +180,135 @@ export function ProvidersTab(props: ProviderKeysArgs) {
         </SettingGroup>
       </Section>
     </>
+  );
+}
+
+function GeminiModelSetting({
+  model,
+  apiKey,
+  onSelect,
+}: {
+  model: string;
+  apiKey: string;
+  onSelect: (model: string) => void;
+}) {
+  const t = useT();
+  const [draft, setDraft] = useState(model);
+  const [fetched, setFetched] = useState<string[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft(model);
+  }, [model]);
+
+  const trimmed = draft.trim();
+  const canApply = trimmed.length > 0 && trimmed !== model;
+  const presetValues = new Set<string>(SONG_ID_GEMINI_MODELS.map((m) => m.value));
+  const options: Array<{ value: string; label: string }> = SONG_ID_GEMINI_MODELS.map((m) => ({
+    value: m.value,
+    label: t(m.label),
+  }));
+  if (model && !presetValues.has(model)) {
+    options.push({ value: model, label: model });
+  }
+
+  const applyCustom = () => {
+    if (!canApply) return;
+    onSelect(trimmed);
+  };
+
+  const handleFetch = async () => {
+    if (!apiKey.trim()) {
+      setFetchError(t("Save a Gemini API key above first."));
+      return;
+    }
+    setLoading(true);
+    setFetchError(null);
+    try {
+      const models = await fetchGeminiSongModels(apiKey);
+      setFetched(models);
+      if (models.length === 0) {
+        setFetchError(t("No compatible Gemini models were returned for this key."));
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setFetchError(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <SettingRow
+      wide
+      label={t("Gemini model")}
+      desc={t(
+        "2.5 Flash is the most reliable free-tier default. Type any live Gemini model ID below or fetch models supported by your key.",
+      )}
+      warn={fetchError ?? undefined}
+    >
+      <div className="flex flex-col gap-3">
+        <Segmented value={model} options={options} onChange={onSelect} />
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                applyCustom();
+              }
+            }}
+            placeholder={t("Custom model ID (e.g. gemini-2.5-flash)")}
+            spellCheck={false}
+            autoCapitalize="none"
+            autoCorrect="off"
+            aria-label={t("Custom Gemini model ID")}
+            className="h-11 min-w-[220px] flex-1 rounded-[8px] border border-edge-soft bg-elevated px-3 text-[15px] text-ink outline-none placeholder:text-ink-subtle focus:border-edge focus:bg-raised"
+          />
+          <button
+            type="button"
+            disabled={!canApply}
+            onClick={applyCustom}
+            className={`${ROW_ACTION} disabled:pointer-events-none disabled:opacity-45`}
+          >
+            {t("Apply")}
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => void handleFetch()}
+            className={`${ROW_ACTION} disabled:pointer-events-none disabled:opacity-45`}
+          >
+            <RotateCw size={16} strokeWidth={2.2} className={loading ? "animate-spin" : ""} />
+            {loading ? t("Fetching…") : t("Fetch models")}
+          </button>
+        </div>
+        {fetched && fetched.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {fetched.map((id) => {
+              const active = id === model;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onSelect(id)}
+                  className={`harbor-press-pop rounded-[7px] border px-2.5 py-1 text-[13.5px] font-medium transition-colors ${
+                    active
+                      ? "border-ink bg-ink text-canvas"
+                      : "border-edge-soft bg-elevated text-ink-muted hover:border-edge hover:text-ink"
+                  }`}
+                >
+                  {id}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </SettingRow>
   );
 }
 

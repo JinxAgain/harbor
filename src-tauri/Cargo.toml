@@ -64,6 +64,7 @@ socket2 = "0.5"
 base64 = "0.22"
 sha2 = "0.10"
 sha1 = "0.10"
+crc32fast = "1"
 png = "0.17"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 hound = "3.5"
@@ -163,6 +164,7 @@ windows = { version = "0.62", features = [
   "Foundation",
   "Storage_Streams",
 ] }
+windows-core = "0.62"
 window-vibrancy = "0.6"
 wasapi = "0.15"
 webview2-com = "0.39"
@@ -174,7 +176,6 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
 sevenz-rust2 = { version = "=0.20.2", default-features = false, features = ["compress"] }
-crc32fast = "1"
 
 [profile.dev]
 debug = "line-tables-only"

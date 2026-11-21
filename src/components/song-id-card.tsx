@@ -20,30 +20,20 @@ export function SongIdCard({
   const listening = message.kind === "info";
   const isResult = message.kind === "result";
   const isError = message.kind === "error";
-  const interactive = isResult && !!onOpen;
   const body = isError || showDetails ? message.body : undefined;
+  const openLabel = message.linkLabel ? t(message.linkLabel) : t("Open on YouTube");
   const width = compact
     ? isResult ? "w-[min(88vw,440px)]" : "w-[min(80vw,340px)]"
     : isResult ? "w-[min(82vw,360px)]" : "w-[min(80vw,320px)]";
 
   return (
     <div
-      role={interactive ? "button" : undefined}
-      tabIndex={interactive ? 0 : undefined}
       data-harbor-glass="modal"
       data-glass-tier="enhanced"
       data-player-glass="panel"
-      onClick={interactive ? onOpen : undefined}
-      onKeyDown={interactive ? (event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        event.stopPropagation();
-        onOpen?.();
-      } : undefined}
       className={[
-        "group flex items-center gap-4 rounded-3xl text-white shadow-2xl ring-1 ring-white/10 backdrop-blur-xl",
+        "flex items-center gap-4 rounded-3xl text-white shadow-2xl ring-1 ring-white/10 backdrop-blur-xl",
         compact ? "bg-black/85 p-4" : "flex-col bg-black/90 p-6 text-center",
-        interactive ? "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white" : "",
         width, className,
       ].join(" ")}
     >
@@ -59,13 +49,18 @@ export function SongIdCard({
         </span>
         {body && <span className={isError ? "text-[13px] leading-snug text-white/70" : "max-w-full truncate text-sm text-white/65"}>{body}</span>}
         {isResult && (
-          <span className={`inline-flex items-center gap-2 ${compact ? "mt-1" : "mt-2"}`}>
-            <span className={`inline-flex w-fit items-center rounded-full bg-white/10 font-semibold text-white/85 transition-colors group-hover:bg-white/16 group-hover:text-white ${compact ? "gap-1 px-3 py-1 text-[12px]" : "gap-1.5 px-4 py-2 text-[13px]"}`}>
-              {t("Open on YouTube")}
+          <div className={`inline-flex items-center gap-2 ${compact ? "mt-1" : "mt-2"}`}>
+            <button
+              type="button"
+              onClick={onOpen}
+              disabled={!onOpen}
+              className={`inline-flex w-fit items-center rounded-full bg-white/10 font-semibold text-white/85 transition-colors hover:bg-white/16 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${compact ? "gap-1 px-3 py-1 text-[12px]" : "gap-1.5 px-4 py-2 text-[13px]"}`}
+            >
+              {openLabel}
               <ArrowUpRight size={compact ? 13 : 15} strokeWidth={2.4} />
-            </span>
+            </button>
             {message.song && <SongIdSave song={message.song} compact={compact} />}
-          </span>
+          </div>
         )}
       </div>
     </div>

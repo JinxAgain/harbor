@@ -74,9 +74,21 @@ export function useProviderKeys({
 
   useEffect(() => {
     if (!keyModal) return;
+    setMdblistDraft(settings.mdblistKey);
+    setNytDraft(settings.nytKey);
+    setPosterSrvDraft(settings.posterBaseUrl);
+    setAuddDraft(settings.auddKey);
+    setSongAiDraft(settings.songIdAiKey);
     const field = keyFieldRef.current?.querySelector<HTMLInputElement>("input");
     if (field) tvFocus(field);
-  }, [keyModal]);
+  }, [
+    keyModal,
+    settings.mdblistKey,
+    settings.nytKey,
+    settings.posterBaseUrl,
+    settings.auddKey,
+    settings.songIdAiKey,
+  ]);
 
   useEffect(() => {
     if (!keyModal && !tmdbGuide && !tvdbGuide) return;

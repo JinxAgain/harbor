@@ -115,8 +115,6 @@ mod shaders;
 #[cfg(desktop)]
 mod song_id;
 #[cfg(desktop)]
-mod song_id_gemini;
-#[cfg(desktop)]
 mod sub_extract;
 #[cfg(desktop)]
 mod subsync;
@@ -1522,8 +1520,8 @@ pub fn run() {
             tray::tray_set_prefs,
             tray::tray_set_custom_themes,
             stremio_auth::stremio_auth_start,
-            song_id::recognize_now_playing,
-            song_id::recognize_now_playing_ai,
+            song_id::identify_now_playing,
+            song_id::list_gemini_models,
             app_icon::set_app_icon,
             deeplink_set_stremio,
             deeplink_is_stremio_registered,

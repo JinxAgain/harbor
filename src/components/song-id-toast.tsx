@@ -3,7 +3,12 @@ import { SongIdCard, type SongCardStyle } from "./song-id-card";
 import { useT } from "@/lib/i18n";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useSettings } from "@/lib/settings";
-import { onSongIdToast, type SongIdToastMsg } from "@/lib/song-id";
+import {
+  cancelSongIdentification,
+  isSafeHttpsUrl,
+  onSongIdToast,
+  type SongIdToastMsg,
+} from "@/lib/song-id";
 
 export function SongIdToast() {
   const t = useT();
@@ -16,16 +21,17 @@ export function SongIdToast() {
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    const off = onSongIdToast((t) => {
-      setMsg(t);
+    const off = onSongIdToast((next) => {
+      setMsg(next);
       if (timer.current) window.clearTimeout(timer.current);
-      if (t.kind !== "info") {
+      if (next && next.kind !== "info") {
         timer.current = window.setTimeout(() => setMsg(null), 12000);
       }
     });
     return () => {
       off();
       if (timer.current) window.clearTimeout(timer.current);
+      cancelSongIdentification();
     };
   }, []);
 
@@ -41,14 +47,17 @@ export function SongIdToast() {
 
   if (!msg || !settings.songIdEnabled) return null;
 
-  const open = () => {
-    if (msg.href) openUrl(msg.href).catch((e) => console.error("open failed", e));
-  };
+  const safeHref = isSafeHttpsUrl(msg.href);
+  const open = safeHref
+    ? () => {
+        openUrl(safeHref).catch((e) => console.error("open failed", e));
+      }
+    : undefined;
 
   const anim = [
     "origin-top transition-all duration-500 ease-out motion-reduce:transition-none",
     enter ? "scale-100 opacity-100" : "scale-90 opacity-0",
-    msg.kind === "result" ? "pointer-events-auto cursor-pointer hover:ring-white/25" : "",
+    msg.kind === "result" ? "pointer-events-auto hover:ring-white/25" : "",
   ].join(" ");
 
   return (
