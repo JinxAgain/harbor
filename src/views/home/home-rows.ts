@@ -284,6 +284,7 @@ export function mergeRows(
       metas: a.metas,
       page: 1,
       hasMore: canPage,
+      catalogSource: more ? { base: more.base, type: more.type, id: more.id } : undefined,
       fetcher:
         canPage && more
           ? createAddonCatalogFetcher(more, {

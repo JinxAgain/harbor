@@ -1,4 +1,4 @@
-import type { HomeRow } from "@/views/home/home-types";
+import type { HomeRow, HomeRowCatalogSource } from "@/views/home/home-types";
 import type { SourceRow } from "./custom-sources";
 
 export type HomeRowCustomization = {
@@ -19,22 +19,33 @@ export function applyHomeRowCustomization(
   custom: HomeRowCustomization,
   includeHidden = false,
 ): HomeRow[] {
-  const renamed = rows
-    .filter((r) => includeHidden || !custom.hidden.includes(r.key))
-    .map((r) => ({
+  const seenInput = new Set<string>();
+  const renamed: HomeRow[] = [];
+  for (const r of rows) {
+    if (seenInput.has(r.key)) continue;
+    seenInput.add(r.key);
+    if (!includeHidden && custom.hidden.includes(r.key)) continue;
+    renamed.push({
       ...r,
       name: custom.renamed[r.key] ?? r.name,
-    }));
+    });
+  }
   if (custom.order.length === 0) return renamed;
   const byKey = new Map(renamed.map((r) => [r.key, r]));
+  const emitted = new Set<string>();
   const ordered: HomeRow[] = [];
   for (const k of custom.order) {
+    if (emitted.has(k)) continue;
     const r = byKey.get(k);
-    if (r) ordered.push(r);
+    if (r) {
+      emitted.add(k);
+      ordered.push(r);
+    }
   }
-  const orderedKeys = new Set(custom.order);
   for (const r of renamed) {
-    if (!orderedKeys.has(r.key)) ordered.push(r);
+    if (emitted.has(r.key)) continue;
+    emitted.add(r.key);
+    ordered.push(r);
   }
   return ordered;
 }
@@ -46,13 +57,19 @@ export function isRowHidden(custom: HomeRowCustomization, key: string): boolean 
 export function effectiveOrder(rows: HomeRow[], custom: HomeRowCustomization): string[] {
   const live = rows.map((r) => r.key);
   const liveSet = new Set(live);
+  const seen = new Set<string>();
   const out: string[] = [];
   for (const k of custom.order) {
-    if (liveSet.has(k)) out.push(k);
+    if (liveSet.has(k) && !seen.has(k)) {
+      seen.add(k);
+      out.push(k);
+    }
   }
-  const seen = new Set(out);
   for (const k of live) {
-    if (!seen.has(k)) out.push(k);
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(k);
+    }
   }
   return out;
 }
@@ -87,19 +104,132 @@ export function pinnedCatalogIdFromRowKey(rowKey: string): string | null {
     : null;
 }
 
-/** Drop auto-loaded rows already represented in `pinnedRows` (as `pinned:<id>` or exact key). */
+/** Normalize an addon or extension catalog base URL into a canonical comparison string. */
+export function normalizeCatalogBase(base: string): string {
+  const stripped = base
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/manifest\.json$/i, "")
+    .replace(/\/+$/, "");
+  try {
+    const u = new URL(stripped);
+    if (u.protocol === "http:" || u.protocol === "https:") {
+      const pathname = u.pathname
+        .replace(/\/+$/, "")
+        .replace(/\/manifest\.json$/i, "")
+        .replace(/\/+$/, "");
+      return `${u.protocol}//${u.host.toLowerCase()}${pathname}${u.search}`;
+    }
+  } catch {
+    // Preserve non-URL or custom-scheme bases (such as extension catalogue bases) as trimmed text.
+  }
+  return stripped;
+}
+
+/** Build a canonical source key for a catalog HomeRow, or null when metadata is incomplete. */
+export function catalogSourceKey(source?: HomeRowCatalogSource | null): string | null {
+  if (!source?.base || !source?.type || !source?.id) return null;
+  return `${normalizeCatalogBase(source.base)}|${source.type}|${source.id}`;
+}
+
+function normalizeRowTitle(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function extractUniqueMetaIds(metas: HomeRow["metas"], limit: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of metas) {
+    if (typeof m.id !== "string" || m.id.length === 0 || seen.has(m.id)) continue;
+    seen.add(m.id);
+    out.push(m.id);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function sameCatalogContent(
+  a: HomeRow,
+  b: HomeRow,
+  opts?: { allowTypeSuffix?: boolean },
+): boolean {
+  if ((a.catalogSource == null && a.fetcher == null) || (b.catalogSource == null && b.fetcher == null)) {
+    return false;
+  }
+  const titleA = normalizeRowTitle(a.name);
+  const titleB = normalizeRowTitle(b.name);
+  if (!titleA || !titleB) return false;
+  const titleMatches =
+    titleA === titleB ||
+    (Boolean(opts?.allowTypeSuffix) &&
+      (titleB.startsWith(`${titleA}:`) || titleA.startsWith(`${titleB}:`)));
+  if (!titleMatches) return false;
+
+  const idsA = extractUniqueMetaIds(a.metas, 20);
+  const idsB = extractUniqueMetaIds(b.metas, 20);
+  const headA = idsA.slice(0, 10);
+  const headB = idsB.slice(0, 10);
+  if (headA.length === 0 || headB.length === 0) return false;
+
+  const poolA = new Set(idsA);
+  const poolB = new Set(idsB);
+  const shorter = Math.min(headA.length, headB.length);
+  if (shorter < 3) {
+    return headA.length === headB.length && headA.every((id) => poolB.has(id));
+  }
+  const hitsA = headA.filter((id) => poolB.has(id)).length;
+  const hitsB = headB.filter((id) => poolA.has(id)).length;
+  return hitsA / headA.length >= 0.8 || hitsB / headB.length >= 0.8;
+}
+
+function areEquivalentCatalogRows(pinnedRow: HomeRow, candidate: HomeRow): boolean {
+  if (pinnedRow.key === candidate.key) return true;
+  if (pinnedCatalogIdFromRowKey(pinnedRow.key) === candidate.key) return true;
+  if (pinnedCatalogIdFromRowKey(candidate.key) === pinnedRow.key) return true;
+  const srcA = catalogSourceKey(pinnedRow.catalogSource);
+  const srcB = catalogSourceKey(candidate.catalogSource);
+  if (srcA !== null && srcA === srcB) return true;
+  return sameCatalogContent(pinnedRow, candidate, { allowTypeSuffix: true });
+}
+
+/** Collapse duplicate or drifted pinned rows so fresher entries supersede older ones in place. */
+export function dedupePinnedRows(pinnedRows: HomeRow[]): HomeRow[] {
+  if (pinnedRows.length < 2) return pinnedRows;
+  const out: HomeRow[] = [];
+  for (const row of pinnedRows) {
+    const idx = out.findIndex((existing) => areEquivalentCatalogRows(existing, row));
+    if (idx >= 0) {
+      out[idx] = row;
+    } else {
+      out.push(row);
+    }
+  }
+  return out;
+}
+
+/** Drop auto-loaded rows already represented in `pinnedRows` by key, source, or catalog content. */
 export function dedupeAgainstPinnedRows(
   rows: HomeRow[],
   pinnedRows: HomeRow[],
 ): HomeRow[] {
   if (pinnedRows.length === 0 || rows.length === 0) return rows;
   const shadowed = new Set<string>();
+  const shadowedSources = new Set<string>();
   for (const row of pinnedRows) {
     shadowed.add(row.key);
     const catalogId = pinnedCatalogIdFromRowKey(row.key);
     if (catalogId) shadowed.add(catalogId);
+    const sourceKey = catalogSourceKey(row.catalogSource);
+    if (sourceKey) shadowedSources.add(sourceKey);
   }
-  return rows.filter((row) => !shadowed.has(row.key));
+  return rows.filter((row) => {
+    if (shadowed.has(row.key)) return false;
+    const sourceKey = catalogSourceKey(row.catalogSource);
+    if (sourceKey && shadowedSources.has(sourceKey)) return false;
+    return !pinnedRows.some((pinned) =>
+      sameCatalogContent(pinned, row, { allowTypeSuffix: true }),
+    );
+  });
 }
 
 export function hideRow(custom: HomeRowCustomization, key: string): HomeRowCustomization {

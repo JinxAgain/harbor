@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { dedupePinnedRows } from "@/lib/home-customization";
 import { pinnedBuiltinTitle, usePinnedCatalogs, type PinnedCatalog } from "@/lib/pinned-catalogs";
 import { buildPinnedCatalogRows, pinnedRowKey } from "@/lib/pinned-catalogs-rows";
 import { useAnilistAnimeRails } from "@/lib/use-anilist-anime-rails";
@@ -113,6 +114,6 @@ export function usePinnedRows(): HomeRow[] {
         }
       }
     }
-    return out;
+    return dedupePinnedRows(out);
   }, [pinned, catalogRows, anilistRails, malRails, extraMap, t]);
 }

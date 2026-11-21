@@ -51,6 +51,7 @@ export async function buildPinnedCatalogRows(
         page: 1,
         hasMore: metas.length >= PAGE_HINT,
         noDedup: true,
+        catalogSource: { base: cat.base, type: cat.type, id: cat.id },
         fetcher,
       };
       return row;

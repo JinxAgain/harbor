@@ -3,7 +3,12 @@ import { ChevronDown, ChevronUp, Eye, EyeOff, Pin, PinOff } from "lucide-react";
 import { NavGlyph } from "@/components/icons/nav-glyph";
 import { catalogTypeLabelKey, type BrowseCatalog } from "@/lib/catalog-browse";
 import { syncHomeRowsForCatalogPinChange } from "@/lib/home-customization";
-import { isPinned, pinCatalog, unpinCatalog, useIsPinned } from "@/lib/pinned-catalogs";
+import {
+  isCatalogPinned,
+  pinCatalog,
+  unpinMatchingCatalog,
+  useIsCatalogPinned,
+} from "@/lib/pinned-catalogs";
 import { useSettings } from "@/lib/settings";
 import { isExtensionCatalogueBase } from "@/lib/streams/plugins";
 import { useT } from "@/lib/i18n";
@@ -29,8 +34,8 @@ export function CatalogManageList({
   const t = useT();
   const { settings, update } = useSettings();
   const handleToggleHome = (catalog: BrowseCatalog) => {
-    if (isPinned(catalog.key)) {
-      unpinCatalog(catalog.key);
+    if (isCatalogPinned(catalog)) {
+      unpinMatchingCatalog(catalog);
       const nextHomeRows = syncHomeRowsForCatalogPinChange(
         settings.homeRows,
         catalog.key,
@@ -148,7 +153,7 @@ function ManageRow({
   moveDown?: () => void;
 }) {
   const t = useT();
-  const pinnedHome = useIsPinned(catalog.key);
+  const pinnedHome = useIsCatalogPinned(catalog);
   const typeLabelKey = catalogTypeLabelKey(catalog.type);
   return (
     <div
