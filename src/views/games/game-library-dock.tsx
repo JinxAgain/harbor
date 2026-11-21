@@ -89,12 +89,12 @@ export function GameLibraryDock({ visible: pageVisible }: { visible: boolean }) 
   const error = prefs.error || shortcuts.error || custom.error || emulation.error || (library.launchError ? "games.library.launchError" : launchers.launchError ? "games.dock.launchError" : "");
   const displayed = dockOpen || retained ? shown : [];
   if (!visible) return null;
-  return <aside data-harbor-glass="dock" data-glass-tier="enhanced" className={`game-library-dock${dockOpen ? " is-open" : retained ? " is-closing" : ""}`} aria-label={t("games.dock.title")}
+  return <aside className={`game-library-dock${dockOpen ? " is-open" : retained ? " is-closing" : ""}`} aria-label={t("games.dock.title")}
     onPointerEnter={event => { if (event.pointerType !== "mouse") return; pointerInside.current = true; cancelHover(); if (!dockOpen) hoverTimer.current = window.setTimeout(() => show(toggle.current!, true), 150); }}
     onPointerLeave={() => { pointerInside.current = false; cancelHover(); if (!options && !panel.current?.contains(document.activeElement)) hoverTimer.current = window.setTimeout(() => close(false), 420); }}
     onFocus={cancelHover} onBlur={event => { if (!pointerInside.current && !event.currentTarget.contains(event.relatedTarget as Node) && !options) { cancelHover(); hoverTimer.current = window.setTimeout(() => close(false), 420); } }}>
     <button ref={toggle} className="game-dock-edge" aria-label={t("games.dock.quick")} aria-expanded={dockOpen} aria-controls="game-quick-library" tabIndex={dockOpen ? -1 : 0} onFocus={() => { if (!dockOpen && !restoringFocus.current) show(toggle.current!); }} onClick={() => { if (!dockOpen) show(toggle.current!); }} />
-    <section ref={panel} id="game-quick-library" className="game-quick-library" aria-label={t("games.dock.title")} hidden={!dockOpen && !retained} inert={!dockOpen}>
+    <section ref={panel} id="game-quick-library" data-harbor-glass="dock" data-glass-tier="enhanced" className="game-quick-library" aria-label={t("games.dock.title")} hidden={!dockOpen && !retained} inert={!dockOpen}>
       <div className="game-dock-tools">
         <HoverTooltip label={t(music ? "music.quick.toGames" : "music.quick.toMusic")} align="end"><button className="game-dock-library" data-dock-mode={mode} aria-label={t(music ? "music.quick.toGames" : "music.quick.toMusic")} onClick={() => setMode(music ? "games" : "music")}><span key={mode} className="game-dock-mode-icon">{music ? <NavGlyph name="music" className="h-[25px] w-[25px]"/> : <GamesIcon size={24}/>}</span></button></HoverTooltip>
         <div>{music
@@ -115,7 +115,7 @@ export function GameLibraryDock({ visible: pageVisible }: { visible: boolean }) 
         {!displayed.length && <HoverTooltip label={t(games.length ? "games.noResults" : "games.dock.empty")} sublabel={t(games.length ? "games.dock.tryFilters" : "games.dock.emptyNote")} align="end"><button className="game-dock-empty" aria-label={t(games.length ? "games.catalog.reset" : "games.dock.openLibrary")} onClick={() => games.length ? setFilters(defaults) : access.navigate({ library: "steam" }, pageFocus.current ?? undefined)}><Library size={24}/></button></HoverTooltip>}
         </>}
       </div>
-      {options && <div className="game-dock-options">
+      {options && <div data-harbor-glass="popover" className="game-dock-options">
         <div className="game-dock-option-heading"><strong>{t("games.dock.filters")}</strong><button aria-label={t("common.close")} onClick={closeOptions}><X size={18}/></button></div>
         <label className="game-dock-search"><Search size={18}/><input ref={search} value={filters.query} onChange={event => setFilters({ ...filters, query: event.target.value })} placeholder={t("games.dock.search")} aria-label={t("games.dock.search")}/></label>
         <label><span>{t("games.dock.show")}</span><Dropdown value={filters.group} onChange={value => setFilters({ ...filters, group: value as QuickFilters["group"] })} ariaLabel={t("games.dock.show")} options={["all", "favorites", "recent"].map(value => ({ value, label: t(`games.dock.${value}`) }))}/></label>
@@ -124,7 +124,7 @@ export function GameLibraryDock({ visible: pageVisible }: { visible: boolean }) 
         <button className="game-dock-ready" aria-pressed={filters.ready} onClick={() => setFilters({ ...filters, ready: !filters.ready })}><span>{t("games.dock.readyOnly")}</span><span className="game-dock-check">{filters.ready && <Check size={16}/>}</span></button>
         <div className="game-dock-count" role="status">{t("games.dock.count", { count: shown.length })}<button onClick={() => setFilters(defaults)}>{t("games.catalog.reset")}</button></div>
       </div>}
-      {error && <div className="game-dock-error" role="alert">{t(error)}<button aria-label={t("common.close")} onClick={() => { prefs.dismissError(); custom.dismissError(); emulation.dismissError(); library.dismissLaunchError(); launchers.dismissLaunchError(); }}><X size={16}/></button></div>}
+      {error && <div data-harbor-glass="popover" className="game-dock-error" role="alert">{t(error)}<button aria-label={t("common.close")} onClick={() => { prefs.dismissError(); custom.dismissError(); emulation.dismissError(); library.dismissLaunchError(); launchers.dismissLaunchError(); }}><X size={16}/></button></div>}
     </section>
   </aside>;
 }
