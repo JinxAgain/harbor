@@ -1,4 +1,4 @@
-import { ArrowUpRight, Music } from "@/views/settings/icons";
+import { ArrowUpRight, Music, X } from "@/views/settings/icons";
 import { SongIdSave } from "./song-id-save";
 import { useT } from "@/lib/i18n";
 import type { SongIdToastMsg } from "@/lib/song-id";
@@ -6,12 +6,13 @@ import type { SongIdToastMsg } from "@/lib/song-id";
 export type SongCardStyle = "compact" | "cinematic";
 
 export function SongIdCard({
-  message, style, showDetails, onOpen, className = "", animateArtwork = true,
+  message, style, showDetails, onOpen, onClose, className = "", animateArtwork = true,
 }: {
   message: SongIdToastMsg;
   style: SongCardStyle;
   showDetails: boolean;
   onOpen?: () => void;
+  onClose?: () => void;
   className?: string;
   animateArtwork?: boolean;
 }) {
@@ -31,19 +32,34 @@ export function SongIdCard({
       data-harbor-glass="modal"
       data-glass-tier="enhanced"
       data-player-glass="panel"
+      onClick={onClose ? (e) => e.stopPropagation() : undefined}
       className={[
-        "flex items-center gap-4 rounded-3xl text-white shadow-2xl ring-1 ring-white/10 backdrop-blur-xl",
+        "relative flex items-center gap-4 rounded-3xl text-white shadow-2xl ring-1 ring-white/10 backdrop-blur-xl",
         compact ? "bg-black/85 p-4" : "flex-col bg-black/90 p-6 text-center",
         width, className,
       ].join(" ")}
     >
+      {onClose && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          aria-label={listening ? t("Cancel song identification") : t("Close")}
+          title={listening ? t("Cancel song identification") : t("Close")}
+          className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/75 transition-colors hover:bg-white/20 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+        >
+          <X size={15} strokeWidth={2.2} aria-hidden="true" />
+        </button>
+      )}
       <Vinyl
         art={message.art}
         size={compact ? "h-20 w-20" : isResult ? "h-44 w-44" : "h-32 w-32"}
         listening={listening}
         animate={animateArtwork}
       />
-      <div className={`flex min-w-0 flex-col gap-1 ${compact ? "flex-1" : "w-full items-center"}`}>
+      <div className={`flex min-w-0 flex-col gap-1 ${compact ? `flex-1${onClose ? " pr-8" : ""}` : "w-full items-center"}`}>
         <span className={`max-w-full truncate leading-tight ${compact ? "text-lg font-semibold" : "text-xl font-bold"}`}>
           {message.title}
         </span>
@@ -61,6 +77,18 @@ export function SongIdCard({
             </button>
             {message.song && <SongIdSave song={message.song} compact={compact} />}
           </div>
+        )}
+        {listening && onClose && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            className={`inline-flex w-fit items-center rounded-full bg-white/10 font-semibold text-white/85 transition-colors hover:bg-white/16 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${compact ? "mt-1 px-3 py-1 text-[12px]" : "mt-2 px-4 py-1.5 text-[13px]"}`}
+          >
+            {t("Cancel")}
+          </button>
         )}
       </div>
     </div>

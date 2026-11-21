@@ -5,11 +5,56 @@ mod gemini;
 mod shazam;
 
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 use std::time::Duration;
 #[cfg(windows)]
 use tauri::Emitter;
+use tokio::sync::Notify;
 use url::Url;
+
+static ACTIVE_RUN_ID: AtomicU64 = AtomicU64::new(0);
+static CANCEL_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+
+fn bump_run_id() -> u64 {
+    let next = ACTIVE_RUN_ID.fetch_add(1, Ordering::SeqCst) + 1;
+    CANCEL_NOTIFY.notify_waiters();
+    next
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_cancelled(run_id: u64) -> bool {
+    ACTIVE_RUN_ID.load(Ordering::SeqCst) != run_id
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+async fn run_cancellable<T>(run_id: u64, fut: impl Future<Output = T>) -> Option<T> {
+    let cancel = async {
+        loop {
+            let notified = CANCEL_NOTIFY.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if is_cancelled(run_id) {
+                return;
+            }
+            notified.await;
+            if is_cancelled(run_id) {
+                return;
+            }
+        }
+    };
+    tokio::select! {
+        biased;
+        () = cancel => None,
+        res = fut => Some(res),
+    }
+}
+
+#[tauri::command]
+pub fn cancel_song_identification() {
+    bump_run_id();
+}
 
 pub(crate) static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
@@ -75,8 +120,10 @@ pub(crate) fn sanitize_https_url(raw: &str) -> String {
 }
 
 #[cfg(windows)]
-fn emit_stage(app: &tauri::AppHandle, stage: &str) {
-    let _ = app.emit("harbor:song-id-stage", stage);
+fn emit_stage(app: &tauri::AppHandle, run_id: u64, stage: &str) {
+    if !is_cancelled(run_id) {
+        let _ = app.emit("harbor:song-id-stage", stage);
+    }
 }
 
 #[cfg(windows)]
@@ -94,86 +141,102 @@ pub async fn identify_now_playing(
 ) -> Result<Option<SongResult>, String> {
     #[cfg(windows)]
     {
-        emit_stage(&app, "capturing");
+        let run_id = bump_run_id();
+        emit_stage(&app, run_id, "capturing");
         let default_secs = match request.provider {
             SongIdProvider::Shazam => 7,
             SongIdProvider::Audd | SongIdProvider::Ai => 6,
         };
         let secs = request.seconds.unwrap_or(default_secs).clamp(3, 15);
-        let audio = capture::capture_audio(secs).await?;
+        let Some(audio_res) =
+            run_cancellable(run_id, capture::capture_audio(secs, run_id, &ACTIVE_RUN_ID)).await
+        else {
+            return Ok(None);
+        };
+        if is_cancelled(run_id) {
+            return Ok(None);
+        }
+        let audio = audio_res?;
         capture::ensure_audible(&audio.samples_16k)?;
 
-        emit_stage(&app, "identifying");
+        emit_stage(&app, run_id, "identifying");
         let grounding = request.gemini_grounding.unwrap_or(true);
-        let mut result = match request.provider {
-            SongIdProvider::Shazam => {
-                let primary = shazam::recognize(&audio).await;
-                let fallback_key = request
-                    .fallback_gemini_key
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToString::to_string);
-                match (primary, fallback_key) {
-                    (Ok(Some(song)), _) => Ok(Some(song)),
-                    (Ok(None), Some(gemini_key)) => {
-                        let wav = capture::encode_wav_16k_mono(&audio.samples_16k)?;
-                        gemini::recognize(
-                            wav,
-                            gemini_key,
-                            request.model.clone(),
-                            request.context.as_ref(),
-                            grounding,
-                        )
-                        .await
-                    }
-                    (Err(shazam_err), Some(gemini_key)) => {
-                        let wav = capture::encode_wav_16k_mono(&audio.samples_16k)?;
-                        match gemini::recognize(
-                            wav,
-                            gemini_key,
-                            request.model.clone(),
-                            request.context.as_ref(),
-                            grounding,
-                        )
-                        .await
-                        {
-                            Ok(Some(song)) => Ok(Some(song)),
-                            Ok(None) => Err(shazam_err),
-                            Err(_) => Err(shazam_err),
+        let Some(identify_res) = run_cancellable(run_id, async move {
+            let mut result = match request.provider {
+                SongIdProvider::Shazam => {
+                    let primary = shazam::recognize(&audio).await;
+                    let fallback_key = request
+                        .fallback_gemini_key
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToString::to_string);
+                    match (primary, fallback_key) {
+                        (Ok(Some(song)), _) => Ok(Some(song)),
+                        (Ok(None), Some(gemini_key)) => {
+                            let wav = capture::encode_wav_16k_mono(&audio.samples_16k)?;
+                            gemini::recognize(
+                                wav,
+                                gemini_key,
+                                request.model.clone(),
+                                request.context.as_ref(),
+                                grounding,
+                            )
+                            .await
                         }
+                        (Err(shazam_err), Some(gemini_key)) => {
+                            let wav = capture::encode_wav_16k_mono(&audio.samples_16k)?;
+                            match gemini::recognize(
+                                wav,
+                                gemini_key,
+                                request.model.clone(),
+                                request.context.as_ref(),
+                                grounding,
+                            )
+                            .await
+                            {
+                                Ok(Some(song)) => Ok(Some(song)),
+                                Ok(None) => Err(shazam_err),
+                                Err(_) => Err(shazam_err),
+                            }
+                        }
+                        (other, None) => other,
                     }
-                    (other, None) => other,
+                }
+                SongIdProvider::Audd => {
+                    let token = require_key(request.api_key.as_deref(), "Missing AudD API token")?;
+                    let wav = capture::encode_wav_16k_mono(&audio.samples_16k)?;
+                    audd::recognize(wav, token).await
+                }
+                SongIdProvider::Ai => {
+                    let key = require_key(request.api_key.as_deref(), "Missing Gemini API key")?;
+                    let wav = capture::encode_wav_16k_mono(&audio.samples_16k)?;
+                    gemini::recognize(
+                        wav,
+                        key,
+                        request.model.clone(),
+                        request.context.as_ref(),
+                        grounding,
+                    )
+                    .await
+                }
+            }?;
+
+            if let Some(ref mut song) = result {
+                song.artwork = sanitize_https_url(&song.artwork);
+                song.link = sanitize_https_url(&song.link);
+                if song.artwork.is_empty() && !song.title.is_empty() {
+                    enrich::fill_artwork(song).await;
+                    song.artwork = sanitize_https_url(&song.artwork);
                 }
             }
-            SongIdProvider::Audd => {
-                let token = require_key(request.api_key.as_deref(), "Missing AudD API token")?;
-                let wav = capture::encode_wav_16k_mono(&audio.samples_16k)?;
-                audd::recognize(wav, token).await
-            }
-            SongIdProvider::Ai => {
-                let key = require_key(request.api_key.as_deref(), "Missing Gemini API key")?;
-                let wav = capture::encode_wav_16k_mono(&audio.samples_16k)?;
-                gemini::recognize(
-                    wav,
-                    key,
-                    request.model.clone(),
-                    request.context.as_ref(),
-                    grounding,
-                )
-                .await
-            }
-        }?;
-
-        if let Some(ref mut song) = result {
-            song.artwork = sanitize_https_url(&song.artwork);
-            song.link = sanitize_https_url(&song.link);
-            if song.artwork.is_empty() && !song.title.is_empty() {
-                enrich::fill_artwork(song).await;
-                song.artwork = sanitize_https_url(&song.artwork);
-            }
-        }
-        Ok(result)
+            Ok::<Option<SongResult>, String>(result)
+        })
+        .await
+        else {
+            return Ok(None);
+        };
+        identify_res
     }
     #[cfg(not(windows))]
     {
@@ -203,5 +266,21 @@ mod tests {
         assert_eq!(sanitize_https_url("ms-msdt:/id"), "");
         assert_eq!(sanitize_https_url("https://"), "");
         assert_eq!(sanitize_https_url("   "), "");
+    }
+
+    #[test]
+    fn run_cancellable_completes_normally_and_aborts_on_cancel() {
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        rt.block_on(async {
+            let run1 = bump_run_id();
+            let done = run_cancellable(run1, async { 42usize }).await;
+            assert_eq!(done, Some(42));
+
+            let run2 = bump_run_id();
+            let handle = tokio::spawn(run_cancellable(run2, std::future::pending::<()>()));
+            tokio::task::yield_now().await;
+            cancel_song_identification();
+            assert_eq!(handle.await.expect("join"), None);
+        });
     }
 }

@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { AudioLines } from "lucide-react";
 import { useSettings } from "@/lib/settings";
 import {
+  cancelSongIdentification,
   getSongIdStage,
   identifyNowPlaying,
   subscribeSongIdStage,
@@ -35,7 +36,10 @@ export function IdentifySongButton({
   if (!settings.songIdEnabled && !editing) return null;
 
   const onClick = () => {
-    if (pending) return;
+    if (pending) {
+      cancelSongIdentification();
+      return;
+    }
     void identifyNowPlaying({
       provider: settings.songIdProvider,
       auddKey: settings.auddKey ?? "",
@@ -47,16 +51,17 @@ export function IdentifySongButton({
     });
   };
 
+  const actionLabel = pending ? t("Cancel song identification") : t("Identify song");
+
   return (
-    <Tooltip label={t("Identify song")}>
+    <Tooltip label={actionLabel}>
       <button
         type="button"
         onClick={onClick}
-        disabled={pending}
-        aria-label={t("Identify song")}
+        aria-label={actionLabel}
         className={
           className ??
-          "pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-full text-white/90 transition hover:bg-white/15 disabled:opacity-50"
+          "pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-full text-white/90 transition hover:bg-white/15"
         }
       >
         {iconUrl ? (

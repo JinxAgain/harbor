@@ -108,9 +108,13 @@ export function isIdentifying(): boolean {
 
 export function cancelSongIdentification(): void {
   activeGeneration += 1;
-  if (currentStage !== "idle") {
+  const wasRunning = currentStage !== "idle";
+  if (wasRunning) {
     setStage("idle");
-    toast(null);
+  }
+  toast(null);
+  if (wasRunning && isTauri()) {
+    void invoke("cancel_song_identification").catch(() => {});
   }
 }
 

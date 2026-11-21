@@ -163,7 +163,12 @@ pub fn encode_wav_16k_mono(samples: &[i16]) -> Result<Vec<u8>, String> {
 mod win {
     use super::*;
     use std::mem::{size_of, ManuallyDrop};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, Instant};
+
+    fn is_cancelled(run_id: u64, active_run_id: &AtomicU64) -> bool {
+        active_run_id.load(Ordering::SeqCst) != run_id
+    }
     use windows::Win32::Foundation::{CloseHandle, HANDLE, RPC_E_CHANGED_MODE, WAIT_OBJECT_0};
     use windows::Win32::Media::Audio::{
         ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
@@ -335,6 +340,8 @@ mod win {
         format: AudioFormat,
         seconds: u32,
         abort_if_silent_early: bool,
+        run_id: u64,
+        active_run_id: &AtomicU64,
     ) -> Result<CapturedAudio, String> {
         let event_handle = unsafe { CreateEventW(None, false, false, PCWSTR::null()) }
             .map_err(|e| format!("CreateEventW failed: {e}"))?;
@@ -358,6 +365,9 @@ mod win {
         let deadline = started + Duration::from_secs(seconds as u64 + 2);
 
         while captured_frames < target_frames && Instant::now() < deadline {
+            if is_cancelled(run_id, active_run_id) {
+                return Err("cancelled".to_string());
+            }
             loop {
                 let next_frames = unsafe { capture_client.GetNextPacketSize() }
                     .map_err(|e| format!("GetNextPacketSize failed: {e}"))?;
@@ -425,7 +435,7 @@ mod win {
                 return Err("process_loopback_silent".to_string());
             }
 
-            let wait = unsafe { WaitForSingleObject(event_guard.0, 250) };
+            let wait = unsafe { WaitForSingleObject(event_guard.0, 100) };
             let _ = wait == WAIT_OBJECT_0;
         }
 
@@ -443,7 +453,11 @@ mod win {
         Ok(CapturedAudio { samples_16k })
     }
 
-    fn capture_process_loopback(seconds: u32) -> Result<CapturedAudio, String> {
+    fn capture_process_loopback(
+        seconds: u32,
+        run_id: u64,
+        active_run_id: &AtomicU64,
+    ) -> Result<CapturedAudio, String> {
         let ready_event = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }
             .map_err(|e| format!("CreateEventW failed: {e}"))?;
         let ready_guard = HandleGuard(ready_event);
@@ -493,7 +507,17 @@ mod win {
         }
         .map_err(|e| format!("ActivateAudioInterfaceAsync failed: {e}"))?;
 
-        if unsafe { WaitForSingleObject(ready_guard.0, 2000) } != WAIT_OBJECT_0 {
+        let mut activated_ok = false;
+        for _ in 0..20 {
+            if is_cancelled(run_id, active_run_id) {
+                return Err("cancelled".to_string());
+            }
+            if unsafe { WaitForSingleObject(ready_guard.0, 100) } == WAIT_OBJECT_0 {
+                activated_ok = true;
+                break;
+            }
+        }
+        if !activated_ok {
             return Err("Process loopback activation timed out".to_string());
         }
 
@@ -547,6 +571,8 @@ mod win {
             },
             seconds,
             true,
+            run_id,
+            active_run_id,
         )?;
         ensure_audible(&audio.samples_16k)?;
         Ok(audio)
@@ -597,7 +623,11 @@ mod win {
         })
     }
 
-    fn capture_default_loopback(seconds: u32) -> Result<CapturedAudio, String> {
+    fn capture_default_loopback(
+        seconds: u32,
+        run_id: u64,
+        active_run_id: &AtomicU64,
+    ) -> Result<CapturedAudio, String> {
         let enumerator: IMMDeviceEnumerator =
             unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }
                 .map_err(|e| format!("MMDeviceEnumerator failed: {e}"))?;
@@ -626,22 +656,29 @@ mod win {
         }
         .map_err(|e| format!("WASAPI Initialize failed: {e}"))?;
 
-        drain_client(&client, format, seconds, false)
+        drain_client(&client, format, seconds, false, run_id, active_run_id)
     }
 
     // Pull in eConsole / eRender cleanly inside the inner module.
     use windows::Win32::Media::Audio::{eConsole, eRender};
 
-    pub async fn capture_audio(seconds: u32) -> Result<CapturedAudio, String> {
+    pub async fn capture_audio(
+        seconds: u32,
+        run_id: u64,
+        active_run_id: &'static AtomicU64,
+    ) -> Result<CapturedAudio, String> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::Builder::new()
             .name("harbor-song-id-capture".to_string())
             .spawn(move || {
                 let res = (|| -> Result<CapturedAudio, String> {
                     let _com = init_com_mta()?;
-                    match capture_process_loopback(seconds) {
+                    match capture_process_loopback(seconds, run_id, active_run_id) {
                         Ok(audio) => Ok(audio),
-                        Err(_) => capture_default_loopback(seconds),
+                        Err(_) if is_cancelled(run_id, active_run_id) => {
+                            Err("cancelled".to_string())
+                        }
+                        Err(_) => capture_default_loopback(seconds, run_id, active_run_id),
                     }
                 })();
                 let _ = tx.send(res);
