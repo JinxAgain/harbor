@@ -3,6 +3,7 @@ import { SongIdCard, type SongCardStyle } from "./song-id-card";
 import { useT } from "@/lib/i18n";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useSettings } from "@/lib/settings";
+import type { SongCardPosition } from "@/lib/settings/types";
 import {
   cancelSongIdentification,
   isSafeHttpsUrl,
@@ -10,10 +11,26 @@ import {
   type SongIdToastMsg,
 } from "@/lib/song-id";
 
+const POSITION_LAYOUT: Record<SongCardPosition, { wrap: string; origin: string }> = {
+  "top-center": {
+    wrap: "left-1/2 top-8 -translate-x-1/2 items-center",
+    origin: "origin-top",
+  },
+  "bottom-left": {
+    wrap: "bottom-24 left-7 items-start",
+    origin: "origin-bottom-left",
+  },
+  "bottom-right": {
+    wrap: "bottom-24 right-7 items-end",
+    origin: "origin-bottom-right",
+  },
+};
+
 export function SongIdToast() {
   const t = useT();
   const { settings } = useSettings();
   const style = (settings.songCardStyle ?? "cinematic") as SongCardStyle;
+  const position = (settings.songCardPosition ?? "top-center") as SongCardPosition;
   const showDetails = settings.songCardDetails ?? true;
 
   const [msg, setMsg] = useState<SongIdToastMsg | null>(null);
@@ -84,14 +101,19 @@ export function SongIdToast() {
       }
     : undefined;
 
+  const layout = POSITION_LAYOUT[position] ?? POSITION_LAYOUT["top-center"];
+
   const anim = [
-    "pointer-events-auto origin-top transition-all duration-500 ease-out motion-reduce:transition-none",
+    "pointer-events-auto transition-all duration-500 ease-out motion-reduce:transition-none",
+    layout.origin,
     enter ? "scale-100 opacity-100" : "scale-90 opacity-0",
     msg.kind === "result" ? "hover:ring-white/25" : "",
   ].join(" ");
 
   return (
-    <div className="pointer-events-none absolute left-1/2 top-8 z-30 flex -translate-x-1/2 flex-col items-center gap-3">
+    <div
+      className={`pointer-events-none absolute z-30 flex flex-col gap-3 ${layout.wrap}`}
+    >
       <span
         data-harbor-glass="pill"
         data-player-glass="pill"

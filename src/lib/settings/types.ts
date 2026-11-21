@@ -106,6 +106,7 @@ export type MusicSpeedPreset = {
 
 export type PickerSortBy = "default" | "size" | "seeders" | "resolution" | "score";
 export type PickerSortDir = "desc" | "asc";
+export type SongCardPosition = "top-center" | "bottom-left" | "bottom-right";
 
 export type Settings = {
   soundTheme: "none" | "glass" | "modern" | "retro" | "cinematic";
@@ -545,6 +546,7 @@ export type Settings = {
   streamBackdropBlur: boolean;
   songIdEnabled: boolean;
   songCardStyle: "compact" | "cinematic";
+  songCardPosition: SongCardPosition;
   songCardDetails: boolean;
   hideContent: ContentFilters;
   theme: ThemeSettings;

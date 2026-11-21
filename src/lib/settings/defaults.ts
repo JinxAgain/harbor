@@ -446,6 +446,7 @@ export const DEFAULT: Settings = {
   streamBackdropBlur: true,
   songIdEnabled: false,
   songCardStyle: "cinematic",
+  songCardPosition: "top-center",
   songCardDetails: true,
   hideContent: {
     anime: false,

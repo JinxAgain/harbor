@@ -1,7 +1,8 @@
 import { useSettings } from "@/lib/settings";
+import type { SongCardPosition } from "@/lib/settings/types";
 import { useT } from "@/lib/i18n";
-import { Section, ToggleRow, settingsAnchor, useSettingsActiveContext } from "./shared";
-import { ROW_ACTION } from "./kit";
+import { Section, Segmented, ToggleRow, settingsAnchor, useSettingsActiveContext } from "./shared";
+import { ROW_ACTION, SettingRow } from "./kit";
 import { SongIdCard, type SongCardStyle } from "@/components/song-id-card";
 import songArtwork from "@/assets/settings-preview/maple-leaf-rag.webp";
 import { useSampleArtwork } from "@/lib/sample-artwork";
@@ -12,6 +13,7 @@ export function SongCardStylePicker() {
   const { setActive } = useSettingsActiveContext();
   const enabled = settings.songIdEnabled ?? false;
   const value = (settings.songCardStyle ?? "cinematic") as SongCardStyle;
+  const position = (settings.songCardPosition ?? "top-center") as SongCardPosition;
 
   const options: { v: SongCardStyle; label: string; desc: string }[] = [
     {
@@ -75,6 +77,24 @@ export function SongCardStylePicker() {
               </button>
             );
           })}
+        </div>
+
+        <div className="w-full">
+          <SettingRow
+            wide
+            label={t("Card position")}
+            desc={t("Where the Now Playing card appears in the player.")}
+          >
+            <Segmented
+              value={position}
+              options={[
+                { value: "top-center", label: t("Top center") },
+                { value: "bottom-left", label: t("Bottom left") },
+                { value: "bottom-right", label: t("Bottom right") },
+              ]}
+              onChange={(v) => update({ songCardPosition: v as SongCardPosition })}
+            />
+          </SettingRow>
         </div>
 
         <ToggleRow

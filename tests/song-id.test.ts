@@ -65,6 +65,7 @@ test("parseStoredSettings migrates song ID settings safely", () => {
   assert.equal(fresh.songIdAiModel, "gemini-3.8-flash");
   assert.equal(fresh.songIdGeminiGrounding, true);
   assert.equal(fresh.songIdShazamFallbackGemini, false);
+  assert.equal(fresh.songCardPosition, "top-center");
 
   const legacy = parseStoredSettings(
     JSON.stringify({
@@ -99,4 +100,17 @@ test("parseStoredSettings migrates song ID settings safely", () => {
   assert.ok(values.includes("gemini-2.5-flash"));
   assert.ok(values.includes("gemini-2.5-flash-lite"));
   assert.ok(values.includes("gemini-3.8-flash"));
+
+  assert.equal(
+    parseStoredSettings(JSON.stringify({ songCardPosition: "bottom-left" })).songCardPosition,
+    "bottom-left",
+  );
+  assert.equal(
+    parseStoredSettings(JSON.stringify({ songCardPosition: "bottom-right" })).songCardPosition,
+    "bottom-right",
+  );
+  assert.equal(
+    parseStoredSettings(JSON.stringify({ songCardPosition: "top-left" })).songCardPosition,
+    "top-center",
+  );
 });

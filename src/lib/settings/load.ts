@@ -297,6 +297,13 @@ export function parseStoredSettings(raw: string | null): Settings {
     if (typeof parsed.songIdShazamFallbackGemini !== "boolean") {
       parsed.songIdShazamFallbackGemini = DEFAULT.songIdShazamFallbackGemini;
     }
+    if (
+      parsed.songCardPosition !== "top-center" &&
+      parsed.songCardPosition !== "bottom-left" &&
+      parsed.songCardPosition !== "bottom-right"
+    ) {
+      parsed.songCardPosition = DEFAULT.songCardPosition;
+    }
     if (parsed.aiSearchModel) parsed.aiSearchModel = migrateModelId(parsed.aiSearchModel);
     if (typeof parsed.steamSearchShortcut !== "boolean") parsed.steamSearchShortcut = DEFAULT.steamSearchShortcut;
     if (!["first", "random", "manual"].includes(parsed.gameArtworkSelection as string)) parsed.gameArtworkSelection = DEFAULT.gameArtworkSelection;

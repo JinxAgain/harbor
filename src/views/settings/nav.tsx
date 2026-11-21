@@ -3865,6 +3865,21 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
     keywords: ["artist", "album", "track info", "song details"],
   },
   {
+    label: "Card position",
+    section: "library",
+    tab: "cards",
+    anchorTitle: "Now Playing card",
+    keywords: [
+      "song card position",
+      "song id position",
+      "now playing position",
+      "top center",
+      "bottom left",
+      "bottom right",
+      "toast position",
+    ],
+  },
+  {
     label: "Keep frames for",
     section: "library",
     tab: "home",
