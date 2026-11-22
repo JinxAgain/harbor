@@ -1,11 +1,12 @@
 import { ChevronDown } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { addonLogoSrc, resolveAddonLogo } from "@/components/addon-logo";
 import type { Addon } from "@/lib/addons";
 import type { ScoredStream } from "@/lib/streams/types";
 import { StremioRow } from "./stremio-row";
 import { FACET_DIMS, facetOptions, matchesFacets, type FacetState } from "./stream-facets";
 import { addonInstanceKey, buildAddonOptions, hasUncachedMarker } from "./picker-utils";
+import { buildUniqueStreamKeys, stabilizeStreamOrder } from "./stream-order-stability";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
 import type { CustomStreamFilter } from "@/lib/streams/custom-filters";
@@ -116,7 +117,7 @@ export function StremioLayout({
   useEffect(() => {
     if (filter !== "all" && addonFiltered.length === 0 && streams.length > 0) setFilter("all");
   }, [filter, addonFiltered.length, streams.length]);
-  const visibleStreams = useMemo(() => {
+  const computedStreams = useMemo(() => {
     const filtered = searchFiltered.filter((s) => matchesFacets(s, facet));
     const defaultOrderFn = (list: ScoredStream[]) => {
       if (filter !== "all" || preserveOrder) return list;
@@ -144,6 +145,89 @@ export function StremioLayout({
     };
     return sortPickerStreams(filtered, sortBy, sortDir, defaultOrderFn);
   }, [searchFiltered, facet, filter, addonRank, preserveOrder, sortBy, sortDir]);
+
+  const facetSignature = useMemo(
+    () =>
+      Object.entries(facet)
+        .filter(([, v]) => v && v !== "all")
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k}=${v}`)
+        .join("&"),
+    [facet],
+  );
+  const resetSignature = `${filter}|${facetSignature}|${searchQuery}|${searchMode}|${sortBy}|${sortDir}|${activeFilterId ?? ""}|${preserveOrder ? "1" : "0"}`;
+
+  const [displayedStreams, setDisplayedStreams] = useState<ScoredStream[]>(() => computedStreams);
+  const [deferredStreams, setDeferredStreams] = useState<ScoredStream[] | null>(null);
+  const [interacting, setInteracting] = useState(false);
+  const hoveringRef = useRef(false);
+  const pointerDownRef = useRef(false);
+  const focusInsideRef = useRef(false);
+  const interactingRef = useRef(false);
+  const orderKeysRef = useRef<string[]>(buildUniqueStreamKeys(computedStreams));
+  const lastResetSigRef = useRef(resetSignature);
+  const displayedStreamsRef = useRef(displayedStreams);
+  displayedStreamsRef.current = displayedStreams;
+
+  const syncInteracting = useCallback(() => {
+    const next = hoveringRef.current || pointerDownRef.current || focusInsideRef.current;
+    interactingRef.current = next;
+    setInteracting(next);
+  }, []);
+
+  const commitStreams = useCallback((incoming: ScoredStream[], resetOrder: boolean) => {
+    if (resetOrder || orderKeysRef.current.length === 0 || incoming.length === 0) {
+      orderKeysRef.current = buildUniqueStreamKeys(incoming);
+      setDisplayedStreams(incoming);
+      setDeferredStreams(null);
+      return;
+    }
+    const next = stabilizeStreamOrder(orderKeysRef.current, incoming);
+    orderKeysRef.current = next.keys;
+    setDisplayedStreams(next.ordered);
+    setDeferredStreams(null);
+  }, []);
+
+  useEffect(() => {
+    const resetChanged = lastResetSigRef.current !== resetSignature;
+    lastResetSigRef.current = resetSignature;
+    if (resetChanged || computedStreams.length === 0 || displayedStreamsRef.current.length === 0) {
+      commitStreams(computedStreams, resetChanged || computedStreams.length === 0);
+      return;
+    }
+    if (interactingRef.current) {
+      const curKeys = orderKeysRef.current;
+      const nextKeys = buildUniqueStreamKeys(computedStreams);
+      const curSet = new Set(curKeys);
+      const changed = curKeys.length !== nextKeys.length || nextKeys.some((k) => !curSet.has(k));
+      setDeferredStreams(changed ? computedStreams : null);
+      return;
+    }
+    commitStreams(computedStreams, false);
+  }, [computedStreams, resetSignature, commitStreams]);
+
+  useEffect(() => {
+    if (!interacting && deferredStreams != null) {
+      commitStreams(deferredStreams, false);
+    }
+  }, [interacting, deferredStreams, commitStreams]);
+
+  useEffect(() => {
+    if (!interacting) return;
+    const clearPointerDown = () => {
+      if (!pointerDownRef.current) return;
+      pointerDownRef.current = false;
+      syncInteracting();
+    };
+    window.addEventListener("pointerup", clearPointerDown);
+    window.addEventListener("pointercancel", clearPointerDown);
+    return () => {
+      window.removeEventListener("pointerup", clearPointerDown);
+      window.removeEventListener("pointercancel", clearPointerDown);
+    };
+  }, [interacting, syncInteracting]);
+
+  const displayKeys = useMemo(() => buildUniqueStreamKeys(displayedStreams), [displayedStreams]);
   const filterLabel =
     filter === "all" ? t("All") : (addonOptions.find((o) => o.id === filter)?.name ?? t("All"));
   const filterLogo = filter === "all" ? null : (addonLogoMap.get(filter) ?? null);
@@ -236,10 +320,44 @@ export function StremioLayout({
         extraNarrowed={compiledSearch.active}
         onResetExtra={() => setSearchQuery("")}
       />
-      <div className="flex flex-col gap-2">
-        {visibleStreams.map((s, i) => (
+      <div
+        className="flex flex-col gap-2"
+        onPointerEnter={() => {
+          hoveringRef.current = true;
+          syncInteracting();
+        }}
+        onPointerMove={() => {
+          if (!hoveringRef.current) {
+            hoveringRef.current = true;
+            syncInteracting();
+          }
+        }}
+        onPointerLeave={() => {
+          hoveringRef.current = false;
+          syncInteracting();
+        }}
+        onPointerDown={() => {
+          pointerDownRef.current = true;
+          syncInteracting();
+        }}
+        onPointerUp={() => {
+          pointerDownRef.current = false;
+          syncInteracting();
+        }}
+        onFocusCapture={() => {
+          focusInsideRef.current = true;
+          syncInteracting();
+        }}
+        onBlurCapture={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+            focusInsideRef.current = false;
+            syncInteracting();
+          }
+        }}
+      >
+        {displayedStreams.map((s, i) => (
           <StremioRow
-            key={`${s.url ?? s.infoHash ?? s.title}-${i}`}
+            key={displayKeys[i]}
             stream={s}
             failed={failedStreams.has(s)}
             addonLogo={addonLogoMap.get(s.addonUrl ?? "") ?? addonLogoMap.get(s.addonId) ?? null}
@@ -251,7 +369,7 @@ export function StremioLayout({
           />
         ))}
       </div>
-      {streams.length > 0 && visibleStreams.length === 0 && (
+      {streams.length > 0 && displayedStreams.length === 0 && (
         <div className="flex flex-col items-center gap-3 rounded-2xl bg-elevated/60 px-5 py-6 text-center ring-1 ring-edge-soft">
           <p className="text-[14px] text-ink-muted">
             {compiledSearch.error
@@ -269,6 +387,18 @@ export function StremioLayout({
             className="rounded-full bg-accent-soft px-4 py-2 text-[13px] font-semibold text-accent ring-1 ring-edge-soft transition-transform hover:scale-[1.02] active:scale-[0.98] motion-reduce:transition-none motion-reduce:hover:scale-100"
           >
             {t("Clear filters")}
+          </button>
+        </div>
+      )}
+      {deferredStreams != null && (
+        <div className="pointer-events-none sticky bottom-14 z-10 flex justify-center">
+          <button
+            type="button"
+            onClick={() => commitStreams(deferredStreams, false)}
+            className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-edge-soft bg-elevated/95 px-3.5 py-1.5 text-[12px] font-medium text-ink shadow-[0_8px_24px_-12px_rgba(0,0,0,0.6)] backdrop-blur-md transition-transform hover:scale-[1.02] active:scale-[0.98]"
+          >
+            <span>{t("Refresh sources")}</span>
+            <span className="text-ink-subtle">({deferredStreams.length})</span>
           </button>
         </div>
       )}

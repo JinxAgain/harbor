@@ -34,10 +34,7 @@ const hoverPreviewSource = readFileSync(
   new URL("../src/components/hover-preview.tsx", import.meta.url),
   "utf8",
 );
-const detailSource = readFileSync(
-  new URL("../src/views/detail.tsx", import.meta.url),
-  "utf8",
-);
+const detailSource = readFileSync(new URL("../src/views/detail.tsx", import.meta.url), "utf8");
 const playOnModalSource = readFileSync(
   new URL("../src/components/play-on-modal.tsx", import.meta.url),
   "utf8",
@@ -70,35 +67,14 @@ test("1. Manual mode (instantPlay: false) does not gate rememberedHandledFirst o
     /rememberedHandledFirst\s*=\s*[\s\S]*?rememberedEligible\s*&&[\s\S]*?rememberedInstant/,
   );
   // Verify rememberedHandledFirst does not require settings.instantPlay
-  assert.doesNotMatch(
-    playPickerSource,
-    /rememberedHandledFirst\s*=\s*[^;]*?settings\.instantPlay/,
-  );
+  assert.doesNotMatch(playPickerSource, /rememberedHandledFirst\s*=\s*[^;]*?settings\.instantPlay/);
   // Verify fresh-play entry points gate resume on hasResumeProgress rather than hardcoding resume: true
-  assert.match(
-    detailSource,
-    /resume:\s*isResuming/,
-  );
-  assert.match(
-    pickCardSource,
-    /resume:\s*hasResumeProgress\(\s*meta\.id\s*\)/,
-  );
-  assert.match(
-    hoverPreviewSource,
-    /resume:\s*hasResumeProgress\(\s*payload\.meta\.id/,
-  );
-  assert.match(
-    voyageRouteSource,
-    /resume:\s*hasResumeProgress\(\s*meta\.id\s*\)/,
-  );
-  assert.match(
-    kidsDetailSource,
-    /resume:\s*hasResumeProgress\(\s*meta\.id/,
-  );
-  assert.match(
-    playOnModalSource,
-    /resume:\s*hasResumeProgress\(\s*request\.meta\.id/,
-  );
+  assert.match(detailSource, /resume:\s*isResuming/);
+  assert.match(pickCardSource, /resume:\s*hasResumeProgress\(\s*meta\.id\s*\)/);
+  assert.match(hoverPreviewSource, /resume:\s*hasResumeProgress\(\s*payload\.meta\.id/);
+  assert.match(voyageRouteSource, /resume:\s*hasResumeProgress\(\s*meta\.id\s*\)/);
+  assert.match(kidsDetailSource, /resume:\s*hasResumeProgress\(\s*meta\.id/);
+  assert.match(playOnModalSource, /resume:\s*hasResumeProgress\(\s*request\.meta\.id/);
 });
 
 test("2. All Play entry points respect settings.instantPlay and seasonSourceLock", () => {
@@ -197,7 +173,11 @@ test("3. Uncached debrid streams with url (including [PikPak 🧲 ]) are never t
 
   // Verify MediaFusion TRB ⚡ sample still passes
   const verifyResult = verifyAddonSamples();
-  assert.equal(verifyResult.failed.length, 0, `verifyAddonSamples had failures: ${JSON.stringify(verifyResult.failed)}`);
+  assert.equal(
+    verifyResult.failed.length,
+    0,
+    `verifyAddonSamples had failures: ${JSON.stringify(verifyResult.failed)}`,
+  );
 
   // Uncached markers: [RD download], [RD ⏳], [RD] Jackettio, ❌ Not Ready, and ⏳
   const markerFixtures = [
@@ -209,27 +189,19 @@ test("3. Uncached debrid streams with url (including [PikPak 🧲 ]) are never t
   ];
   for (const f of markerFixtures) {
     const s = parseStream({ ...f, url: "https://example.com/play" });
-    assert.equal(isExplicitlyUncached(s, ["rd"]), true, `Expected ${f.name} to be explicitly uncached`);
+    assert.equal(
+      isExplicitlyUncached(s, ["rd"]),
+      true,
+      `Expected ${f.name} to be explicitly uncached`,
+    );
     assert.equal(isCached(s, ["rd"]), false, `Expected ${f.name} to NOT be isCached`);
   }
 
   // Verify use-auto-candidates and use-auto-fire do not bypass isCached via !!s.url
-  assert.doesNotMatch(
-    useAutoCandidatesSource,
-    /if\s*\(!isCached\(s\)\s*&&\s*!s\.url/,
-  );
-  assert.doesNotMatch(
-    useAutoCandidatesSource,
-    /instantPlayable\s*=\s*[\s\S]*?\|\|\s*!!s\.url/,
-  );
-  assert.doesNotMatch(
-    useAutoFireSource,
-    /topInstantPlayable\s*=[\s\S]*?\|\|\s*!!s\.url/,
-  );
-  assert.doesNotMatch(
-    useAutoFireSource,
-    /pickInstant\s*=[\s\S]*?\|\|\s*!!pick\.url/,
-  );
+  assert.doesNotMatch(useAutoCandidatesSource, /if\s*\(!isCached\(s\)\s*&&\s*!s\.url/);
+  assert.doesNotMatch(useAutoCandidatesSource, /instantPlayable\s*=\s*[\s\S]*?\|\|\s*!!s\.url/);
+  assert.doesNotMatch(useAutoFireSource, /topInstantPlayable\s*=[\s\S]*?\|\|\s*!!s\.url/);
+  assert.doesNotMatch(useAutoFireSource, /pickInstant\s*=[\s\S]*?\|\|\s*!!pick\.url/);
 
   // Verify resolveStream rejects uncached stream with url when userCommitted is false
   const abortController = new AbortController();
@@ -303,3 +275,46 @@ test("4. Cross-ID readPlayback and addon-configured debrid cached streams", () =
   assert.equal(streamIsCached(rdStream as unknown as ScoredStream, []), true);
 });
 
+const playerViewSource = readFileSync(new URL("../src/views/player.tsx", import.meta.url), "utf8");
+const useTrickplaySource = readFileSync(
+  new URL("../src/views/player/hooks/use-trickplay.ts", import.meta.url),
+  "utf8",
+);
+
+test("5. Watch Together inRoom, stub detection, SourceErrorCard retry, trickplay, and rememberedHandledFirst respect manual selection", () => {
+  // Player computes inRoom with >= 2 participants before passing it to useAutoRetry.
+  const inRoomDecl = playerViewSource.indexOf(
+    'const inRoom = roomSnapshot.state === "joined" && roomSnapshot.participants.length >= 2;',
+  );
+  const autoRetryCall = playerViewSource.indexOf("useAutoRetry({");
+  assert.notEqual(inRoomDecl, -1, "PlayerView must compute two-participant inRoom");
+  assert.ok(inRoomDecl < autoRetryCall, "inRoom must be computed before useAutoRetry");
+  assert.match(playerViewSource, /useAutoRetry\(\{[\s\S]*?\binRoom\b,?[\s\S]*?\}\)/);
+  assert.doesNotMatch(
+    playerViewSource,
+    /useAutoRetry\(\{[\s\S]*?inRoom:\s*roomSnapshot\.state\s*===\s*"joined"/,
+  );
+
+  // Stub detection must not auto-eject manually selected sources.
+  assert.match(
+    playerViewSource,
+    /useStubDetection\(\{\s*src,\s*snap,\s*onStub:\s*onStubEject,\s*instantPlay:\s*settings\.instantPlay\s*&&\s*src\.autoFired\s*!==\s*false,?\s*\}\)/,
+  );
+
+  // SourceErrorCard onRetry must reload the manual selection rather than auto-switching to another addon.
+  assert.match(
+    playerViewSource,
+    /onRetry=\{\(\) => \{\s*if \(src\.autoFired === false && !sourceError\.exhausted\) \{\s*retryCurrentSource\(\);\s*return;\s*\}/,
+  );
+
+  // Trickplay must wait for playback readiness on remote/localhost addon streams before eager spawning.
+  assert.match(
+    playerViewSource,
+    /useTrickplay\(\{\s*url:\s*playUrl,\s*enabled:\s*settings\.seekPreviewEnabled,\s*isLive:\s*isLiveLike,\s*ready:\s*snap\.firstFrameReady\s*\|\|\s*snap\.durationSec\s*>\s*0,?\s*\}\)/,
+  );
+  assert.match(useTrickplaySource, /ready\s*=\s*true/);
+  assert.match(useTrickplaySource, /if\s*\(!isLocal\s*&&\s*!ready\)\s*return;/);
+
+  // Remembered playback in PlayPicker must reflect Boolean(autoPlay) instead of hardcoding autoFired: true.
+  assert.match(playPickerSource, /onPlay\(previousMatch,\s*true,\s*false,\s*Boolean\(autoPlay\)\)/);
+});

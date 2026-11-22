@@ -1,18 +1,34 @@
 import { useEffect } from "react";
 import { isBundledEngineUrl } from "@/lib/stremio-server";
-import { setTrickplayState, trickplaySetUrl, trickplaySpawnEager, trickplayStop } from "@/lib/trickplay";
+import {
+  setTrickplayState,
+  trickplaySetUrl,
+  trickplaySpawnEager,
+  trickplayStop,
+} from "@/lib/trickplay";
 
-export function useTrickplay({ url, enabled, isLive }: { url: string; enabled: boolean; isLive?: boolean }) {
+export function useTrickplay({
+  url,
+  enabled,
+  isLive,
+  ready = true,
+}: {
+  url: string;
+  enabled: boolean;
+  isLive?: boolean;
+  ready?: boolean;
+}) {
   useEffect(() => {
     if (!enabled || !url) {
       setTrickplayState({ active: false, bufferedOnly: false });
       return;
     }
+    const isLocal = !url.includes("://") || url.startsWith("file://");
+    if (!isLocal && !ready) return;
     const isTorrent = isBundledEngineUrl(url);
     setTrickplayState({ active: true, bufferedOnly: isTorrent });
     let alive = true;
     let eagerTimer: ReturnType<typeof setTimeout> | null = null;
-    const isLocal = !url.includes("://") || url.startsWith("file://");
     void trickplaySetUrl(url).then(() => {
       if (!alive) return;
       if (!isLive) {
@@ -31,5 +47,5 @@ export function useTrickplay({ url, enabled, isLive }: { url: string; enabled: b
       setTrickplayState({ active: false, bufferedOnly: false });
       void trickplayStop();
     };
-  }, [url, enabled, isLive]);
+  }, [url, enabled, isLive, ready]);
 }
