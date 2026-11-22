@@ -153,6 +153,7 @@ export function usePlayerMedia(params: {
     resolutionSettled,
     subtitleSearchActive,
     subtitlePreflightSettled,
+    availableSubtitles,
   } = useTrackAutoload({
     bridgeRef,
     src,
@@ -170,32 +171,50 @@ export function usePlayerMedia(params: {
     snap,
     engine,
     settings,
-    authKey,
     subtitlePreflightSettled,
+    availableSubtitles,
   });
   const {
     status: asStatus,
-    offer: asOffer,
-    applyOffer: asApply,
-    revert: asRevert,
-    retry: asRetry,
+    trigger: asTrigger,
+    offsetMs: asOffsetMs,
+    scale: asScale,
+    withinTolerance: asWithinTolerance,
+    canRevert: asCanRevert,
+    errorMessage: asErrorMessage,
     run: asRun,
     stop: asStop,
-    feedback: asFeedback,
+    revert: asRevert,
+    dismiss: asDismiss,
   } = autoSync;
   useEffect(() => {
     publishAutoSync({
       status: asStatus,
-      offer: asOffer,
-      applyOffer: asApply,
-      revert: asRevert,
-      retry: asRetry,
+      trigger: asTrigger,
+      offsetMs: asOffsetMs,
+      scale: asScale,
+      withinTolerance: asWithinTolerance,
+      canRevert: asCanRevert,
+      errorMessage: asErrorMessage,
       run: asRun,
       stop: asStop,
-      feedback: asFeedback,
+      revert: asRevert,
+      dismiss: asDismiss,
     });
     return () => publishAutoSync(null);
-  }, [asStatus, asOffer, asApply, asRevert, asRetry, asRun, asStop, asFeedback]);
+  }, [
+    asStatus,
+    asTrigger,
+    asOffsetMs,
+    asScale,
+    asWithinTolerance,
+    asCanRevert,
+    asErrorMessage,
+    asRun,
+    asStop,
+    asRevert,
+    asDismiss,
+  ]);
 
   // Whether the video actually renders inside Harbor's webview. This mirrors the
   // `embedActive` value the player bridge sends to mpv (use-player-bridge.ts):

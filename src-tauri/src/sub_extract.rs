@@ -16,8 +16,12 @@ pub async fn subtitle_extract(
     let mut cmd = tokio::process::Command::new(&ffmpeg);
     cmd.arg("-nostdin").arg("-loglevel").arg("error");
     if let Some(h) = &headers {
-        if let Some(ua) = h.get("User-Agent").or_else(|| h.get("user-agent")) {
+        if let Some(ua) = crate::subsync::url_guard::user_agent(h) {
             cmd.arg("-user_agent").arg(ua);
+        }
+        let header_blob = crate::subsync::url_guard::safe_header_blob(h);
+        if !header_blob.is_empty() {
+            cmd.arg("-headers").arg(header_blob);
         }
     }
     cmd.arg("-i")
@@ -110,18 +114,12 @@ pub async fn subtitle_extract_ass(
     let mut cmd = tokio::process::Command::new(&ffmpeg);
     cmd.arg("-nostdin").arg("-loglevel").arg("error");
     if let Some(h) = &headers {
-        if let Some(ua) = h.get("User-Agent").or_else(|| h.get("user-agent")) {
+        if let Some(ua) = crate::subsync::url_guard::user_agent(h) {
             cmd.arg("-user_agent").arg(ua);
         }
-        let mut header_lines = String::new();
-        for (k, v) in h {
-            if k.eq_ignore_ascii_case("user-agent") {
-                continue;
-            }
-            header_lines.push_str(&format!("{}: {}\r\n", k, v));
-        }
-        if !header_lines.is_empty() {
-            cmd.arg("-headers").arg(header_lines);
+        let header_blob = crate::subsync::url_guard::safe_header_blob(h);
+        if !header_blob.is_empty() {
+            cmd.arg("-headers").arg(header_blob);
         }
     }
     cmd.arg("-i")

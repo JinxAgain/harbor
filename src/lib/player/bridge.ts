@@ -48,6 +48,7 @@ export type TrackInfo = {
   matchConfidence?: SubtitleMatchConfidence;
   matchReasons?: string[];
   subId?: string;
+  autoSynced?: boolean;
 };
 
 export type Chapter = {
@@ -129,6 +130,7 @@ export type PlayerBridge = {
   setAudioTrack: (id: string) => void;
   setSubtitleTrack: (id: string | null, origin?: SubtitleSelectionOrigin) => void;
   canAutoSelectSubtitle?: () => boolean;
+  getSubtitleSelectionOrigin?: () => SubtitleSelectionOrigin;
   setSecondarySubtitleTrack: (id: string | null) => void;
   setSubVisible: (on: boolean) => void;
   setSubHideSdh?: (on: boolean) => void;

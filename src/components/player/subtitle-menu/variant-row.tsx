@@ -51,8 +51,8 @@ export function VariantRow({
     label,
     tone: kind === "hearingImpaired" || kind === "machineTranslated" ? "warn" : "info",
   }));
-  if (track.timingStatus === "aligned") {
-    tags.push({ label: tr("Audio verified"), tone: "info" });
+  if (track.autoSynced) {
+    tags.push({ label: tr("Auto synced"), tone: "info" });
   }
   if (track.default) tags.push({ label: tr("Default"), tone: "default" });
   if (isImageSubTrack(track)) tags.push({ label: tr("Position and size only"), tone: "warn" });

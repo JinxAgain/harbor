@@ -184,6 +184,7 @@ export function createHtml5Bridge(): PlayerBridge {
       matchConfidence: t.metadata?.matchConfidence,
       matchReasons: t.metadata?.matchReasons,
       subId: t.metadata?.subId,
+      autoSynced: t.metadata?.autoSynced,
     }));
   };
 
@@ -752,6 +753,7 @@ export function createHtml5Bridge(): PlayerBridge {
       refreshSnapshot();
     },
     canAutoSelectSubtitle: () => mainSubtitleSelection.canAutoSelect(mediaRevision),
+    getSubtitleSelectionOrigin: () => mainSubtitleSelection.currentOrigin(mediaRevision),
     setSubtitleTrack(id, origin = "manual") {
       if (!mainSubtitleSelection.claim(mediaRevision, origin)) return;
       if (id == null) {
@@ -844,12 +846,15 @@ export function createHtml5Bridge(): PlayerBridge {
       const prepared = takePreparedSubtitle(url);
       const providerDerived = metadata?.providerDerived ?? Boolean(metadata?.provider);
       if (!prepared && providerDerived && !isSafeProviderSubtitleUrl(url)) return false;
-      // Replace a previous track for the same source so a re-fetched provider subtitle
-      // (translating addon) does not stack a duplicate.
+      // Replace a previous track for the same source (or explicit replacement target) so
+      // re-fetched or auto-synced subtitles do not stack duplicates.
       const sourceUrl = metadata?.originalUrl ?? url;
-      if (!prepared) {
-        const priorIdx = subTracks.findIndex(
-          (track) => track.originalUrl === sourceUrl || track.url === sourceUrl,
+      const shouldReplace = !prepared || metadata?.replaceExisting === true;
+      if (shouldReplace) {
+        const priorIdx = subTracks.findIndex((track) =>
+          metadata?.replaceTrackId
+            ? track.id === metadata.replaceTrackId
+            : track.originalUrl === sourceUrl || track.url === sourceUrl,
         );
         if (priorIdx >= 0) {
           const [oldTrack] = subTracks.splice(priorIdx, 1);

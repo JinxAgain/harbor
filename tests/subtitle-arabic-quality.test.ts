@@ -11,12 +11,6 @@ import {
   cleanupArabicCuesSafely,
   cleanupArabicSubtitleTextSafely,
 } from "../src/lib/subtitles/arabic-quality.ts";
-import { alignSubToAsr } from "../src/lib/subtitles/autosync/smart-layer.ts";
-import {
-  dialogueSequence,
-  jaccard,
-  wordShingles,
-} from "../src/lib/subtitles/autosync/consensus.ts";
 
 test("Arabic matching folds marks, letters, digits, punctuation, and direction controls", () => {
   const dirty = "\u061Cإِعْلَانـ، سَنَة ٢٠٢٤ و کِتاب ۱۲۳؟";
@@ -29,33 +23,6 @@ test("matching normalization never mutates display text", () => {
   const before = display.slice();
   assert.equal(normalizeArabicForMatch(display), "السلام عليكم");
   assert.equal(display, before);
-});
-
-test("production ASR and consensus matching use Arabic comparison normalization", () => {
-  const cues: Array<[number, number]> = [
-    [10, 12],
-    [20, 22],
-    [30, 32],
-  ];
-  const subtitleText = ["إِنَّ هَذَا إعلان ٢٠٢٤", "وَهٰذِهِ حِكايَة كَبيرة", "سَنَعودُ إِلَى البَيْت"];
-  const phrases = [
-    { start: 12, end: 14, text: "ان هذا اعلان 2024" },
-    { start: 22, end: 24, text: "وهذه حكاية كبيرة" },
-    { start: 32, end: 34, text: "سنعود الي البيت" },
-  ];
-  const estimate = alignSubToAsr(cues, subtitleText, phrases, "ar");
-  assert.ok(estimate);
-  assert.ok(Math.abs(estimate.offsetSec - 2) < 0.01);
-
-  const decorated = dialogueSequence(
-    subtitleText.map((text, index) => ({ start: index * 2, end: index * 2 + 1, text })),
-    "ar",
-  );
-  const plain = dialogueSequence(
-    phrases.map((phrase) => ({ start: phrase.start, end: phrase.end, text: phrase.text })),
-    "ar",
-  );
-  assert.equal(jaccard(wordShingles(decorated.lines), wordShingles(plain.lines)), 1);
 });
 
 test("healthy Arabic cues produce explicit quality diagnostics", () => {

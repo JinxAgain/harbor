@@ -35,7 +35,6 @@ function callback(name: string, scope: Record<string, unknown>) {
 
 test("manual timing cancels background work without reverting the chosen delay", () => {
   let disposed = 0;
-  let stopped = 0;
   const manualTimingMediaRef = { current: null as string | null };
   const statusScopeRef = { current: {} as unknown };
   const scope = {
@@ -44,13 +43,11 @@ test("manual timing cancels background work without reverting the chosen delay",
     srcRef: { current: "movie-A" },
     autoSyncMediaKey: (src: string) => src,
     activeDisposeRef: { current: () => disposed++ },
-    stopDrift: () => stopped++,
-    setOffer() {},
+    setErrorMessage() {},
     setStatus() {},
   };
   callback("suspendForManualTiming", scope)();
   assert.equal(disposed, 1);
-  assert.equal(stopped, 1);
   assert.equal(manualTimingMediaRef.current, "movie-A");
   assert.equal(statusScopeRef.current, null);
   const isCurrent = callback("isCurrentAutoSyncScope", {

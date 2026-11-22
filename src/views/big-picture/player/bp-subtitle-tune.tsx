@@ -41,10 +41,7 @@ export function BpSubtitleSync({
             else autoSync.run();
           }}
         />
-        {autoSync && autoSync.offer !== null && (
-          <Chip label={t("Use it")} onPress={() => autoSync.applyOffer()} />
-        )}
-        {autoSync && autoSync.status === "synced" && (
+        {autoSync && autoSync.canRevert && (
           <Chip label={t("Revert")} onPress={() => autoSync.revert()} />
         )}
       </Row>

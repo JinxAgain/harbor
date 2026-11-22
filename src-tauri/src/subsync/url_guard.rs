@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::path::PathBuf;
 
 const HOP_BY_HOP: &[&str] = &[
     "connection",
@@ -16,101 +17,156 @@ const HOP_BY_HOP: &[&str] = &[
     "content-length",
 ];
 
-fn is_abs_path(url: &str) -> bool {
-    let b = url.as_bytes();
-    (b.len() > 2 && b[1] == b':' && (b[2] == b'/' || b[2] == b'\\')) || url.starts_with('/')
+fn is_abs_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    (bytes.len() > 2 && bytes[1] == b':' && (bytes[2] == b'/' || bytes[2] == b'\\'))
+        || value.starts_with('/')
+        || value.starts_with("\\\\")
 }
 
-fn host_of(after_scheme: &str) -> String {
-    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
-    let host_port = authority.rsplit('@').next().unwrap_or(authority);
-    if let Some(rest) = host_port.strip_prefix('[') {
-        return rest.split(']').next().unwrap_or("").to_string();
+/// Resolves a local filesystem path from either a `file://` URL or an absolute path.
+pub(crate) fn local_file_path(source: &str) -> Option<PathBuf> {
+    let trimmed = source.trim();
+    if trimmed.to_ascii_lowercase().starts_with("file://") {
+        if let Ok(parsed) = url::Url::parse(trimmed) {
+            if let Ok(path) = parsed.to_file_path() {
+                return Some(path);
+            }
+        }
+        return None;
     }
-    host_port.split(':').next().unwrap_or("").to_string()
+    if is_abs_path(trimmed) {
+        return Some(PathBuf::from(trimmed));
+    }
+    None
 }
 
-fn check_v4(ip: Ipv4Addr, is_stream: bool) -> Result<(), String> {
+fn is_disallowed_ipv4(ip: Ipv4Addr, allow_lan_and_loopback: bool) -> Result<(), String> {
+    if ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() {
+        return Err("internal-ip-blocked".into());
+    }
     if ip.is_loopback() {
-        return if is_stream {
+        return if allow_lan_and_loopback {
             Ok(())
         } else {
             Err("loopback-blocked".into())
         };
     }
-    let o = ip.octets();
-    let shared = o[0] == 100 && (o[1] & 0xc0) == 0x40;
-    if ip.is_private() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() || shared {
-        return Err("internal-ip-blocked".into());
+    let octets = ip.octets();
+    let shared_cgnat = octets[0] == 100 && (octets[1] & 0xc0) == 0x40;
+    if ip.is_private() || shared_cgnat {
+        return if allow_lan_and_loopback {
+            Ok(())
+        } else {
+            Err("internal-ip-blocked".into())
+        };
     }
     Ok(())
 }
 
-pub fn validate_media_url(url: &str, allow_local: bool) -> Result<(), String> {
-    let trimmed = url.trim();
-    let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("file://") || is_abs_path(trimmed) {
-        return if allow_local {
+fn is_disallowed_ipv6(ip: Ipv6Addr, allow_lan_and_loopback: bool) -> Result<(), String> {
+    if ip.is_unspecified() {
+        return Err("internal-ip-blocked".into());
+    }
+    let seg = ip.segments();
+    // fe80::/10 link-local is always blocked (cloud/host metadata surface).
+    if (seg[0] & 0xffc0) == 0xfe80 {
+        return Err("internal-ip-blocked".into());
+    }
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return is_disallowed_ipv4(v4, allow_lan_and_loopback);
+    }
+    if ip.is_loopback() {
+        return if allow_lan_and_loopback {
             Ok(())
         } else {
-            Err("local-source-not-allowed".into())
+            Err("loopback-blocked".into())
         };
     }
-    let rest = lower
-        .strip_prefix("http://")
-        .or_else(|| lower.strip_prefix("https://"))
-        .ok_or("scheme-not-allowed")?;
-    let host = host_of(rest);
-    if host.is_empty() {
-        return Err("no-host".into());
+    // fc00::/7 unique local addresses.
+    if (seg[0] & 0xfe00) == 0xfc00 {
+        return if allow_lan_and_loopback {
+            Ok(())
+        } else {
+            Err("internal-ip-blocked".into())
+        };
     }
-    let is_stream = trimmed.contains("/stream/");
-    if let Ok(v4) = host.parse::<Ipv4Addr>() {
-        return check_v4(v4, is_stream);
+    Ok(())
+}
+
+fn check_host(parsed: &url::Url, allow_lan_and_loopback: bool) -> Result<(), String> {
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "no-host".to_string())?;
+    let trimmed = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = trimmed.parse::<IpAddr>() {
+        return match ip {
+            IpAddr::V4(v4) => is_disallowed_ipv4(v4, allow_lan_and_loopback),
+            IpAddr::V6(v6) => is_disallowed_ipv6(v6, allow_lan_and_loopback),
+        };
     }
-    if let Ok(v6) = host.parse::<Ipv6Addr>() {
-        if v6.is_loopback() {
-            return if is_stream {
-                Ok(())
-            } else {
-                Err("loopback-blocked".into())
-            };
-        }
-        if v6.is_unspecified() {
-            return Err("internal-ip-blocked".into());
-        }
-        let seg = v6.segments();
-        if (seg[0] & 0xffc0) == 0xfe80 || (seg[0] & 0xfe00) == 0xfc00 {
-            return Err("internal-ip-blocked".into());
-        }
-        let mapped = seg[0] == 0
-            && seg[1] == 0
-            && seg[2] == 0
-            && seg[3] == 0
-            && seg[4] == 0
-            && seg[5] == 0xffff;
-        if mapped {
-            let v4 = Ipv4Addr::new(
-                (seg[6] >> 8) as u8,
-                (seg[6] & 0xff) as u8,
-                (seg[7] >> 8) as u8,
-                (seg[7] & 0xff) as u8,
-            );
-            return check_v4(v4, is_stream);
-        }
-        return Ok(());
+    let lower = trimmed.to_ascii_lowercase();
+    if lower == "metadata.google.internal" || lower == "169.254.169.254" {
+        return Err("internal-ip-blocked".into());
     }
-    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") {
+    if !allow_lan_and_loopback
+        && (lower == "localhost"
+            || lower.ends_with(".localhost")
+            || lower.ends_with(".local")
+            || lower.ends_with(".internal"))
+    {
         return Err("local-hostname-blocked".into());
     }
     Ok(())
+}
+
+/// Validates a currently-playing media source for reading container subtitle indexes.
+/// Supports local files, loopback torrent/proxy streams, LAN media servers, and HTTPS/HTTP streams
+/// while still blocking cloud metadata and link-local addresses.
+pub(crate) fn validate_playback_media_url(source: &str) -> Result<(), String> {
+    let trimmed = source.trim();
+    if trimmed.is_empty() {
+        return Err("empty-media-url".into());
+    }
+    if local_file_path(trimmed).is_some() {
+        return Ok(());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("file://") {
+        return Err("invalid-local-path".into());
+    }
+    let parsed = url::Url::parse(trimmed).map_err(|_| "invalid-url".to_string())?;
+    match parsed.scheme() {
+        "http" | "https" => check_host(&parsed, true),
+        _ => Err("scheme-not-allowed".into()),
+    }
+}
+
+/// Validates an external subtitle download URL. Blocks private/loopback networks unless
+/// `allow_local_trusted` is explicitly enabled for a user-installed local addon.
+pub(crate) fn validate_subtitle_candidate_url(
+    url_str: &str,
+    allow_local_trusted: bool,
+) -> Result<url::Url, String> {
+    let trimmed = url_str.trim();
+    if trimmed.is_empty() {
+        return Err("empty-subtitle-url".into());
+    }
+    let parsed = url::Url::parse(trimmed).map_err(|_| "invalid-url".to_string())?;
+    match parsed.scheme() {
+        "http" | "https" => {
+            check_host(&parsed, allow_local_trusted)?;
+            Ok(parsed)
+        }
+        _ => Err("scheme-not-allowed".into()),
+    }
 }
 
 fn has_ctl(s: &str) -> bool {
     s.chars().any(|c| c.is_control())
 }
 
-pub fn safe_header_blob(headers: &HashMap<String, String>) -> String {
+pub(crate) fn safe_header_blob(headers: &HashMap<String, String>) -> String {
     let mut blob = String::new();
     for (k, v) in headers {
         let lk = k.to_ascii_lowercase();
@@ -122,22 +178,32 @@ pub fn safe_header_blob(headers: &HashMap<String, String>) -> String {
     blob
 }
 
-pub fn user_agent(headers: &HashMap<String, String>) -> Option<String> {
-    headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("user-agent"))
-        .map(|(_, v)| v.clone())
+pub(crate) fn safe_reqwest_headers(
+    headers: &HashMap<String, String>,
+    skip_range_and_encoding: bool,
+) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (k, v) in headers {
+        let lk = k.to_ascii_lowercase();
+        if HOP_BY_HOP.contains(&lk.as_str()) || has_ctl(k) || has_ctl(v) {
+            continue;
+        }
+        if lk == "x-harbor-subtitle-credential" || lk == "x-harbor-subtitle-public-network" {
+            continue;
+        }
+        if skip_range_and_encoding && (lk == "range" || lk == "accept-encoding") {
+            continue;
+        }
+        out.push((k.clone(), v.clone()));
+    }
+    out
 }
 
-pub fn safe_map_spec(spec: Option<&str>) -> String {
-    if let Some(s) = spec {
-        if let Some(rest) = s.strip_prefix("0:a:") {
-            if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
-                return s.to_string();
-            }
-        }
-    }
-    "0:a:0".to_string()
+pub(crate) fn user_agent(headers: &HashMap<String, String>) -> Option<String> {
+    headers
+        .iter()
+        .find(|(k, v)| k.eq_ignore_ascii_case("user-agent") && !has_ctl(v))
+        .map(|(_, v)| v.clone())
 }
 
 #[cfg(test)]
@@ -145,55 +211,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn blocks_metadata_private_linklocal_and_bare_loopback() {
-        assert!(validate_media_url("http://169.254.169.254/latest/meta-data/", true).is_err());
-        assert!(validate_media_url("http://10.0.0.5/x.mkv", true).is_err());
-        assert!(validate_media_url("http://192.168.1.10/x.mkv", true).is_err());
-        assert!(validate_media_url("http://172.16.4.4/x.mkv", true).is_err());
-        assert!(validate_media_url("http://100.100.0.1/x.mkv", true).is_err());
-        assert!(validate_media_url("http://[fe80::1]/x", true).is_err());
-        assert!(validate_media_url("http://[::1]:9000/admin", true).is_err());
-        assert!(validate_media_url("http://127.0.0.1:9000/admin", true).is_err());
+    fn playback_allows_local_torrent_lan_and_remote_while_blocking_link_local() {
+        #[cfg(windows)]
+        assert!(validate_playback_media_url("file:///C:/movies/test.mkv").is_ok());
+        #[cfg(not(windows))]
+        assert!(validate_playback_media_url("file:///movies/test.mkv").is_ok());
+        assert!(validate_playback_media_url("C:\\movies\\test.mkv").is_ok());
+        assert!(validate_playback_media_url("/movies/test.mkv").is_ok());
+        assert!(validate_playback_media_url("http://127.0.0.1:11470/stream/abc/0").is_ok());
+        assert!(validate_playback_media_url("http://localhost:8096/Items/1/Download").is_ok());
+        assert!(validate_playback_media_url("http://192.168.1.50:32400/library/parts/1/file.mkv").is_ok());
+        assert!(validate_playback_media_url("https://cdn.example.com/a.mkv").is_ok());
+        assert!(validate_playback_media_url("http://169.254.169.254/latest/meta-data/").is_err());
+        assert!(validate_playback_media_url("http://[fe80::1]/x.mkv").is_err());
+        assert!(validate_playback_media_url("ftp://example.com/a.mkv").is_err());
     }
 
     #[test]
-    fn allows_public_stream_loopback_and_local_files() {
-        assert!(validate_media_url("https://cdn.example.com/a.mkv", true).is_ok());
-        assert!(validate_media_url("http://127.0.0.1:5312/stream/abc/0", true).is_ok());
-        assert!(validate_media_url("http://[::1]:5312/stream/abc/0", true).is_ok());
-        assert!(validate_media_url("file:///m/x.mkv", true).is_ok());
-        assert!(validate_media_url("/m/x.mkv", true).is_ok());
-        assert!(validate_media_url("file:///m/x.mkv", false).is_err());
+    fn subtitle_candidate_url_respects_local_trusted_flag() {
+        assert!(validate_subtitle_candidate_url("https://dl.opensubtitles.org/en.srt", false).is_ok());
+        assert!(validate_subtitle_candidate_url("http://192.168.1.20/sub.srt", false).is_err());
+        assert!(validate_subtitle_candidate_url("http://127.0.0.1:9000/sub.srt", false).is_err());
+        assert!(validate_subtitle_candidate_url("http://192.168.1.20/sub.srt", true).is_ok());
+        assert!(validate_subtitle_candidate_url("http://169.254.169.254/sub.srt", true).is_err());
     }
 
     #[test]
-    fn rejects_non_web_schemes_and_local_hostnames() {
-        assert!(validate_media_url("gopher://x/1", true).is_err());
-        assert!(validate_media_url("ftp://x/1", true).is_err());
-        assert!(validate_media_url("http://localhost:8080/x", true).is_err());
-        assert!(validate_media_url("http://printer.local/x", true).is_err());
-    }
-
-    #[test]
-    fn header_blob_strips_injection_hop_by_hop_and_ua() {
+    fn header_blob_and_ua_strip_crlf_and_hop_by_hop() {
         let mut h = HashMap::new();
         h.insert("Referer".into(), "https://ok".into());
         h.insert("X-Bad".into(), "a\r\nHost: evil".into());
         h.insert("Connection".into(), "keep-alive".into());
-        h.insert("User-Agent".into(), "UA".into());
+        h.insert("User-Agent".into(), "UA\r\nX-Injected: 1".into());
         let blob = safe_header_blob(&h).to_lowercase();
         assert!(blob.contains("referer: https://ok"));
         assert!(!blob.contains("evil"));
         assert!(!blob.contains("connection"));
-        assert!(!blob.contains("user-agent"));
-    }
-
-    #[test]
-    fn map_spec_only_accepts_audio_index() {
-        assert_eq!(safe_map_spec(Some("0:a:2")), "0:a:2");
-        assert_eq!(safe_map_spec(Some("0:a:")), "0:a:0");
-        assert_eq!(safe_map_spec(Some("0:v:0")), "0:a:0");
-        assert_eq!(safe_map_spec(Some("evil; rm -rf /")), "0:a:0");
-        assert_eq!(safe_map_spec(None), "0:a:0");
+        assert!(user_agent(&h).is_none());
     }
 }

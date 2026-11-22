@@ -92,55 +92,31 @@ test("bounded preflight classifies aligned, fixed-offset, drifting, and differen
   );
 });
 
-test("default preflight decodes audio once for a candidate batch", async () => {
-  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-  const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
-  Object.defineProperty(globalThis, "window", {
-    configurable: true,
-    value: {
-      __TAURI_INTERNALS__: {
-        invoke: async (command: string, args: Record<string, unknown>) => {
-          calls.push({ command, args });
-          return [
-            {
-              id: "0",
-              invalid: false,
-              identity: { ncc: 0.9, coverage: 0.85, z: 8 },
-              best: { ncc: 0.91, coverage: 0.86, z: 8 },
-              offsetSec: 0,
-              ratio: 1,
-              windowIds: ["validation-middle-a", "validation-middle-b"],
-              provenance: "direct-middle-held-out-v2",
-            },
-            {
-              id: "1",
-              invalid: false,
-              identity: { ncc: 0.2, coverage: 0.3, z: 2 },
-              best: { ncc: 0.8, coverage: 0.75, z: 7 },
-              offsetSec: 4,
-              ratio: 1,
-              windowIds: ["validation-middle-a", "validation-middle-b"],
-              provenance: "direct-middle-held-out-v2",
-            },
-          ];
-        },
-      },
-    },
+test("default preflight validates cue timelines locally without invoking FFmpeg IPC", async () => {
+  const valid = prepared("valid");
+  const shortDuration = await probePreparedSubtitleBatch([valid], {
+    mediaUrl: "file:///movie.mkv",
+    durationSec: 30,
   });
-  try {
-    const measurements = await probePreparedSubtitleBatch(
-      [prepared("aligned"), prepared("offset")],
-      { mediaUrl: "file:///movie.mkv", durationSec: 120 },
-    );
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].command, "subsync_preflight_candidates");
-    assert.equal((calls[0].args.candidates as unknown[]).length, 2);
-    assert.equal(classifyIdentityTiming(measurements[0]), "aligned");
-    assert.equal(classifyIdentityTiming(measurements[1]), "fixed-offset");
-  } finally {
-    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
-    else Reflect.deleteProperty(globalThis, "window");
-  }
+  assert.deepEqual(shortDuration, [{ status: "unknown", reason: "insufficient-data" }]);
+
+  const invalid = {
+    ...prepared("invalid"),
+    cues: [
+      { start: 10, end: 11, text: "out of order 1" },
+      { start: 5, end: 6, text: "out of order 2" },
+      { start: 12, end: 13, text: "three" },
+      { start: 14, end: 15, text: "four" },
+    ],
+  };
+  const measurements = await probePreparedSubtitleBatch([valid, invalid], {
+    mediaUrl: "file:///movie.mkv",
+    durationSec: 120,
+  });
+  assert.deepEqual(measurements, [
+    { status: "unknown", reason: "not-supported" },
+    { status: "unknown", reason: "insufficient-data" },
+  ]);
 });
 
 test("a naturally aligned prepared subtitle is preferred over a higher-ranked different cut", async () => {

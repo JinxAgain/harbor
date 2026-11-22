@@ -24,9 +24,7 @@ export function MenuHeader(p: Props) {
   const autoSync = useAutoSyncHandle();
 
   const autoSyncOn =
-    autoSync?.status === "analyzing" ||
-    autoSync?.status === "synced" ||
-    autoSync?.status === "best-effort";
+    autoSync?.status === "analyzing" || autoSync?.status === "synced";
   const canAutoSync = p.selectedTrack?.external === true || autoSyncOn;
 
   return (

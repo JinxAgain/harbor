@@ -15,15 +15,23 @@ export type SubtitleSelectionSettlement =
 export class SubtitleSelectionCoordinator {
   private selectionRevision = 0;
   private manualMediaRevision: number | null = null;
+  private lastOrigin: SubtitleSelectionOrigin = "automatic";
+  private lastOriginMediaRevision: number | null = null;
 
   canAutoSelect(mediaRevision: number): boolean {
     return this.manualMediaRevision !== mediaRevision;
   }
 
   claim(mediaRevision: number, origin: SubtitleSelectionOrigin): boolean {
-    if (origin !== "manual") return this.canAutoSelect(mediaRevision);
-    this.manualMediaRevision = mediaRevision;
+    if (origin !== "manual" && !this.canAutoSelect(mediaRevision)) return false;
+    if (origin === "manual") this.manualMediaRevision = mediaRevision;
+    this.lastOrigin = origin;
+    this.lastOriginMediaRevision = mediaRevision;
     return true;
+  }
+
+  currentOrigin(mediaRevision: number): SubtitleSelectionOrigin {
+    return this.lastOriginMediaRevision === mediaRevision ? this.lastOrigin : "automatic";
   }
 
   begin(

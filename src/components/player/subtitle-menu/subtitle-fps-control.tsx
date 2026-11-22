@@ -122,10 +122,7 @@ export function SubtitleFpsControl({
   if (engine !== "mpv" || !supported) return null;
 
   const autoSyncActive =
-    autoSync?.status === "analyzing" ||
-    autoSync?.status === "synced" ||
-    autoSync?.status === "best-effort" ||
-    autoSync?.status === "offer";
+    autoSync?.status === "analyzing" || autoSync?.status === "synced";
 
   return (
     <div ref={wrapRef} className="relative">

@@ -126,6 +126,7 @@ type ExternalSubtitleMetadata = {
   matchConfidence?: SubtitleLoadMetadata["matchConfidence"];
   matchReasons?: string[];
   subId?: string;
+  autoSynced?: boolean;
 };
 
 export type MpvRect = PlayerEmbedRect;
@@ -806,6 +807,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
             matchConfidence: extMeta?.matchConfidence,
             matchReasons: extMeta?.matchReasons,
             subId: extMeta?.subId,
+            autoSynced: extMeta?.autoSynced,
           };
           if (type === "audio") audio.push(info);
           else if (type === "sub") subs.push(info);
@@ -1161,6 +1163,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       invoke("mpv_set_property", { name: "aid", value: Number(id) || id }).catch(() => {});
     },
     canAutoSelectSubtitle: () => mainSubtitleSelection.canAutoSelect(mediaRevision),
+    getSubtitleSelectionOrigin: () => mainSubtitleSelection.currentOrigin(mediaRevision),
     setSubtitleTrack(id, origin = "manual") {
       if (!mainSubtitleSelection.claim(mediaRevision, origin)) return;
       const requestMediaRevision = mediaRevision;
@@ -1310,14 +1313,17 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       // than stacking a duplicate. mpv's sub-remove only touches external subtitle files,
       // which is the only case that can match here.
       const sourceUrl = metadata?.originalUrl ?? url;
-      const prior = transferredPrepared
-        ? undefined
-        : snap.subtitleTracks.find(
+      const shouldReplace = !transferredPrepared || metadata?.replaceExisting === true;
+      const prior = shouldReplace
+        ? snap.subtitleTracks.find(
             (track) =>
               track.kind === "subtitle" &&
               track.external === true &&
-              (track.originalUrl === sourceUrl || track.url === sourceUrl),
-          );
+              (metadata?.replaceTrackId
+                ? track.id === metadata.replaceTrackId
+                : track.originalUrl === sourceUrl || track.url === sourceUrl),
+          )
+        : undefined;
       if (prior) {
         try {
           await invoke("mpv_sub_remove", { id: prior.id });
@@ -1420,6 +1426,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
           matchConfidence: metadata?.matchConfidence,
           matchReasons: metadata?.matchReasons,
           subId: metadata?.subId,
+          autoSynced: metadata?.autoSynced,
         };
         urlByExternalFilename.set(mpvUrl, externalMetadata);
         registeredMetadata = externalMetadata;

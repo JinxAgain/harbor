@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import type { PreparedSubtitle, PreparedCandidateResult } from "./prepare";
 
 type TimingQuality = { ncc: number; coverage: number; z: number };
@@ -62,17 +61,6 @@ export type CandidatePreflightProbe = (
   context: CandidatePreflightContext,
 ) => Promise<TimingMeasurement>;
 
-type NativePreflightScore = {
-  id: string;
-  invalid: boolean;
-  identity?: TimingQuality | null;
-  best?: TimingQuality | null;
-  offsetSec?: number | null;
-  ratio?: number | null;
-  windowIds?: string[];
-  provenance?: string;
-};
-
 const ALIGNED_NCC = 0.75;
 const ALIGNED_COVERAGE = 0.65;
 const ALIGNED_Z = 4;
@@ -83,41 +71,6 @@ const MIN_FIT_GAIN = 0.08;
 const OFFSET_EPSILON_SEC = 0.25;
 const RATIO_EPSILON = 0.0015;
 const MAX_PREFLIGHT_RATIO_DEVIATION = 0.08;
-const PREFLIGHT_HELD_OUT_PROVENANCE = "direct-middle-held-out-v2";
-const PREFLIGHT_HELD_OUT_WINDOWS = ["validation-middle-a", "validation-middle-b"] as const;
-
-function unknownReason(
-  error: unknown,
-): Extract<TimingMeasurement, { status: "unknown" }>["reason"] {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  if (/timeout|deadline|abort/i.test(message)) return "timeout";
-  if (/ffmpeg/i.test(message)) return "ffmpeg-unavailable";
-  if (/audio/i.test(message)) return "audio-unavailable";
-  if (/unsupported|not supported/i.test(message)) return "not-supported";
-  if (/insufficient|too few|duration|cues/i.test(message)) return "insufficient-data";
-  return "provider-error";
-}
-
-function qualityValid(value: TimingQuality | null | undefined): value is TimingQuality {
-  return (
-    !!value &&
-    Number.isFinite(value.ncc) &&
-    Number.isFinite(value.coverage) &&
-    Number.isFinite(value.z) &&
-    value.ncc >= -1 &&
-    value.ncc <= 1 &&
-    value.coverage >= 0 &&
-    value.coverage <= 1
-  );
-}
-
-function heldOutEvidenceValid(score: NativePreflightScore): boolean {
-  return (
-    score.provenance === PREFLIGHT_HELD_OUT_PROVENANCE &&
-    score.windowIds?.length === PREFLIGHT_HELD_OUT_WINDOWS.length &&
-    score.windowIds.every((id, index) => id === PREFLIGHT_HELD_OUT_WINDOWS[index])
-  );
-}
 
 function cueTimelineIssue(
   prepared: PreparedSubtitle,
@@ -154,59 +107,12 @@ export async function probePreparedSubtitleBatch(
 ): Promise<TimingMeasurement[]> {
   if (prepared.length === 0) return [];
   if (context.durationSec < 60) return unknownMeasurements(prepared.length, "insufficient-data");
-  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
-    return unknownMeasurements(prepared.length, "not-supported");
-  }
-
-  const timeoutMs = context.timeoutMs ?? 12_000;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    const measured = await Promise.race([
-      invoke<NativePreflightScore[] | null>("subsync_preflight_candidates", {
-        url: context.mediaUrl,
-        headers: context.headers ?? null,
-        durationSec: context.durationSec,
-        candidates: prepared.map((item, index) => ({
-          id: String(index),
-          cues: item.cues.map((cue) => [cue.start, cue.end]),
-        })),
-      }),
-      new Promise<"timeout">((resolve) => {
-        timer = setTimeout(() => resolve("timeout"), timeoutMs);
-      }),
-    ]);
-    if (measured === "timeout") return unknownMeasurements(prepared.length, "timeout");
-    if (!Array.isArray(measured)) {
-      return unknownMeasurements(prepared.length, "insufficient-data");
-    }
-    const byId = new Map(measured.map((score) => [score.id, score]));
-    return prepared.map((_item, index): TimingMeasurement => {
-      const score = byId.get(String(index));
-      if (
-        !score ||
-        score.invalid ||
-        !heldOutEvidenceValid(score) ||
-        !qualityValid(score.identity)
-      ) {
-        return { status: "unknown", reason: "insufficient-data" };
-      }
-      const bestTransform =
-        qualityValid(score.best) && Number.isFinite(score.offsetSec) && Number.isFinite(score.ratio)
-          ? { offsetSec: Number(score.offsetSec), ratio: Number(score.ratio) }
-          : undefined;
-      return {
-        status: "measured",
-        value: score.identity,
-        best: bestTransform && qualityValid(score.best) ? score.best : undefined,
-        bestTransform,
-        method: "bounded-audio-preflight",
-      };
-    });
-  } catch (error) {
-    return unknownMeasurements(prepared.length, unknownReason(error));
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  // Embedded-subtitle auto-sync performs container alignment after selection; avoid spawning
+  // FFmpeg audio extraction during candidate preflight.
+  return prepared.map((item) => ({
+    status: "unknown",
+    reason: cueTimelineIssue(item, context.durationSec) === "invalid" ? "insufficient-data" : "not-supported",
+  }));
 }
 
 export async function probePreparedSubtitleIdentity(

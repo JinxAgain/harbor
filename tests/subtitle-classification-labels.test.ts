@@ -76,7 +76,7 @@ test("desktop, pre-play, and television subtitle rows share the classification l
 
   assert.match(desktopSearch, /subtitleClassificationLabels\(result, t\)/u);
   assert.match(desktopVariant, /subtitleClassificationLabels\(\s*track,\s*tr,?\s*\)/u);
-  assert.match(desktopVariant, /tr\("Audio verified"\)/u);
+  assert.match(desktopVariant, /tr\("Auto synced"\)/u);
   assert.doesNotMatch(desktopSearch, />\s*(?:Foreign-only|MT)\s*</u);
 
   assert.match(prePlay, /subtitleClassificationLabels\(result, t, "compact"\)/u);

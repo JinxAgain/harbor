@@ -44,6 +44,19 @@ import { adoptLegacyPlaylists, readPlaylists } from "@/lib/iptv/playlists-store"
 import { sanitizeDisplaySelection } from "@/lib/monitors";
 import { clampGlassOpacity } from "@/lib/liquid-glass";
 
+function sanitizeAutoSyncMode(value: unknown): Settings["autoSyncMode"] {
+  return value === "quick" || value === "thorough" ? value : DEFAULT.autoSyncMode;
+}
+
+const VALID_AUTOSYNC_TOLERANCES = new Set([0, 100, 200, 300, 400, 500]);
+
+function sanitizeAutoSyncToleranceMs(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value) && VALID_AUTOSYNC_TOLERANCES.has(value)) {
+    return value;
+  }
+  return DEFAULT.autoSyncToleranceMs;
+}
+
 const HEX_RE = /^#[0-9a-f]{6}$/i;
 
 function sanitizePosterDockTransition(value: unknown): number {
@@ -347,6 +360,17 @@ export function parseStoredSettings(raw: string | null): Settings {
     delete parsed.scrapers;
     delete parsed.scrapersAcknowledged;
     delete parsed._scrapersV2;
+    for (const legacyKey of [
+      "autoSyncApplyStructural",
+      "autoSyncDrift",
+      "subtitleAutoSyncAsr",
+      "subtitleAutoSyncPivot",
+      "subtitleAutoSyncCrowd",
+      "communitySyncUrl",
+      "communitySyncOptOut",
+    ]) {
+      delete (parsed as Record<string, unknown>)[legacyKey];
+    }
     if (!parsed._liquidGlassOptIn) {
       parsed.liquidGlass = false;
       parsed.experimentalLiquidGlassEnabled = false;
@@ -475,6 +499,8 @@ export function parseStoredSettings(raw: string | null): Settings {
           : DEFAULT.subOffsetIndicatorEnabled,
       subOffsetIndicatorPosition: sanitizeSubtitleOffsetPosition(parsed.subOffsetIndicatorPosition),
       subOffsetIndicatorSize: sanitizeSubtitleOffsetSize(parsed.subOffsetIndicatorSize),
+      autoSyncMode: sanitizeAutoSyncMode(parsed.autoSyncMode),
+      autoSyncToleranceMs: sanitizeAutoSyncToleranceMs(parsed.autoSyncToleranceMs),
       subProvidersEnabled: {
         ...DEFAULT.subProvidersEnabled,
         ...parsed.subProvidersEnabled,

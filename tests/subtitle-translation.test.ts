@@ -6,7 +6,6 @@ import { prepareSubtitle, SubtitlePreparationError } from "../src/lib/subtitles/
 import { createSubtitleTranslationQueue, subtitleTranslationStatus, publishSubtitleTranslations } from "../src/lib/subtitles/translation-jobs.ts";
 import { fetchSubtitlesIntoPlayer } from "../src/lib/subtitles/fetch-into-player.ts";
 import { rankSubtitleCandidates } from "../src/lib/subtitles/candidate-ranking.ts";
-import { prepareConsensusCandidate } from "../src/lib/subtitles/autosync/consensus.ts";
 import { isGeneratedLangLabel, isPlausibleLang } from "../src/lib/subtitles/language.ts";
 import { subtitleLoadMetadataOf, subtitleTitleOf } from "../src/lib/subtitles/provider-label.ts";
 import { deferred, flushBridge, mpvBridgeHarness } from "./helpers/mpv-bridge-harness.ts";
@@ -153,7 +152,6 @@ test("the bridge refuses to start a translation from automatic or preload calls"
   h.bridge.destroy();
 });
 
-test("automatic ranking and timing consensus never download translation offers", async () => {
+test("automatic ranking never selects translation offers", () => {
   assert.deepEqual(rankSubtitleCandidates([candidate], []), []);
-  assert.equal(await prepareConsensusCandidate(candidate, 100, {} as never), null);
 });

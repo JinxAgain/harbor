@@ -91,6 +91,7 @@ export type SubFetchParams = {
 export type SubFetchResult = {
   added: number;
   found: number;
+  results: SubResult[];
   hints: StreamHints;
   selected: SubResult | null;
   /** Generated translation offers found in this search (e.g. "Make Hindi"). */
@@ -348,7 +349,7 @@ export async function fetchSubtitlesIntoPlayer(
 
   await progressiveQueue;
 
-  if (!p.isActive()) return { added: 0, found: results.length, hints, selected: null, generated };
+  if (!p.isActive()) return { added: 0, found: results.length, results, hints, selected: null, generated };
 
   if (!deep) {
     const rankedAuto = rankSubtitleCandidates(results, p.langs, hints).filter(
@@ -504,5 +505,5 @@ export async function fetchSubtitlesIntoPlayer(
     ? spreadBySource(eagerPool, consumed, DEEP_EXTRA_TRACKS)
     : spreadBySourcePerLanguage(eagerPool, consumed, EXTRA_TRACKS_PER_LANGUAGE);
   await addCandidates(extras);
-  return { added, found: results.length, hints, selected, generated };
+  return { added, found: results.length, results, hints, selected, generated };
 }

@@ -12,7 +12,6 @@ import {
   subtitleAutoloadSelectionLeaseValid,
 } from "../src/lib/subtitles/autoload-run.ts";
 import { PreparedSubtitleSeedBatch } from "../src/lib/subtitles/seed-batch.ts";
-import { automaticAutoSyncMayStart } from "../src/lib/subtitles/autosync/preflight-gate.ts";
 import {
   pickDesiredSubtitleTrack,
   subtitleAutoSelectionSignature,
@@ -265,70 +264,12 @@ test("autoloaded external candidates cannot override the embedded preference", (
   assert.match(autoloadSource, /!keepEmbedded\s*&&/);
 });
 
-test("delayed candidate preflight blocks structural autosync and an aligned result keeps it blocked", () => {
-  const inferior = {
-    external: true,
-    lang: "ar",
-    prepared: true,
-    timingStatus: "fixed-offset" as const,
-  };
-  const aligned = {
-    external: true,
-    lang: "ar",
-    prepared: true,
-    timingStatus: "aligned" as const,
-  };
-  const alignedEnglish = {
-    external: true,
-    lang: "en",
-    prepared: true,
-    timingStatus: "aligned" as const,
-  };
-
-  assert.equal(
-    automaticAutoSyncMayStart({
-      preflightSettled: false,
-      tracks: [inferior],
-      selectedLanguage: "ar",
-    }),
-    false,
-  );
-  assert.equal(
-    automaticAutoSyncMayStart({
-      preflightSettled: false,
-      tracks: [inferior, aligned],
-      selectedLanguage: "ar",
-    }),
-    false,
-  );
-  assert.equal(
-    automaticAutoSyncMayStart({
-      preflightSettled: true,
-      tracks: [inferior, aligned],
-      selectedLanguage: "ar",
-    }),
-    false,
-  );
-  assert.equal(
-    automaticAutoSyncMayStart({
-      preflightSettled: true,
-      tracks: [inferior],
-      selectedLanguage: "ar",
-    }),
-    true,
-  );
-  assert.equal(
-    automaticAutoSyncMayStart({
-      preflightSettled: true,
-      tracks: [inferior, alignedEnglish],
-      selectedLanguage: "ar",
-    }),
-    true,
-  );
-
+test("embedded auto-sync waits for subtitle preflight and keys runs by track identity", () => {
   assert.match(autoloadSource, /subtitlePreflightSettled:/);
   assert.match(playerMediaSource, /subtitlePreflightSettled,/);
-  assert.match(autoSyncSource, /automaticAutoSyncMayStart\(\{/);
+  assert.match(autoSyncSource, /subtitlePreflightSettled &&/);
+  assert.match(autoSyncSource, /trackAutoSyncKey\(/);
+  assert.match(autoSyncSource, /autoSyncRunKey\(mediaKey, selectedTrackKey\)/);
 });
 
 test("mpv autosync reuses retained prepared cues and paths", () => {

@@ -281,6 +281,7 @@ export function BpPlayerSubtitles(props: BpPlayerSubtitlesProps) {
                 const imported =
                   hasImportedSubTitle(track.title) || importedTitles.has(track.title ?? "");
                 const badges = tagsOf(track, t);
+                if (track.autoSynced) badges.unshift(t("Auto synced"));
                 if (imported) badges.unshift(t("Yours"));
                 if (best?.track.id === track.id) badges.unshift(t("Best match"));
                 const on = track.id === selectedId;

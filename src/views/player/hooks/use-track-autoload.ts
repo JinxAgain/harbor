@@ -9,7 +9,7 @@ import { publishSubtitleContext } from "@/components/player/subtitle-menu/subtit
 import { readPlayerPrefs, type PerShowPrefs } from "@/lib/player-prefs";
 import { tmdbImdbId } from "@/lib/providers/tmdb";
 import type { Addon } from "@/lib/addons";
-import type { GeneratedSubtitleGroup } from "@/lib/subtitles/types";
+import type { GeneratedSubtitleGroup, SubResult } from "@/lib/subtitles/types";
 import { gatherSubtitleAddons } from "@/lib/subtitles/addon-source";
 import { buildStreamIds } from "@/lib/streams/stream-ids";
 import type { PlayerSrc } from "@/lib/view";
@@ -135,6 +135,7 @@ export function useTrackAutoload(params: {
   const [refreshReady, setRefreshReady] = useState(false);
   const [lastAdded, setLastAdded] = useState<number | null>(null);
   const [generated, setGenerated] = useState<GeneratedSubtitleGroup[]>([]);
+  const [availableSubtitles, setAvailableSubtitles] = useState<SubResult[]>([]);
   const lastAddedTimer = useRef<number | null>(null);
   const clearLastAddedTimer = () => {
     if (lastAddedTimer.current != null) {
@@ -149,6 +150,7 @@ export function useTrackAutoload(params: {
     setRefreshing(false);
     setInitialSearches(0);
     setGenerated([]);
+    setAvailableSubtitles([]);
     setInitialPreflight({ mediaUrl: src.url, settled: false });
     clearLastAddedTimer();
   }, [src.url]);
@@ -389,7 +391,10 @@ export function useTrackAutoload(params: {
           isActive,
         });
         console.info(`[subs/refresh] found ${r.found}, added ${r.added} new tracks`);
-        setGenerated(r.generated);
+        if (isActive()) {
+          setGenerated(r.generated);
+          setAvailableSubtitles((prev) => mergeSubResults(prev, r.results));
+        }
         return r.added;
       };
       setRefreshReady(true);
@@ -402,7 +407,10 @@ export function useTrackAutoload(params: {
           isActive,
         });
         if (isActive() && res.selected) autoSubSourceRef.current = res.selected.url;
-        if (isActive()) setGenerated(res.generated);
+        if (isActive()) {
+          setGenerated(res.generated);
+          setAvailableSubtitles((prev) => mergeSubResults(prev, res.results));
+        }
         console.info(`[subs/autoload] unified stage found ${res.found}, added ${res.added} tracks`);
       } finally {
         if (autoSubLoadKeyRef.current === key) {
@@ -445,6 +453,9 @@ export function useTrackAutoload(params: {
               });
               if (isActive() && result.selected) {
                 autoSubSourceRef.current = result.selected.url;
+              }
+              if (isActive()) {
+                setAvailableSubtitles((prev) => mergeSubResults(prev, result.results));
               }
               console.info(
                 `[subs/autoload] moviehash stage found ${result.found}, added ${result.added} tracks`,
@@ -891,7 +902,21 @@ export function useTrackAutoload(params: {
     resolutionSettled,
     subtitleSearchActive: refreshing || initialSearches > 0,
     subtitlePreflightSettled: initialPreflight.mediaUrl === src.url && initialPreflight.settled,
+    availableSubtitles,
   };
+}
+
+function mergeSubResults(prev: SubResult[], next: readonly SubResult[]): SubResult[] {
+  if (next.length === 0) return prev;
+  const seen = new Set(prev.map((r) => r.url));
+  let merged: SubResult[] | null = null;
+  for (const item of next) {
+    if (!item.url || seen.has(item.url)) continue;
+    seen.add(item.url);
+    merged ??= [...prev];
+    merged.push(item);
+  }
+  return merged ?? prev;
 }
 
 function blockWords(s: Settings): string[] {

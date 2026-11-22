@@ -3,10 +3,6 @@ import {
   configureSubSourceCache,
   type SourceSubCandidate,
 } from "@/lib/subtitles/autosync/sub-sources";
-import {
-  configureCache,
-  type OsSub,
-} from "@/lib/subtitles/autosync/opensubtitles";
 
 
 
@@ -141,7 +137,6 @@ export function initSubtitleCache(): void {
   configured = true;
   try {
     configureSubSourceCache(makeHooks<SourceSubCandidate[]>("src:"));
-    configureCache(makeHooks<OsSub[]>("os:"));
     dinfo("[sub-cache] persistent subtitle cache enabled");
   } catch (e) {
     dwarn("[sub-cache] init failed", e);

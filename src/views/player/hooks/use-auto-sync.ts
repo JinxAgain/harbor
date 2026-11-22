@@ -1,93 +1,77 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { PlayerBridge, PlayerSnapshot, TrackInfo } from "@/lib/player/bridge";
-import type { PlayerSrc } from "@/lib/view";
-import type { Settings } from "@/lib/settings";
-import { dwarn } from "@/lib/debug";
-import { fetchAndParse, type SubCue } from "@/lib/subtitles/parser";
-import { toSrt, toVtt } from "@/lib/subtitles/serialize";
-import {
-  runAutoSync,
-  type PipelineContext,
-  type PipelineOutcome,
-} from "@/lib/subtitles/autosync/pipeline";
-import { buildTierPorts, defaultOsConfig } from "@/lib/subtitles/autosync/context";
-import {
-  preferAutoSyncOutcome,
-  runExperimentalPivotAutoSync,
-} from "@/lib/subtitles/autosync/pivot-runtime";
-import {
-  crowdConfigFromSettings,
-  reportCrowdFeedback,
-  reportVerifiedSync,
-} from "@/lib/subtitles/autosync/crowd-db";
-import {
-  classifyTorrentSource,
-  scheduleProgressiveTorrentSync,
-  sourceKindFor,
-  type ProgressiveHandle,
-} from "@/lib/subtitles/autosync/torrent-sync";
-import { resolveSwapCues, type OsConfig } from "@/lib/subtitles/autosync/opensubtitles";
-import {
-  isDelayOnlyTransform,
-  type SubtitleFormat,
-  type SyncTransform,
-} from "@/lib/subtitles/autosync/fp-gate";
-import { transformCues } from "@/lib/subtitles/autosync/html5-sync";
-import {
-  DriftMonitor,
-  makeTauriDriftPorts,
-  type DriftDeps,
-} from "@/lib/subtitles/autosync/drift-monitor";
 import { resetMpvSubtitleFpsForTransition } from "@/lib/player/mpv-properties";
 import {
   buildSubtitleTimingMediaKey,
   isAutoSyncScopeCurrent,
   runAfterSubtitleFpsReset,
 } from "@/lib/player/subtitle-fps";
-import { isAssTrack } from "@/lib/player/sub-format";
-import { automaticAutoSyncMayStart } from "@/lib/subtitles/autosync/preflight-gate";
-import { buildContext, isLoopback, outcomeScore, toDriftState } from "./use-auto-sync.helpers";
+import type { Settings } from "@/lib/settings";
+import { dwarn } from "@/lib/debug";
+import {
+  alignSubtitlesAgainstEmbedded,
+  cancelSubtitleAutoSync,
+  collectSameLanguageCandidates,
+  prefetchEmbeddedSubtitles,
+  resolveAutoSyncScope,
+  trackAutoSyncKey,
+  type AutoSyncTrigger,
+} from "@/lib/subtitles/autosync/embedded-sync";
+import { parseSubtitle } from "@/lib/subtitles/parser";
+import {
+  registerPreparedSubtitle,
+  takePreparedSubtitle,
+} from "@/lib/subtitles/prepared-registry";
+import { toSrt } from "@/lib/subtitles/serialize";
+import type { SubResult } from "@/lib/subtitles/types";
+import type { PlayerSrc } from "@/lib/view";
+import {
+  buildRestoreMetadata,
+  buildSelectedCandidateInput,
+  canPrefetchEmbeddedMedia,
+  isAutoSyncEligibleMedia,
+} from "./use-auto-sync.helpers";
 
 export type AutoSyncStatus =
   | "idle"
   | "analyzing"
   | "synced"
-  | "best-effort"
-  | "offer"
-  | "declined"
+  | "within-tolerance"
+  | "no-fit"
+  | "no-embedded"
   | "error";
 
 export type AutoSyncHandle = {
   status: AutoSyncStatus;
-  offer: PipelineOutcome | null;
-  applyOffer: () => void;
-  revert: () => void;
-  retry: () => void;
+  trigger: AutoSyncTrigger;
+  offsetMs: number | null;
+  scale: number | null;
+  withinTolerance: boolean;
+  canRevert: boolean;
+  errorMessage: string | null;
   run: () => void;
   stop: () => void;
-  feedback: (good: boolean) => void;
+  revert: () => void;
+  dismiss: () => void;
 };
 
-type SubFmt = SubtitleFormat;
-type WritableSubFmt = Extract<SubFmt, "srt" | "vtt">;
 type AutoSyncScope = { mediaKey: string; trackId: string };
 type AppliedState = {
-  transform: SyncTransform | null;
+  originalTrack: TrackInfo | null;
+  replacedSelected: boolean;
   originalTrackId: string | null;
+  originalTrackKey: string | null;
   subDelayBefore: number;
   scope: AutoSyncScope | null;
   changed: boolean;
 };
-type AutoSyncFlags = { autoSyncDrift?: boolean };
 
-const MIN_DURATION_SEC = 60;
-const MIN_CUES = 4;
-const OFFSET_EPS = 0.25;
-const DRIFT_TICK_MS = 4000;
+function isNativeTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
 
-function isSyncedTrack(t: { title?: string } | null | undefined): boolean {
-  return /^Synced \((?:SRT|VTT)\)/.test(t?.title ?? "");
+function isSyncedTrack(t: { autoSynced?: boolean } | null | undefined): boolean {
+  return t?.autoSynced === true;
 }
 
 function autoSyncMediaKey(src: PlayerSrc): string {
@@ -99,9 +83,24 @@ function autoSyncMediaKey(src: PlayerSrc): string {
   });
 }
 
-function autoSyncRunKey(mediaKey: string, trackId: string): string {
-  return JSON.stringify([mediaKey, trackId]);
+function autoSyncRunKey(mediaKey: string, trackKey: string): string {
+  return JSON.stringify([mediaKey, trackKey]);
 }
+
+function nextRunId(): string {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `autosync-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+const EMPTY_APPLIED: AppliedState = {
+  originalTrack: null,
+  replacedSelected: false,
+  originalTrackId: null,
+  originalTrackKey: null,
+  subDelayBefore: 0,
+  scope: null,
+  changed: false,
+};
 
 export function useAutoSync(params: {
   bridgeRef: RefObject<PlayerBridge | null>;
@@ -109,76 +108,68 @@ export function useAutoSync(params: {
   snap: PlayerSnapshot;
   engine: "html5" | "mpv";
   settings: Settings;
-  authKey: string | null;
   subtitlePreflightSettled: boolean;
+  availableSubtitles: readonly SubResult[];
 }): AutoSyncHandle & { suspendForManualTiming: () => void } {
-  const { bridgeRef, src, snap, engine, settings, authKey, subtitlePreflightSettled } = params;
-  const [status, setStatus] = useState<AutoSyncStatus>("idle");
-  const [offer, setOffer] = useState<PipelineOutcome | null>(null);
+  const {
+    bridgeRef,
+    src,
+    snap,
+    engine,
+    settings,
+    subtitlePreflightSettled,
+    availableSubtitles,
+  } = params;
 
-  const doneKeyRef = useRef<string | null>(null);
-  const firedRef = useRef<{ mediaKey: string; langs: Set<string> }>({
+  const [status, setStatus] = useState<AutoSyncStatus>("idle");
+  const [trigger, setTrigger] = useState<AutoSyncTrigger>("automatic");
+  const [offsetMs, setOffsetMs] = useState<number | null>(null);
+  const [scale, setScale] = useState<number | null>(null);
+  const [withinTolerance, setWithinTolerance] = useState(false);
+  const [canRevert, setCanRevert] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const prefetchedUrlRef = useRef<string | null>(null);
+  const attemptedRef = useRef<{ mediaKey: string; keys: Set<string> }>({
     mediaKey: "",
-    langs: new Set(),
+    keys: new Set(),
   });
-  const appliedRef = useRef<AppliedState>({
-    transform: null,
-    originalTrackId: null,
-    subDelayBefore: 0,
-    scope: null,
-    changed: false,
+  const revertedRef = useRef<{ mediaKey: string; keys: Set<string> }>({
+    mediaKey: "",
+    keys: new Set(),
   });
-  const driftRef = useRef<DriftMonitor | null>(null);
-  const driftTimerRef = useRef<number | null>(null);
-  const progressiveRef = useRef<ProgressiveHandle | null>(null);
-  const bestScoreRef = useRef(-1);
-  const retryRef = useRef<(() => void) | null>(null);
+  const appliedRef = useRef<AppliedState>({ ...EMPTY_APPLIED });
+  const activeRunIdRef = useRef<string | null>(null);
   const activeDisposeRef = useRef<(() => void) | null>(null);
-  const lastReportRef = useRef<{
-    ctx: PipelineContext;
-    transform: SyncTransform;
-    confidence: number;
-  } | null>(null);
   const statusScopeRef = useRef<AutoSyncScope | null>(null);
   const manualTimingMediaRef = useRef<string | null>(null);
+
   const liveSnapRef = useRef(snap);
   const srcRef = useRef(src);
+  const engineRef = useRef(engine);
   const settingsRef = useRef(settings);
+  const availableSubsRef = useRef(availableSubtitles);
+
   liveSnapRef.current = snap;
   srcRef.current = src;
+  engineRef.current = engine;
   settingsRef.current = settings;
-
-  const flagsRef = useRef<AutoSyncFlags>({});
-  flagsRef.current = settings as AutoSyncFlags;
+  availableSubsRef.current = availableSubtitles;
 
   const selected = snap.subtitleTracks.find((t) => t.selected) ?? null;
   const selectedSynced = isSyncedTrack(selected);
+  const selectedTrackKey = selected ? trackAutoSyncKey(selected) : null;
   const mediaKey = autoSyncMediaKey(src);
-  const ready =
-    engine === "mpv" &&
-    settings.subtitleAutoSync === true &&
-    snap.durationSec >= MIN_DURATION_SEC &&
-    selected?.external === true &&
-    !selectedSynced &&
-    automaticAutoSyncMayStart({
-      preflightSettled: subtitlePreflightSettled,
-      tracks: snap.subtitleTracks,
-      selectedLanguage: selected.lang,
-    });
-  const runKey = selectedSynced
-    ? doneKeyRef.current
-    : ready && selected
-      ? autoSyncRunKey(mediaKey, selected.id)
-      : null;
 
-  const stopDrift = useCallback(() => {
-    if (driftTimerRef.current !== null) {
-      window.clearInterval(driftTimerRef.current);
-      driftTimerRef.current = null;
-    }
-    driftRef.current?.dispose();
-    driftRef.current = null;
-  }, []);
+  const ready =
+    settings.subtitleAutoSync === true &&
+    subtitlePreflightSettled &&
+    isAutoSyncEligibleMedia(src.url, snap.durationSec, src.isLive) &&
+    selected?.external === true &&
+    !selectedSynced;
+
+  const runKey =
+    ready && selectedTrackKey ? autoSyncRunKey(mediaKey, selectedTrackKey) : null;
 
   const runWithSubtitleFpsReset = useCallback(
     (
@@ -187,11 +178,17 @@ export function useAutoSync(params: {
       isCurrent: () => boolean = () => true,
     ) =>
       runAfterSubtitleFpsReset(
-        () => resetMpvSubtitleFpsForTransition(),
+        () =>
+          engineRef.current === "mpv"
+            ? resetMpvSubtitleFpsForTransition()
+            : Promise.resolve(),
         action,
         (error) => {
           dwarn("[auto-sync] subtitle FPS reset failed", error);
-          if (!cancelled?.current) setStatus("error");
+          if (!cancelled?.current) {
+            setErrorMessage(error instanceof Error ? error.message : String(error));
+            setStatus("error");
+          }
         },
         () => cancelled?.current !== true && isCurrent(),
       ),
@@ -209,372 +206,431 @@ export function useAutoSync(params: {
     });
   }, []);
 
-  const applyTransform = useCallback(
-    async (
-      b: PlayerBridge,
-      cues: SubCue[],
-      fmt: SubFmt,
-      t: SyncTransform,
-      isCurrent: () => boolean,
-    ): Promise<boolean> => {
-      if (!isCurrent()) return false;
-      const a = appliedRef.current;
-      if (t.kind === "affine" && isDelayOnlyTransform(t)) {
-        if (Math.abs(t.offsetSec) < OFFSET_EPS && !a.transform) return true;
-        if (!isCurrent()) return false;
-        if (a.originalTrackId) b.setSubtitleTrack(a.originalTrackId);
-        b.setSubDelay(t.offsetSec);
-        a.changed = true;
-        if (!isCurrent()) return false;
-        a.transform = t;
-        return true;
-      }
-      if (fmt === "ass" || fmt === "ssa") {
-        dwarn(`[auto-sync] ${fmt.toUpperCase()} structural rewrite blocked to preserve formatting`);
-        return false;
-      }
-      if (fmt === "unknown") {
-        dwarn("[auto-sync] structural rewrite blocked because subtitle format is unknown");
-        return false;
-      }
-      const finalCues = transformCues(cues, t);
-      if (finalCues.length === 0 || !isCurrent()) return false;
-      const text = fmt === "vtt" ? toVtt(finalCues) : toSrt(finalCues);
-      if (!(await writeSyncedTrack(b, text, fmt, isCurrent))) return false;
-      if (!isCurrent()) return false;
-      a.changed = true;
-      a.transform = t;
-      return true;
-    },
-    [],
-  );
+  // Reset per-media caches & state whenever mediaKey changes.
+  useEffect(() => {
+    activeDisposeRef.current?.();
+    activeDisposeRef.current = null;
+    appliedRef.current = { ...EMPTY_APPLIED };
+    statusScopeRef.current = null;
+    setStatus("idle");
+    setTrigger("automatic");
+    setOffsetMs(null);
+    setScale(null);
+    setWithinTolerance(false);
+    setCanRevert(false);
+    setErrorMessage(null);
+  }, [mediaKey]);
 
-  const startDrift = useCallback(
-    (b: PlayerBridge, cues: SubCue[]) => {
-      if (flagsRef.current.autoSyncDrift !== true || driftRef.current) return;
-      const active = srcRef.current;
-      const trackKey = doneKeyRef.current ?? active.url;
-      const ports = makeTauriDriftPorts(active.url, active.headers);
-      const deps: DriftDeps = {
-        getState: () => toDriftState(liveSnapRef.current, cues, trackKey),
-        setSubDelay: (s) => {
-          const a = appliedRef.current;
-          if (!isCurrentAutoSyncScope(a.scope)) return;
-          b.setSubDelay(s);
-          a.changed = true;
-        },
-      };
-      const mon = new DriftMonitor(ports, deps);
-      driftRef.current = mon;
-      driftTimerRef.current = window.setInterval(() => mon.observe(), DRIFT_TICK_MS);
-    },
-    [isCurrentAutoSyncScope],
-  );
-
-  const handleOutcome = useCallback(
-    (
-      o: PipelineOutcome,
-      cues: SubCue[],
-      fmt: SubFmt,
-      cancelled: { current: boolean },
-      scope: AutoSyncScope,
-    ) => {
-      const isCurrent = () => isCurrentAutoSyncScope(scope);
-      if (cancelled.current || !isCurrent()) return;
-      const dec = o.decision.decision;
-      dwarn(
-        `[auto-sync] decision=${dec} reason="${o.decision.reason}" tiers=[${o.tiersRun.join(",")}] bestEffort=${o.bestEffort ?? false}`,
-      );
-      if (dec === "refuse") {
-        if (!appliedRef.current.transform) setStatus("declined");
-        return;
-      }
-      if (dec === "offer") {
-        setOffer(o);
-        if (!appliedRef.current.transform) setStatus("offer");
-        return;
-      }
-      const score = outcomeScore(o);
-      if (!o.bestEffort && score <= bestScoreRef.current) return;
-      const t = o.candidate;
-      const b = bridgeRef.current;
-      if (!t || !b) return;
-      const automaticSwap = o.subSwap;
-      if (automaticSwap) {
-        const os = defaultOsConfig(settingsRef.current) ?? {
-          apiKey: "",
-          userAgent: "Harbor autosync",
-        };
-        void runWithSubtitleFpsReset(
-          async () => {
-            if (!isCurrent()) return;
-            bestScoreRef.current = score;
-            setOffer(null);
-            const applied = await applySwap(b, automaticSwap, os, isCurrent);
-            if (!isCurrent()) return;
-            if (applied) appliedRef.current.changed = true;
-            setStatus(applied ? "synced" : "error");
-          },
-          cancelled,
-          isCurrent,
-        ).catch((error) => {
-          dwarn("[auto-sync] automatic swap failed", error);
-          if (!cancelled.current && isCurrent()) setStatus("error");
-        });
-        return;
-      }
-      void runWithSubtitleFpsReset(
-        async () => {
-          if (!isCurrent()) return;
-          if (!o.bestEffort && score <= bestScoreRef.current) return;
-          bestScoreRef.current = score;
-          setOffer(null);
-          const applied = await applyTransform(b, cues, fmt, t, isCurrent);
-          if (!applied || !isCurrent()) return;
-          setStatus(o.bestEffort ? "best-effort" : "synced");
-          startDrift(b, cues);
-        },
-        cancelled,
-        isCurrent,
-      ).catch((error) => {
-        dwarn("[auto-sync] apply failed", error);
-        if (!cancelled.current && isCurrent()) setStatus("error");
-      });
-    },
-    [applyTransform, startDrift, bridgeRef, isCurrentAutoSyncScope, runWithSubtitleFpsReset],
-  );
+  // Prefetch embedded MKV/MP4 subtitle timeline index as soon as VOD media loads with auto-sync on.
+  useEffect(() => {
+    if (settings.subtitleAutoSync !== true || !isNativeTauri()) return;
+    if (!canPrefetchEmbeddedMedia(src.url, src.isLive)) return;
+    if (prefetchedUrlRef.current === src.url) return;
+    prefetchedUrlRef.current = src.url;
+    void prefetchEmbeddedSubtitles(src.url, src.headers).catch((err) => {
+      dwarn("[auto-sync] embedded index prefetch failed", err);
+    });
+  }, [settings.subtitleAutoSync, src.url, src.headers, src.isLive]);
 
   const beginRun = useCallback(
-    (force: boolean): (() => void) | null => {
-      const active = srcRef.current;
-      const activeSnap = liveSnapRef.current;
-      const activeSelected = activeSnap.subtitleTracks.find((t) => t.selected) ?? null;
-      if (engine !== "mpv" || activeSnap.durationSec < MIN_DURATION_SEC) return null;
-      if (!activeSelected || activeSelected.external !== true || isSyncedTrack(activeSelected))
+    (manual: boolean): (() => void) | null => {
+      const b = bridgeRef.current;
+      const curSrc = srcRef.current;
+      const curSnap = liveSnapRef.current;
+      const curSettings = settingsRef.current;
+      const curSelected = curSnap.subtitleTracks.find((t) => t.selected) ?? null;
+      if (!b || !curSelected?.external || !curSrc.url || curSrc.isLive) return null;
+      if (!isNativeTauri()) {
+        if (manual) {
+          setTrigger("manual");
+          setErrorMessage("Embedded subtitle auto-sync requires desktop runtime.");
+          setStatus("error");
+        }
         return null;
-
-      const activeMediaKey = autoSyncMediaKey(active);
-      if (manualTimingMediaRef.current === activeMediaKey) {
-        if (!force) return null;
-        manualTimingMediaRef.current = null;
       }
-      const key = autoSyncRunKey(activeMediaKey, activeSelected.id);
-      if (!force && doneKeyRef.current === key) return null;
 
-      const cls = classifyTorrentSource(active.url, {
-        infoHash: active.streamRef?.infoHash ?? null,
-        fileIdx: active.streamRef?.fileIdx ?? null,
-      });
-      const isTorrent = cls === "torrent";
-      if (!isTorrent && isLoopback(active.url)) return null;
-      const sourceKind = sourceKindFor(cls, active.url);
-      const fileIdx = active.streamRef?.fileIdx ?? 0;
+      const selectedInput = buildSelectedCandidateInput(curSelected);
+      if (!selectedInput) return null;
 
-      activeDisposeRef.current?.();
+      if (!selectedInput.localPath && !/^https?:/i.test(selectedInput.url)) {
+        const inlineCues = b.getSelectedTrackCues?.();
+        if (inlineCues && inlineCues.length > 0) {
+          selectedInput.inlineText = toSrt(inlineCues);
+          selectedInput.format = "srt";
+        }
+      }
 
-      doneKeyRef.current = key;
-      const statusScope = { mediaKey: activeMediaKey, trackId: activeSelected.id };
-      statusScopeRef.current = statusScope;
-      appliedRef.current = {
-        transform: null,
-        originalTrackId: activeSelected.id,
-        subDelayBefore: activeSnap.subDelaySec,
-        scope: statusScope,
-        changed: false,
-      };
-      bestScoreRef.current = -1;
-      setOffer(null);
-      setStatus("analyzing");
+      const curMediaKey = autoSyncMediaKey(curSrc);
+      if (manual) {
+        if (manualTimingMediaRef.current === curMediaKey) {
+          manualTimingMediaRef.current = null;
+        }
+        if (revertedRef.current.mediaKey === curMediaKey) {
+          revertedRef.current.keys.delete(trackAutoSyncKey(curSelected));
+        }
+      }
 
+      const scope: AutoSyncScope = { mediaKey: curMediaKey, trackId: curSelected.id };
+      statusScopeRef.current = scope;
       const cancelled = { current: false };
-
-      void runWithSubtitleFpsReset(
-        async () => {
-          const b = bridgeRef.current;
-          if (!b) return;
-          try {
-            const cues = await loadCues(b);
-            if (cancelled.current) return;
-            if (!cues || cues.length < MIN_CUES) {
-              setStatus(force ? "error" : "idle");
-              return;
-            }
-            const fmt = formatOf(b, activeSelected);
-            const ctx = buildContext(active, activeSnap, sourceKind, cues, {
-              language: activeSelected.lang,
-              preferredLanguages: settingsRef.current.preferredSubLangs,
-              format: fmt,
-            });
-            const os = defaultOsConfig(settingsRef.current);
-            const pipelineOptions = (tryHarder: boolean) => ({
-              tryHarder,
-              allowStructuralAutoApply: settingsRef.current.autoSyncApplyStructural,
-            });
-            const applyAndCapture = (o: PipelineOutcome) => {
-              handleOutcome(o, cues, fmt, cancelled, statusScope);
-              if (
-                !cancelled.current &&
-                isCurrentAutoSyncScope(statusScope) &&
-                o.candidate &&
-                o.candidate.kind === "affine" &&
-                o.decision.decision !== "refuse"
-              ) {
-                lastReportRef.current = {
-                  ctx,
-                  transform: o.candidate,
-                  confidence: o.decision.pCorrect,
-                };
-              }
-            };
-            const pivotResolver = (ports: ReturnType<typeof buildTierPorts>) => {
-              let pivotPromise: Promise<PipelineOutcome | null> | null = null;
-              return async (base: PipelineOutcome): Promise<PipelineOutcome> => {
-                if (base.decision.decision === "apply") return base;
-                try {
-                  pivotPromise ??= runExperimentalPivotAutoSync({
-                    ctx,
-                    ports,
-                    settings: settingsRef.current,
-                    src: active,
-                    authKey,
-                  });
-                  return preferAutoSyncOutcome(base, await pivotPromise);
-                } catch (error) {
-                  dwarn("[auto-sync/pivot] experimental pivot failed", error);
-                  return base;
-                }
-              };
-            };
-            if (isTorrent && ctx.infoHash) {
-              const basePorts = buildTierPorts(ctx, settingsRef.current, {
-                osConfig: os,
-                authKey,
-                torrent: { fileIdx, getPositionSec: () => liveSnapRef.current.positionSec },
-              });
-              const resolveOutcome = pivotResolver(basePorts);
-              progressiveRef.current = scheduleProgressiveTorrentSync({
-                ctx,
-                fileIdx,
-                basePorts,
-                opts: pipelineOptions(force),
-                osConfig: os ?? undefined,
-                getSnapshot: () => ({
-                  positionSec: liveSnapRef.current.positionSec,
-                  durationSec: liveSnapRef.current.durationSec || ctx.durationSec,
-                }),
-                onOutcome: (o) => {
-                  void resolveOutcome(o).then(applyAndCapture);
-                },
-              });
-              retryRef.current = () =>
-                void runAutoSync(ctx, basePorts, pipelineOptions(true))
-                  .then(resolveOutcome)
-                  .then(applyAndCapture);
-            } else {
-              const ports = buildTierPorts(ctx, settingsRef.current, { osConfig: os, authKey });
-              const resolveOutcome = pivotResolver(ports);
-              const runDirect = async (tryHarder: boolean) => {
-                const outcome = await resolveOutcome(
-                  await runAutoSync(ctx, ports, pipelineOptions(tryHarder)),
-                );
-                applyAndCapture(outcome);
-              };
-              retryRef.current = () => void runDirect(true);
-              await runDirect(force);
-            }
-          } catch (e) {
-            dwarn("[auto-sync] failed", e);
-            if (!cancelled.current) setStatus("error");
-          }
-        },
-        cancelled,
-        () => isCurrentAutoSyncScope(statusScope),
-      );
+      const runId = nextRunId();
+      const prevRunId = activeRunIdRef.current;
+      if (prevRunId && prevRunId !== runId) {
+        void cancelSubtitleAutoSync(prevRunId);
+      }
+      activeRunIdRef.current = runId;
 
       const dispose = () => {
         cancelled.current = true;
-        progressiveRef.current?.stop();
-        progressiveRef.current = null;
-        stopDrift();
-        retryRef.current = null;
-        if (activeDisposeRef.current === dispose) activeDisposeRef.current = null;
+        if (activeRunIdRef.current === runId) {
+          activeRunIdRef.current = null;
+          void cancelSubtitleAutoSync(runId);
+        }
       };
       activeDisposeRef.current = dispose;
+
+      const runTrigger: AutoSyncTrigger = manual ? "manual" : "automatic";
+      const selectionOrigin = b.getSubtitleSelectionOrigin?.() ?? "automatic";
+      const candidateScope = resolveAutoSyncScope(runTrigger, selectionOrigin);
+      const trackKey = trackAutoSyncKey(curSelected);
+      const selectedSourceUrl = curSelected.originalUrl || curSelected.url || "";
+      const candidates =
+        candidateScope === "selected_only"
+          ? []
+          : collectSameLanguageCandidates(
+              curSelected,
+              availableSubsRef.current,
+              curSnap.subtitleTracks,
+            );
+
+      setTrigger(runTrigger);
+      setErrorMessage(null);
+      setWithinTolerance(false);
+      setStatus("analyzing");
+
+      const isCurrent = () =>
+        !cancelled.current &&
+        isCurrentAutoSyncScope(scope) &&
+        statusScopeRef.current === scope;
+
+      void alignSubtitlesAgainstEmbedded({
+        runId,
+        mediaUrl: curSrc.url,
+        mediaHeaders: curSrc.headers,
+        mode: curSettings.autoSyncMode,
+        toleranceMs: curSettings.autoSyncToleranceMs,
+        scope: candidateScope,
+        selectedTrack: selectedInput,
+        candidates,
+      })
+        .then((res) => {
+          if (activeRunIdRef.current === runId) {
+            activeRunIdRef.current = null;
+          }
+          if (!isCurrent()) return;
+
+          switch (res.outcome) {
+            case "cancelled":
+              return;
+            case "no_subtitle_tracks":
+            case "no_usable_reference":
+              setOffsetMs(null);
+              setScale(null);
+              setWithinTolerance(false);
+              setStatus("no-embedded");
+              return;
+            case "within_tolerance":
+              setOffsetMs(res.medianOffsetMs);
+              setScale(res.scale);
+              setWithinTolerance(true);
+              setStatus("within-tolerance");
+              return;
+            case "no_fit":
+              setOffsetMs(null);
+              setScale(null);
+              setWithinTolerance(false);
+              setStatus("no-fit");
+              return;
+            case "inconclusive":
+              setOffsetMs(null);
+              setScale(null);
+              setWithinTolerance(false);
+              setStatus(manual ? "no-fit" : "idle");
+              return;
+            case "synced": {
+              const body = res.retimedText;
+              const fmt =
+                res.format === "ass" || res.format === "ssa" || res.format === "vtt"
+                  ? res.format
+                  : "srt";
+              if (!body) {
+                setStatus("no-fit");
+                return;
+              }
+              const cues = parseSubtitle(body, fmt);
+              const chosenUrl = res.chosenUrl || selectedSourceUrl;
+              const matchedSelected =
+                chosenUrl !== "" && chosenUrl === selectedSourceUrl;
+              const matchedExistingTrack = matchedSelected
+                ? curSelected
+                : liveSnapRef.current.subtitleTracks.find(
+                    (t) =>
+                      t.external &&
+                      ((t.originalUrl && t.originalUrl === chosenUrl) ||
+                        (t.url && t.url === chosenUrl)),
+                  ) ?? null;
+              const matchedResult =
+                matchedExistingTrack == null
+                  ? availableSubsRef.current.find((r) => r.url === chosenUrl) ?? null
+                  : null;
+
+              const targetLang =
+                matchedExistingTrack?.lang ?? matchedResult?.lang ?? curSelected.lang;
+              const targetTitle =
+                matchedExistingTrack?.title ??
+                matchedResult?.title ??
+                curSelected.title ??
+                `Synced (${fmt.toUpperCase()})`;
+              const baseMetadata = matchedExistingTrack
+                ? buildRestoreMetadata(matchedExistingTrack)
+                : matchedResult
+                  ? {
+                      originalUrl: matchedResult.url,
+                      downloadAuth: matchedResult.downloadAuth,
+                      format: matchedResult.format,
+                      release: matchedResult.release,
+                      provider: matchedResult.upstreamProvider ?? matchedResult.source,
+                      providerDerived: true,
+                      localTrusted: matchedResult.localTrusted,
+                      fps: matchedResult.fps,
+                      downloads: matchedResult.downloads,
+                      author: matchedResult.author,
+                      uploadedAt: matchedResult.uploadedAt,
+                      rating: matchedResult.rating,
+                      productionType: matchedResult.productionType,
+                      releaseType: matchedResult.releaseType,
+                      hearingImpaired: matchedResult.hearingImpaired,
+                      forced: matchedResult.forced,
+                      foreignOnly: matchedResult.foreignOnly,
+                      machineTranslated: matchedResult.machineTranslated,
+                      fromTrusted: matchedResult.fromTrusted,
+                      providerMatch: matchedResult.providerMatch,
+                      subId: matchedResult.id,
+                    }
+                  : buildRestoreMetadata(curSelected);
+
+              const replaceExisting = matchedExistingTrack != null;
+              const replaceTrackId = matchedExistingTrack?.id;
+              const commitOrigin = b.getSubtitleSelectionOrigin?.() ?? "automatic";
+
+              void runWithSubtitleFpsReset(
+                async () => {
+                  if (!isCurrent()) return;
+                  let playableUrl: string;
+                  let cleanup = () => {};
+                  if (engineRef.current === "mpv") {
+                    if (!res.retimedPath) {
+                      if (isCurrent()) setStatus("error");
+                      return;
+                    }
+                    playableUrl = res.retimedPath;
+                  } else {
+                    const blobUrl = URL.createObjectURL(
+                      new Blob([body], { type: "text/plain;charset=utf-8" }),
+                    );
+                    playableUrl = blobUrl;
+                    cleanup = () => URL.revokeObjectURL(blobUrl);
+                  }
+
+                  registerPreparedSubtitle({
+                    originalUrl: chosenUrl || playableUrl,
+                    playableUrl,
+                    format: fmt,
+                    cues,
+                    text: body,
+                    encoding: "utf-8",
+                    encodingHealth: 1,
+                    encodingDiagnostics: [],
+                    release: baseMetadata.release,
+                    rawFilename:
+                      matchedExistingTrack?.externalFilename ?? `synced.${fmt}`,
+                    archive: false,
+                    cleanup,
+                  });
+
+                  const ok = await b.addSubtitle(
+                    playableUrl,
+                    targetLang,
+                    targetTitle,
+                    true,
+                    {
+                      ...baseMetadata,
+                      originalUrl: chosenUrl || playableUrl,
+                      format: fmt,
+                      autoSynced: true,
+                      replaceExisting,
+                      replaceTrackId,
+                    },
+                    commitOrigin,
+                  );
+
+                  if (!ok) {
+                    takePreparedSubtitle(playableUrl)?.cleanup();
+                    if (isCurrent()) {
+                      setErrorMessage("Could not load synced subtitle track.");
+                      setStatus("error");
+                    }
+                    return;
+                  }
+                  if (!isCurrent()) return;
+
+                  const a = appliedRef.current;
+                  a.originalTrack = curSelected;
+                  a.replacedSelected = matchedSelected;
+                  a.originalTrackId = curSelected.id;
+                  a.originalTrackKey = trackKey;
+                  a.subDelayBefore = liveSnapRef.current.subDelaySec;
+                  a.scope = scope;
+                  a.changed = true;
+                  b.setSubDelay(0);
+
+                  setOffsetMs(res.medianOffsetMs);
+                  setScale(res.scale);
+                  setWithinTolerance(false);
+                  setCanRevert(true);
+                  setStatus("synced");
+                },
+                cancelled,
+                isCurrent,
+              );
+              return;
+            }
+          }
+        })
+        .catch((err) => {
+          if (activeRunIdRef.current === runId) {
+            activeRunIdRef.current = null;
+          }
+          if (!isCurrent()) return;
+          dwarn("[auto-sync] alignment failed", err);
+          setErrorMessage(err instanceof Error ? err.message : String(err));
+          setStatus("error");
+        });
+
       return dispose;
     },
-    [
-      engine,
-      bridgeRef,
-      handleOutcome,
-      isCurrentAutoSyncScope,
-      runWithSubtitleFpsReset,
-      stopDrift,
-      authKey,
-    ],
+    [bridgeRef, isCurrentAutoSyncScope, runWithSubtitleFpsReset],
   );
 
-  const selKey = selectedSynced
-    ? doneKeyRef.current
-    : selected
-      ? autoSyncRunKey(mediaKey, selected.id)
-      : null;
+  // Clear stale non-synced status when user switches to a different un-synced track or turns subs off.
   useEffect(() => {
-    if (!runKey) return () => activeDisposeRef.current?.();
-    const snapSel = liveSnapRef.current.subtitleTracks.find((t) => t.selected) ?? null;
-    const currentMediaKey = autoSyncMediaKey(srcRef.current);
-    const lang = snapSel?.lang ?? "";
-    const fired = firedRef.current;
-    if (fired.mediaKey !== currentMediaKey) {
-      fired.mediaKey = currentMediaKey;
-      fired.langs = new Set();
-    }
-    if (!fired.langs.has(lang)) {
-      fired.langs.add(lang);
-      return beginRun(false) ?? undefined;
-    }
-    return () => activeDisposeRef.current?.();
-  }, [selKey, runKey, beginRun]);
-
-  const revert = useCallback(() => {
-    progressiveRef.current?.stop();
-    progressiveRef.current = null;
-    stopDrift();
-    const b = bridgeRef.current;
-    const a = appliedRef.current;
-    const canRevert = a.changed && isCurrentAutoSyncScope(a.scope);
-    if (b && canRevert) {
-      if (a.originalTrackId) b.setSubtitleTrack(a.originalTrackId);
-      b.setSubDelay(a.subDelayBefore);
-    }
-    appliedRef.current = {
-      transform: null,
-      originalTrackId: null,
-      subDelayBefore: 0,
-      scope: null,
-      changed: false,
-    };
-    statusScopeRef.current = null;
-    bestScoreRef.current = -1;
-    setOffer(null);
-    setStatus("idle");
-  }, [bridgeRef, isCurrentAutoSyncScope, stopDrift]);
-
-  const retry = useCallback(() => {
-    const action = retryRef.current;
-    if (!action) {
-      beginRun(true);
+    if (selectedSynced) return;
+    if (!selected || !selected.external) {
+      activeDisposeRef.current?.();
+      activeDisposeRef.current = null;
+      statusScopeRef.current = null;
+      appliedRef.current = { ...EMPTY_APPLIED };
+      setCanRevert(false);
+      setStatus("idle");
       return;
     }
-    const statusScope = statusScopeRef.current;
-    setStatus("analyzing");
-    void runWithSubtitleFpsReset(
-      () => {
-        if (retryRef.current === action) action();
-      },
-      undefined,
-      () => isCurrentAutoSyncScope(statusScope),
-    );
-  }, [beginRun, isCurrentAutoSyncScope, runWithSubtitleFpsReset]);
+    const currentKey = trackAutoSyncKey(selected);
+    const scopeMatchesSelected =
+      statusScopeRef.current?.mediaKey === mediaKey &&
+      statusScopeRef.current?.trackId === selected.id;
+    if (!scopeMatchesSelected && appliedRef.current.originalTrackKey !== currentKey) {
+      activeDisposeRef.current?.();
+      activeDisposeRef.current = null;
+      statusScopeRef.current = null;
+      appliedRef.current = { ...EMPTY_APPLIED };
+      setCanRevert(false);
+      setOffsetMs(null);
+      setScale(null);
+      setWithinTolerance(false);
+      setErrorMessage(null);
+      setStatus("idle");
+    }
+  }, [mediaKey, selected, selectedSynced]);
+
+  // Automatic trigger when a non-synced external track becomes active & preflight settles.
+  useEffect(() => {
+    if (!runKey || !selectedTrackKey) return;
+    if (manualTimingMediaRef.current === mediaKey) return;
+    if (revertedRef.current.mediaKey !== mediaKey) {
+      revertedRef.current = { mediaKey, keys: new Set() };
+    }
+    if (revertedRef.current.keys.has(selectedTrackKey)) return;
+
+    if (attemptedRef.current.mediaKey !== mediaKey) {
+      attemptedRef.current = { mediaKey, keys: new Set() };
+    }
+    if (attemptedRef.current.keys.has(selectedTrackKey)) return;
+    attemptedRef.current.keys.add(selectedTrackKey);
+
+    const dispose = beginRun(false);
+    return () => {
+      dispose?.();
+    };
+  }, [runKey, mediaKey, selectedTrackKey, beginRun]);
+
+  const revert = useCallback(() => {
+    activeDisposeRef.current?.();
+    activeDisposeRef.current = null;
+    const b = bridgeRef.current;
+    const a = appliedRef.current;
+    const canRevertNow = a.changed && isCurrentAutoSyncScope(a.scope);
+    if (b && canRevertNow) {
+      const curMediaKey = autoSyncMediaKey(srcRef.current);
+      if (a.originalTrackKey) {
+        if (revertedRef.current.mediaKey !== curMediaKey) {
+          revertedRef.current = { mediaKey: curMediaKey, keys: new Set() };
+        }
+        revertedRef.current.keys.add(a.originalTrackKey);
+      }
+      const commitOrigin = b.getSubtitleSelectionOrigin?.() ?? "automatic";
+      const currentSelected =
+        liveSnapRef.current.subtitleTracks.find((t) => t.selected) ?? null;
+      if (a.replacedSelected && a.originalTrack) {
+        const restoreUrl =
+          a.originalTrack.originalUrl ||
+          a.originalTrack.url ||
+          a.originalTrack.externalFilename;
+        if (restoreUrl) {
+          void b
+            .addSubtitle(
+              restoreUrl,
+              a.originalTrack.lang,
+              a.originalTrack.title,
+              true,
+              {
+                ...buildRestoreMetadata(a.originalTrack),
+                autoSynced: false,
+                replaceExisting: true,
+                replaceTrackId: currentSelected?.id,
+              },
+              commitOrigin,
+            )
+            .finally(() => {
+              b.setSubDelay(a.subDelayBefore);
+            });
+        } else if (a.originalTrackId) {
+          b.setSubtitleTrack(a.originalTrackId, commitOrigin);
+          b.setSubDelay(a.subDelayBefore);
+        }
+      } else if (a.originalTrackId) {
+        b.setSubtitleTrack(a.originalTrackId, commitOrigin);
+        b.setSubDelay(a.subDelayBefore);
+      }
+    }
+    appliedRef.current = { ...EMPTY_APPLIED };
+    statusScopeRef.current = null;
+    setOffsetMs(null);
+    setScale(null);
+    setWithinTolerance(false);
+    setCanRevert(false);
+    setErrorMessage(null);
+    setStatus("idle");
+  }, [bridgeRef, isCurrentAutoSyncScope]);
 
   const run = useCallback(() => {
     beginRun(true);
@@ -582,170 +638,44 @@ export function useAutoSync(params: {
 
   const stop = useCallback(() => {
     activeDisposeRef.current?.();
-    revert();
+    activeDisposeRef.current = null;
+    if (appliedRef.current.changed) {
+      revert();
+    } else {
+      statusScopeRef.current = null;
+      setStatus("idle");
+    }
   }, [revert]);
+
+  const dismiss = useCallback(() => {
+    setErrorMessage(null);
+    if (!appliedRef.current.changed && status !== "analyzing") {
+      setStatus("idle");
+    }
+  }, [status]);
 
   const suspendForManualTiming = useCallback(() => {
     // Unlike Stop/Revert, taking manual control must preserve the current offset.
     manualTimingMediaRef.current = autoSyncMediaKey(srcRef.current);
     activeDisposeRef.current?.();
-    stopDrift();
+    activeDisposeRef.current = null;
     statusScopeRef.current = null;
-    setOffer(null);
+    setErrorMessage(null);
     setStatus("idle");
-  }, [stopDrift]);
-
-  const feedback = useCallback((good: boolean) => {
-    const s = settingsRef.current;
-    if (s.subtitleAutoSyncCrowd === false) return;
-    const r = lastReportRef.current;
-    if (!r) return;
-    const cfg = crowdConfigFromSettings(s);
-    if (!cfg) return;
-    void reportCrowdFeedback(r.ctx.cues, good, cfg);
-    if (good) void reportVerifiedSync(r.ctx, r.transform, r.confidence, cfg);
   }, []);
 
-  const applyOffer = useCallback(() => {
-    const o = offer;
-    if (!o) return;
-    const statusScope = statusScopeRef.current;
-    const isCurrent = () => isCurrentAutoSyncScope(statusScope);
-    void runWithSubtitleFpsReset(
-      async () => {
-        const b = bridgeRef.current;
-        if (!b || !isCurrent()) return;
-        setOffer(null);
-        if (o.subSwap) {
-          const os = defaultOsConfig(settingsRef.current) ?? {
-            apiKey: "",
-            userAgent: "Harbor autosync",
-          };
-          const swap = o.subSwap;
-          const applied = await applySwap(b, swap, os, isCurrent);
-          if (applied) appliedRef.current.changed = true;
-          if (isCurrent()) setStatus(applied ? "synced" : "error");
-          return;
-        }
-        const t = o.candidate;
-        const cues = b.getSelectedTrackCues();
-        if (!t || !cues) return;
-        const selectedTrack =
-          liveSnapRef.current.subtitleTracks.find((track) => track.selected) ?? null;
-        const applied = await applyTransform(b, cues, formatOf(b, selectedTrack), t, isCurrent);
-        if (!applied || !isCurrent()) return;
-        setStatus("synced");
-        startDrift(b, cues);
-      },
-      undefined,
-      isCurrent,
-    ).catch((error) => {
-      dwarn("[auto-sync] offer apply failed", error);
-      if (isCurrent()) setStatus("error");
-    });
-  }, [
-    offer,
-    bridgeRef,
-    applyTransform,
-    isCurrentAutoSyncScope,
-    runWithSubtitleFpsReset,
-    startDrift,
-  ]);
-
-  const scopeCurrent = isAutoSyncScopeCurrent(statusScopeRef.current, {
-    mediaKey,
-    trackId: selected?.id ?? null,
-    syncedTrack: selectedSynced,
-  });
   return {
-    status: status === "idle" || scopeCurrent ? status : "idle",
-    offer: scopeCurrent ? offer : null,
-    applyOffer,
-    revert,
-    retry,
+    status,
+    trigger,
+    offsetMs,
+    scale,
+    withinTolerance,
+    canRevert,
+    errorMessage,
     run,
     stop,
-    feedback,
+    revert,
+    dismiss,
     suspendForManualTiming,
   };
-}
-
-async function writeSyncedTrack(
-  b: PlayerBridge,
-  text: string,
-  fmt: WritableSubFmt,
-  isCurrent: () => boolean,
-): Promise<boolean> {
-  if (!isCurrent()) return false;
-  const pathMod = await import("@tauri-apps/api/path");
-  const dir = await pathMod.join(await pathMod.tempDir(), "harbor-subs");
-  const filePath = await pathMod.join(dir, `autosync-${Date.now()}.${fmt}`);
-  await invoke("save_text_file", { path: filePath, contents: text });
-  if (!isCurrent()) return false;
-  const added = await b.addSubtitle(filePath, undefined, `Synced (${fmt.toUpperCase()})`, true);
-  if (!added || !isCurrent()) return false;
-  b.setSubDelay(0);
-  return true;
-}
-
-async function applySwap(
-  b: PlayerBridge,
-  subSwap: { url: string; format: WritableSubFmt },
-  os: OsConfig,
-  isCurrent: () => boolean,
-): Promise<boolean> {
-  const swap = await resolveSwapCues(subSwap, os);
-  if (!swap || swap.cues.length < MIN_CUES || !isCurrent()) return false;
-  const cues: SubCue[] = swap.cues.map((c, i) => ({
-    start: c[0],
-    end: c[1],
-    text: swap.cueText[i] ?? "",
-  }));
-  const text = subSwap.format === "vtt" ? toVtt(cues) : toSrt(cues);
-  try {
-    return await writeSyncedTrack(b, text, subSwap.format, isCurrent);
-  } catch (e) {
-    dwarn("[auto-sync] swap failed", e);
-    return false;
-  }
-}
-
-async function loadCues(b: PlayerBridge): Promise<SubCue[] | null> {
-  const inline = b.getSelectedTrackCues();
-  if (inline && inline.length > 0) return inline;
-  const raw = b.getSelectedTrackUrl();
-  if (!raw) return null;
-  const readable = /^(https?|blob|data|tauri|asset):/i.test(raw) ? raw : safeConvert(raw);
-  if (!readable) return null;
-  try {
-    return await fetchAndParse(readable);
-  } catch {
-    return null;
-  }
-}
-
-function safeConvert(url: string): string | null {
-  if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
-    try {
-      return convertFileSrc(url);
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-function formatOf(b: PlayerBridge, track: TrackInfo | null): SubFmt {
-  const source = [b.getSelectedTrackUrl(), track?.externalFilename, track?.title]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ");
-  if (/\.ssa(?:$|[?#\s])/i.test(source) || /\bSSA\b/i.test(track?.codec ?? "")) return "ssa";
-  if (/\.ass(?:$|[?#\s])/i.test(source) || isAssTrack(track)) return "ass";
-  if (/\.vtt(?:$|[?#\s])/i.test(source) || /WEBVTT|\bVTT\b/i.test(track?.codec ?? "")) {
-    return "vtt";
-  }
-  if (/\.srt(?:$|[?#\s])/i.test(source) || /SUBRIP|\bSRT\b/i.test(track?.codec ?? "")) {
-    return "srt";
-  }
-  return "unknown";
 }

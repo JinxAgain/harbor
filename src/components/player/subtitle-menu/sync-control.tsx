@@ -28,7 +28,7 @@ export function SyncControl({
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const busy = autoSync?.status === "analyzing";
-  const applied = autoSync?.status === "synced" || autoSync?.status === "best-effort";
+  const applied = autoSync?.status === "synced";
   const autoSyncOn = busy || applied;
 
   useEffect(() => {

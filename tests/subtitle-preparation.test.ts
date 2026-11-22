@@ -14,8 +14,6 @@ import {
 } from "../src/lib/subtitles/prepare.ts";
 import { ARABIC_ASS } from "./fixtures/subtitle-p2-fixtures.ts";
 import { prepareSubtitleForSave } from "../src/lib/subtitles/save-to-disk.ts";
-import { resolveSwapCues } from "../src/lib/subtitles/autosync/opensubtitles.ts";
-import { prepareConsensusCandidate } from "../src/lib/subtitles/autosync/consensus.ts";
 
 const english = `1
 00:00:01,000 --> 00:00:02,500
@@ -258,45 +256,6 @@ test("multilingual archives recognize an Arabic self-name through central normal
   );
 
   assert.equal(prepared.rawFilename, "Show.S01E01.العربية.srt");
-});
-
-test("autosync hash swaps use safe archive preparation", async () => {
-  const archive = zipSync({ "Movie.2026.WEB-DL.en.srt": strToU8(manyCues) });
-  const resolved = await resolveSwapCues(
-    { url: dataUrl("application/zip", archive) },
-    { apiKey: "", userAgent: "Harbor-Test" },
-  );
-
-  assert.equal(resolved?.cues.length, 24);
-  assert.equal(resolved?.cueText[0], "Dialogue line 1");
-});
-
-test("autosync consensus candidates use safe archive preparation", async () => {
-  const archive = zipSync({ "Movie.2026.WEB-DL.en.srt": strToU8(manyCues) });
-  const candidate = await prepareConsensusCandidate(
-    {
-      id: "archive-result",
-      url: dataUrl("application/zip", archive),
-      lang: "en",
-      source: "subdl",
-      release: "Movie.2026.WEB-DL",
-      archive: true,
-    },
-    5_000,
-    {
-      mediaUrl: "https://example.test/video.mkv",
-      sourceKind: "http",
-      durationSec: 120,
-      cues: [],
-      languages: ["en"],
-      subtitleLanguage: "en",
-      audioLanguage: "en",
-      meta: { season: 1, episode: 1 },
-    },
-  );
-
-  assert.equal(candidate?.seq.lines.length, 24);
-  assert.equal(candidate?.format, "srt");
 });
 
 function fakePrepared(label: string): PreparedSubtitle {

@@ -46,8 +46,6 @@ mod anime4k;
 #[cfg(desktop)]
 mod app_icon;
 #[cfg(desktop)]
-mod asr_model;
-#[cfg(desktop)]
 mod browser;
 mod browser_args;
 #[cfg(desktop)]
@@ -1221,16 +1219,9 @@ pub fn run() {
             harbor_resume_webview,
             save_text_file,
             subsync::moviehash::compute_moviehash,
-            subsync::sync_subtitle,
-            subsync::scorer::subsync_score_transform,
-            subsync::scorer::subsync_preflight_candidates,
-            subsync::torrent_sync::torrent_sync_availability,
-            subsync::torrent_sync::torrent_sync_subtitle,
-            subsync::torrent_sync::torrent_score_transform,
-            subsync::audio_tracks::audio_probe_tracks,
-            subsync::fingerprint::compute_chromaprint,
-            subsync::asr::asr_transcribe_windows,
-            subsync::asr::asr_verify,
+            subsync::coordinator::subsync_prefetch_embedded,
+            subsync::coordinator::subsync_align_subtitles,
+            subsync::coordinator::subsync_cancel,
             sub_extract::subtitle_extract,
             sub_extract::subtitle_extract_ass,
             cast_server::stop_stremio_sidecar,
@@ -1242,8 +1233,6 @@ pub fn run() {
             web_server::remote_ws_client_count,
             anime4k::anime4k_download,
             anime4k::anime4k_dir,
-            asr_model::asr_ensure_model,
-            asr_model::asr_model_path,
             shaders::shader_download,
             shaders::shader_dir,
             svp::svp_status,

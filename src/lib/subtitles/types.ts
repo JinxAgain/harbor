@@ -122,6 +122,9 @@ export type SubtitleLoadMetadata = {
   matchConfidence?: SubtitleMatchConfidence;
   matchReasons?: string[];
   subId?: string;
+  autoSynced?: boolean;
+  replaceExisting?: boolean;
+  replaceTrackId?: string;
 };
 
 /**
