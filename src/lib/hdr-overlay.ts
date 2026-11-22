@@ -12,6 +12,33 @@ export const HDR_STAGE_SET_SUBTITLE_TRACK = "hdr-stage://set-subtitle-track";
 export const HDR_STAGE_SET_SECONDARY_SUBTITLE_TRACK = "hdr-stage://set-secondary-subtitle-track";
 export const HDR_STAGE_ADD_SUBTITLE = "hdr-stage://add-subtitle";
 export const HDR_STAGE_ADD_SUBTITLE_RESULT = "hdr-stage://add-subtitle-result";
+export const HDR_STAGE_SET_SUB_DELAY = "hdr-stage://set-sub-delay";
+export const HDR_STAGE_AUTOSYNC_RUN = "hdr-stage://autosync-run";
+export const HDR_STAGE_AUTOSYNC_STOP = "hdr-stage://autosync-stop";
+export const HDR_STAGE_AUTOSYNC_REVERT = "hdr-stage://autosync-revert";
+export const HDR_STAGE_AUTOSYNC_DISMISS = "hdr-stage://autosync-dismiss";
+
+export type HdrStageSubDelayRequest = {
+  mediaKey: string;
+  sec: number;
+};
+
+export type HdrStageAutoSyncState = {
+  status:
+    | "idle"
+    | "analyzing"
+    | "synced"
+    | "within-tolerance"
+    | "no-fit"
+    | "no-embedded"
+    | "error";
+  trigger: "automatic" | "manual";
+  offsetMs: number | null;
+  scale: number | null;
+  withinTolerance: boolean;
+  canRevert: boolean;
+  errorMessage: string | null;
+};
 
 export type HdrStageSubtitleTrackRequest = {
   mediaKey: string;

@@ -1314,25 +1314,6 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       // which is the only case that can match here.
       const sourceUrl = metadata?.originalUrl ?? url;
       const shouldReplace = !transferredPrepared || metadata?.replaceExisting === true;
-      const prior = shouldReplace
-        ? snap.subtitleTracks.find(
-            (track) =>
-              track.kind === "subtitle" &&
-              track.external === true &&
-              (metadata?.replaceTrackId
-                ? track.id === metadata.replaceTrackId
-                : track.originalUrl === sourceUrl || track.url === sourceUrl),
-          )
-        : undefined;
-      if (prior) {
-        try {
-          await invoke("mpv_sub_remove", { id: prior.id });
-        } catch {
-          // Track already gone; adding the refreshed file below still works.
-        }
-        const priorFile = prior.externalFilename?.replace(/\\/g, "/");
-        if (priorFile) urlByExternalFilename.delete(priorFile);
-      }
       let preparedCleanup: (() => void) | null = transferredPrepared?.cleanup ?? null;
       let preparedCues: SubCue[] | undefined = transferredPrepared?.cues;
       let registeredMetadata: ExternalSubtitleMetadata | null = null;
@@ -1432,6 +1413,18 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
         registeredMetadata = externalMetadata;
         const addToMpv = async (): Promise<boolean> => {
           if (requestMediaRevision !== mediaRevision) return false;
+          // Capture the superseded track right before adding the replacement so a failed
+          // prepare/load never removes the working previous track.
+          const prior = shouldReplace
+            ? snap.subtitleTracks.find(
+                (track) =>
+                  track.kind === "subtitle" &&
+                  track.external === true &&
+                  (metadata?.replaceTrackId
+                    ? track.id === metadata.replaceTrackId
+                    : track.originalUrl === sourceUrl || track.url === sourceUrl),
+              )
+            : undefined;
           let selectAtCommit = false;
           if (
             selectionRequest &&
@@ -1447,6 +1440,15 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
             title: title ?? null,
             select: selectAtCommit,
           });
+          if (prior && requestMediaRevision === mediaRevision) {
+            try {
+              await invoke("mpv_sub_remove", { id: prior.id });
+            } catch {
+              // Track already gone; replacement is already added.
+            }
+            const priorFile = prior.externalFilename?.replace(/\\/g, "/");
+            if (priorFile && priorFile !== mpvUrl) urlByExternalFilename.delete(priorFile);
+          }
           return true;
         };
         const added = selectionRequest

@@ -1,3 +1,4 @@
+import { isDesktopTauri } from "@/lib/platform";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
 import { Nested, OptionScale, SettingGroup, SettingRow } from "./kit";
@@ -9,7 +10,8 @@ const TOLERANCE_OPTIONS = [0, 100, 200, 300, 400, 500] as const;
 export function AutoSyncPanel() {
   const t = useT();
   const { settings, update } = useSettings();
-  const master = settings.subtitleAutoSync;
+  const supported = isDesktopTauri();
+  const master = supported && settings.subtitleAutoSync;
 
   return (
     <div className="hset-form-page">
@@ -24,11 +26,16 @@ export function AutoSyncPanel() {
           sub={t(
             "Automatically match external subtitles to embedded subtitle timing when playback starts. Off by default.",
           )}
+          lockReason={
+            supported
+              ? undefined
+              : t("Embedded subtitle auto-sync is available only in the Harbor desktop app.")
+          }
           value={master}
           onChange={(v) => update({ subtitleAutoSync: v })}
         />
 
-        {master && (
+        {supported && master && (
           <Nested>
             <SettingGroup label={t("While auto-sync is on")}>
               <SettingRow

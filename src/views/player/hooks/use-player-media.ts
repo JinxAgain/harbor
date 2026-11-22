@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import { useAuth } from "@/lib/auth";
+import type { HdrStageAutoSyncState } from "@/lib/hdr-overlay";
 import { downloadText } from "@/lib/download-text";
 import { getCuesAnySource } from "@/lib/subtitles/extract";
 import { toSrt } from "@/lib/subtitles/serialize";
@@ -216,6 +217,37 @@ export function usePlayerMedia(params: {
     asDismiss,
   ]);
 
+  const hdrAutoSyncState = useMemo<HdrStageAutoSyncState>(
+    () => ({
+      status: asStatus,
+      trigger: asTrigger,
+      offsetMs: asOffsetMs,
+      scale: asScale,
+      withinTolerance: asWithinTolerance,
+      canRevert: asCanRevert,
+      errorMessage: asErrorMessage,
+    }),
+    [
+      asStatus,
+      asTrigger,
+      asOffsetMs,
+      asScale,
+      asWithinTolerance,
+      asCanRevert,
+      asErrorMessage,
+    ],
+  );
+
+  const hdrAutoSyncActions = useMemo(
+    () => ({
+      run: asRun,
+      stop: asStop,
+      revert: asRevert,
+      dismiss: asDismiss,
+    }),
+    [asRun, asStop, asRevert, asDismiss],
+  );
+
   // Whether the video actually renders inside Harbor's webview. This mirrors the
   // `embedActive` value the player bridge sends to mpv (use-player-bridge.ts):
   // embedded only when mpv is set to embed AND HDR is not forcing its own opaque
@@ -408,6 +440,8 @@ export function usePlayerMedia(params: {
   return {
     resolvedImdbId,
     suspendAutoSyncForManualTiming: autoSync.suspendForManualTiming,
+    hdrAutoSyncState,
+    hdrAutoSyncActions,
     subtitleSearchActive,
     subAssNative: suppressHtmlSubs,
     captureExitSnapshot,

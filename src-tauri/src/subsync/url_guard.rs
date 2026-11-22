@@ -43,7 +43,13 @@ pub(crate) fn local_file_path(source: &str) -> Option<PathBuf> {
 }
 
 fn is_disallowed_ipv4(ip: Ipv4Addr, allow_lan_and_loopback: bool) -> Result<(), String> {
-    if ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() || ip.is_multicast() {
+    let octets = ip.octets();
+    if octets[0] == 0
+        || ip.is_link_local()
+        || ip.is_unspecified()
+        || ip.is_broadcast()
+        || ip.is_multicast()
+    {
         return Err("internal-ip-blocked".into());
     }
     if ip.is_loopback() {
@@ -53,7 +59,6 @@ fn is_disallowed_ipv4(ip: Ipv4Addr, allow_lan_and_loopback: bool) -> Result<(), 
             Err("loopback-blocked".into())
         };
     }
-    let octets = ip.octets();
     let shared_cgnat = octets[0] == 100 && (octets[1] & 0xc0) == 0x40;
     if ip.is_private() || shared_cgnat {
         return if allow_lan_and_loopback {
@@ -113,7 +118,7 @@ fn check_host(parsed: &url::Url, allow_lan_and_loopback: bool) -> Result<(), Str
     if let Ok(ip) = trimmed.parse::<IpAddr>() {
         return check_ip(ip, allow_lan_and_loopback);
     }
-    let lower = trimmed.to_ascii_lowercase();
+    let lower = trimmed.trim_end_matches('.').to_ascii_lowercase();
     if lower == "metadata.google.internal" || lower == "169.254.169.254" {
         return Err("internal-ip-blocked".into());
     }
@@ -306,11 +311,17 @@ mod tests {
     }
 
     #[test]
-    fn blocks_userinfo_and_multicast_urls() {
+    fn blocks_userinfo_multicast_this_network_and_trailing_dot_hosts() {
         assert!(validate_subtitle_candidate_url("https://user:pass@example.com/a.srt", true).is_err());
         assert!(validate_playback_media_url("http://user:pass@127.0.0.1:8080/a.mkv").is_err());
         assert!(validate_subtitle_candidate_url("http://224.0.0.1/a.srt", true).is_err());
         assert!(validate_playback_media_url("http://[ff02::1]/a.mkv").is_err());
+        assert!(validate_subtitle_candidate_url("http://0.1.2.3/a.srt", true).is_err());
+        assert!(validate_subtitle_candidate_url("http://localhost./a.srt", false).is_err());
+        assert!(
+            validate_subtitle_candidate_url("http://metadata.google.internal./latest", true)
+                .is_err()
+        );
     }
 
     #[tokio::test]

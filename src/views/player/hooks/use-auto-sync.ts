@@ -7,6 +7,7 @@ import {
   runAfterSubtitleFpsReset,
 } from "@/lib/player/subtitle-fps";
 import type { Settings } from "@/lib/settings";
+import { isDesktopTauri } from "@/lib/platform";
 import { dwarn } from "@/lib/debug";
 import {
   alignSubtitlesAgainstEmbedded,
@@ -22,7 +23,6 @@ import type { SubResult } from "@/lib/subtitles/types";
 import type { PlayerSrc } from "@/lib/view";
 import {
   buildRestoreMetadata,
-  buildSelectedCandidateInput,
   canPrefetchEmbeddedMedia,
   commitSyncedSubtitleTrack,
   EMPTY_APPLIED_STATE,
@@ -30,6 +30,7 @@ import {
   matchesCommittedSyncedTrack,
   normalizeTextSubFormat,
   normalizeUrlKey,
+  resolveAutoSyncRunTarget,
   restoreRevertedSubtitleTrack,
   shouldResetAutoSyncOnTrackChange,
   type AppliedAutoSyncState,
@@ -58,10 +59,6 @@ export type AutoSyncHandle = {
   revert: () => void;
   dismiss: () => void;
 };
-
-function isNativeTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
 
 function isSyncedTrack(t: { autoSynced?: boolean } | null | undefined): boolean {
   return t?.autoSynced === true;
@@ -126,7 +123,11 @@ export function useAutoSync(params: {
   const activeDisposeRef = useRef<(() => void) | null>(null);
   const statusScopeRef = useRef<AutoSyncScope | null>(null);
   const committingScopeRef = useRef<AutoSyncScope | null>(null);
-  const awaitingCommitRef = useRef<{ mediaKey: string; deadlineMs: number } | null>(null);
+  const awaitingCommitRef = useRef<{
+    mediaKey: string;
+    deadlineMs: number;
+    replacedTrackId?: string;
+  } | null>(null);
   const triggerRef = useRef<AutoSyncTrigger>("automatic");
   const manualTimingMediaRef = useRef<string | null>(null);
 
@@ -246,7 +247,7 @@ export function useAutoSync(params: {
 
   // Prefetch embedded MKV/MP4 subtitle timeline index as soon as VOD media loads with auto-sync on.
   useEffect(() => {
-    if (settings.subtitleAutoSync !== true || !isNativeTauri()) return;
+    if (settings.subtitleAutoSync !== true || !isDesktopTauri()) return;
     if (!canPrefetchEmbeddedMedia(src.url, src.isLive)) return;
     if (prefetchedUrlRef.current === src.url) return;
     prefetchedUrlRef.current = src.url;
@@ -263,7 +264,7 @@ export function useAutoSync(params: {
       const curSettings = settingsRef.current;
       const curSelected = curSnap.subtitleTracks.find((t) => t.selected) ?? null;
       if (!b || !curSelected?.external || !curSrc.url || curSrc.isLive) return null;
-      if (!isNativeTauri()) {
+      if (!isDesktopTauri()) {
         if (manual) {
           triggerRef.current = "manual";
           setTrigger("manual");
@@ -273,10 +274,32 @@ export function useAutoSync(params: {
         return null;
       }
 
-      const selectedInput = buildSelectedCandidateInput(curSelected);
-      if (!selectedInput) return null;
+      const curMediaKey = autoSyncMediaKey(curSrc);
+      const runTarget = resolveAutoSyncRunTarget({
+        currentSelected: curSelected,
+        applied: appliedRef.current,
+        currentMediaKey: curMediaKey,
+        season: curSrc.episode?.season,
+        episode: curSrc.episode?.episode,
+      });
+      if (!runTarget) {
+        if (manual) {
+          triggerRef.current = "manual";
+          setTrigger("manual");
+          setErrorMessage("Original subtitle source is unavailable for re-sync.");
+          setStatus("error");
+        }
+        return null;
+      }
+      const { sourceTrack, selectedInput, replaceTrackId: resyncReplaceTrackId, preservedApplied } =
+        runTarget;
 
-      if (!selectedInput.localPath && !/^https?:/i.test(selectedInput.url)) {
+      if (
+        !selectedInput.localPath &&
+        !selectedInput.inlineText &&
+        !/^https?:/i.test(selectedInput.url) &&
+        !curSelected.autoSynced
+      ) {
         const inlineCues = b.getSelectedTrackCues?.();
         if (inlineCues && inlineCues.length > 0) {
           selectedInput.inlineText = toSrt(inlineCues);
@@ -284,13 +307,13 @@ export function useAutoSync(params: {
         }
       }
 
-      const curMediaKey = autoSyncMediaKey(curSrc);
       if (manual) {
         if (manualTimingMediaRef.current === curMediaKey) {
           manualTimingMediaRef.current = null;
         }
         if (revertedRef.current.mediaKey === curMediaKey) {
           revertedRef.current.keys.delete(trackAutoSyncKey(curSelected));
+          revertedRef.current.keys.delete(trackAutoSyncKey(sourceTrack));
         }
       }
 
@@ -322,16 +345,21 @@ export function useAutoSync(params: {
       triggerRef.current = runTrigger;
       const selectionOrigin = b.getSubtitleSelectionOrigin?.() ?? "automatic";
       const candidateScope = resolveAutoSyncScope(runTrigger, selectionOrigin);
-      const trackKey = trackAutoSyncKey(curSelected);
+      const trackKey = trackAutoSyncKey(sourceTrack);
       const selectedSourceUrl = selectedInput.url;
       const selectedSourceNorm = normalizeUrlKey(selectedSourceUrl);
       const candidates =
         candidateScope === "selected_only"
           ? []
           : collectSameLanguageCandidates(
-              curSelected,
+              sourceTrack,
               availableSubsRef.current,
               curSnap.subtitleTracks,
+              12,
+              {
+                season: curSrc.episode?.season,
+                episode: curSrc.episode?.episode,
+              },
             );
 
       setTrigger(runTrigger);
@@ -369,6 +397,13 @@ export function useAutoSync(params: {
               setScale(null);
               setWithinTolerance(false);
               setStatus("no-embedded");
+              return;
+            case "container_unavailable":
+              setOffsetMs(null);
+              setScale(null);
+              setWithinTolerance(false);
+              setErrorMessage("Could not reach video stream for subtitle alignment.");
+              setStatus(manual ? "error" : "idle");
               return;
             case "within_tolerance":
               setOffsetMs(res.medianOffsetMs);
@@ -418,10 +453,14 @@ export function useAutoSync(params: {
                   : null;
 
               const targetLang =
-                matchedExistingTrack?.lang ?? matchedResult?.lang ?? curSelected.lang;
+                matchedExistingTrack?.lang ??
+                matchedResult?.lang ??
+                sourceTrack.lang ??
+                curSelected.lang;
               const targetTitle =
                 matchedExistingTrack?.title ??
                 matchedResult?.title ??
+                sourceTrack.title ??
                 curSelected.title ??
                 `Synced (${fmt.toUpperCase()})`;
               const baseMetadata = matchedExistingTrack
@@ -450,12 +489,16 @@ export function useAutoSync(params: {
                       providerMatch: matchedResult.providerMatch,
                       subId: matchedResult.id,
                     }
-                  : buildRestoreMetadata(curSelected);
+                  : buildRestoreMetadata(sourceTrack);
 
-              const replaceExisting = matchedExistingTrack != null;
-              const replaceTrackId = matchedExistingTrack?.id;
+              const replaceExisting = preservedApplied != null || matchedExistingTrack != null;
+              const replaceTrackId =
+                preservedApplied != null ? resyncReplaceTrackId : matchedExistingTrack?.id;
               const commitOrigin = b.getSubtitleSelectionOrigin?.() ?? "automatic";
-              const subDelayBefore = liveSnapRef.current.subDelaySec;
+              const subDelayBefore =
+                preservedApplied?.changed
+                  ? preservedApplied.subDelayBefore
+                  : liveSnapRef.current.subDelaySec;
 
               void runWithSubtitleFpsReset(
                 async () => {
@@ -478,7 +521,9 @@ export function useAutoSync(params: {
                       title: targetTitle,
                       baseMetadata,
                       rawFilename:
-                        matchedExistingTrack?.externalFilename ?? `synced.${fmt}`,
+                        (!curSelected.autoSynced ? matchedExistingTrack?.externalFilename : undefined) ??
+                        sourceTrack.externalFilename ??
+                        `synced.${fmt}`,
                       replaceExisting,
                       replaceTrackId,
                       commitOrigin,
@@ -508,28 +553,39 @@ export function useAutoSync(params: {
                     return;
                   }
 
-                  if (engineRef.current === "mpv" && !isSyncedTrack(curSelAfter)) {
-                    // mpv emits the updated track list shortly after mpv_sub_add resolves.
+                  const commitStillPending =
+                    !isSyncedTrack(curSelAfter) ||
+                    (replaceExisting &&
+                      replaceTrackId != null &&
+                      curSelAfter?.id === replaceTrackId);
+
+                  if (commitStillPending) {
+                    // Both mpv (IPC event lag) and HTML5 (deferred React snapshot commit)
+                    // may surface the newly selected synced track after addSubtitle resolves.
                     awaitingCommitRef.current = {
                       mediaKey: scope.mediaKey,
                       deadlineMs: Date.now() + 2000,
+                      replacedTrackId: replaceExisting ? replaceTrackId : undefined,
                     };
                   } else {
                     awaitingCommitRef.current = null;
                   }
 
+                  const backupFmt = res.selectedOriginalFormat
+                    ? normalizeTextSubFormat(res.selectedOriginalFormat)
+                    : null;
                   appliedRef.current = {
-                    originalTrack: curSelected,
-                    replacedSelected: matchedSelected,
-                    originalTrackId: curSelected.id,
-                    originalTrackKey: trackKey,
+                    originalTrack: preservedApplied?.originalTrack ?? sourceTrack,
+                    replacedSelected: preservedApplied?.replacedSelected ?? matchedSelected,
+                    originalTrackId: preservedApplied?.originalTrackId ?? sourceTrack.id,
+                    originalTrackKey: preservedApplied?.originalTrackKey ?? trackKey,
                     committedTrackId: commitRes.committedTrackId,
                     committedTrackKey: commitRes.committedTrackKey,
-                    originalBackupPath: res.selectedOriginalPath ?? null,
-                    originalBackupText: res.selectedOriginalText ?? null,
-                    originalBackupFormat: res.selectedOriginalFormat
-                      ? normalizeTextSubFormat(res.selectedOriginalFormat)
-                      : null,
+                    originalBackupPath:
+                      preservedApplied?.originalBackupPath ?? res.selectedOriginalPath ?? null,
+                    originalBackupText:
+                      preservedApplied?.originalBackupText ?? res.selectedOriginalText ?? null,
+                    originalBackupFormat: preservedApplied?.originalBackupFormat ?? backupFmt,
                     subDelayBefore,
                     scope,
                     changed: true,
@@ -563,33 +619,44 @@ export function useAutoSync(params: {
     [bridgeRef, isCurrentAutoSyncScope, runWithSubtitleFpsReset],
   );
 
-  // Sync committed track identity once mpv emits the new synced track, and reset when switching tracks.
+  // Sync committed track identity once mpv/HTML5 emits the new synced track, and reset when switching tracks.
   useEffect(() => {
     if (selectedSynced && selected && appliedRef.current.changed) {
-      if (awaitingCommitRef.current?.mediaKey === mediaKey) {
-        awaitingCommitRef.current = null;
+      const waitingReplacedId =
+        awaitingCommitRef.current?.mediaKey === mediaKey
+          ? awaitingCommitRef.current.replacedTrackId
+          : undefined;
+      if (!waitingReplacedId || selected.id !== waitingReplacedId) {
+        if (awaitingCommitRef.current?.mediaKey === mediaKey) {
+          awaitingCommitRef.current = null;
+        }
         if (!appliedRef.current.committedTrackId) {
           appliedRef.current.committedTrackId = selected.id;
           appliedRef.current.committedTrackKey = trackAutoSyncKey(selected);
         }
+      } else if (
+        awaitingCommitRef.current?.mediaKey === mediaKey &&
+        Date.now() <= awaitingCommitRef.current.deadlineMs
+      ) {
+        // Still rendering the superseded synced track prior to Re-sync replacement; wait for new track.
+        return;
       }
     }
 
-    if (
-      !selected &&
+    const awaitingCommit =
       awaitingCommitRef.current?.mediaKey === mediaKey &&
-      Date.now() <= awaitingCommitRef.current.deadlineMs
-    ) {
+      Date.now() <= awaitingCommitRef.current.deadlineMs;
+    if (!selected && awaitingCommit) {
       return;
     }
 
-    if (
-      selected &&
-      !selectedSynced &&
-      awaitingCommitRef.current?.mediaKey === mediaKey &&
-      selected.id !== statusScopeRef.current?.trackId &&
-      trackAutoSyncKey(selected) !== appliedRef.current.originalTrackKey
-    ) {
+    if (selected && !selectedSynced && awaitingCommit) {
+      if (
+        selected.id === statusScopeRef.current?.trackId ||
+        trackAutoSyncKey(selected) === appliedRef.current.originalTrackKey
+      ) {
+        return;
+      }
       awaitingCommitRef.current = null;
     }
 

@@ -7,6 +7,7 @@
 const HEADER_SIZE: usize = 8;
 const FULL_HEADER_SIZE: usize = 12;
 const INDEX_UNSET: i32 = -1;
+const MAX_MP4_SAMPLES: usize = 500_000;
 
 const TYPE_MOOV: u32 = u32::from_be_bytes(*b"moov");
 const TYPE_MVHD: u32 = u32::from_be_bytes(*b"mvhd");
@@ -97,6 +98,10 @@ impl<'a> Reader<'a> {
             end: b.end,
             position: 0,
         }
+    }
+
+    fn bytes_left(&self) -> usize {
+        self.end.saturating_sub(self.start.saturating_add(self.position))
     }
 
     fn take(&mut self, count: usize) -> Option<usize> {
@@ -392,11 +397,12 @@ fn parse_elst(bytes: &[u8], elst: Mp4Box) -> Option<EditList> {
     r.position = HEADER_SIZE;
     let version = full_box_version(r.read_u32()?);
     let entry_count = r.read_u32_to_usize()?;
-    if entry_count > 1_000_000 {
+    let entry_size = if version == 1 { 20 } else { 12 };
+    if entry_count > 1_000_000 || entry_count > r.bytes_left() / entry_size {
         return None;
     }
-    let mut durations = Vec::with_capacity(entry_count);
-    let mut media_times = Vec::with_capacity(entry_count);
+    let mut durations = Vec::with_capacity(entry_count.min(4096));
+    let mut media_times = Vec::with_capacity(entry_count.min(4096));
     for _ in 0..entry_count {
         let duration = if version == 1 {
             r.read_non_neg_i64()?
@@ -631,7 +637,7 @@ fn parse_stbl(
             duration_us: 0,
         });
     }
-    if sample_count > 500_000 {
+    if sample_count > MAX_MP4_SAMPLES {
         return None;
     }
 
@@ -674,9 +680,10 @@ fn parse_stbl(
         }
     }
 
-    let mut sizes = Vec::with_capacity(sample_count);
-    let mut timestamps = Vec::with_capacity(sample_count);
-    let mut key_frames = Vec::with_capacity(sample_count);
+    let prealloc = sample_count.min(16_384);
+    let mut sizes = Vec::with_capacity(prealloc);
+    let mut timestamps = Vec::with_capacity(prealloc);
+    let mut key_frames = Vec::with_capacity(prealloc);
     let mut timestamp_units = 0i64;
     let mut remaining_in_chunk = 0usize;
 
@@ -763,10 +770,17 @@ fn parse_stbl(
     if edits.durations.len() == 1 && edits.durations[0] == 0 {
         let edit_start_time = edits.media_times[0];
         for ts in &mut timestamps {
-            *ts = scale_large_timestamp(*ts - edit_start_time, MICROS_PER_SECOND, timescale);
+            *ts = scale_large_timestamp(
+                ts.saturating_sub(edit_start_time),
+                MICROS_PER_SECOND,
+                timescale,
+            );
         }
-        let shifted_duration =
-            scale_large_timestamp(duration_units - edit_start_time, MICROS_PER_SECOND, timescale);
+        let shifted_duration = scale_large_timestamp(
+            duration_units.saturating_sub(edit_start_time),
+            MICROS_PER_SECOND,
+            timescale,
+        );
         return Some(Mp4SubtitleSampleTable {
             track_id,
             codec,
@@ -817,8 +831,11 @@ fn parse_stbl(
             let pts_us = scale_large_timestamp(pts, MICROS_PER_SECOND, movie_timescale);
             for j in start_indices[i]..end_indices[i] {
                 if j >= 0 && (j as usize) < timestamps.len() {
+                    if edited_timestamps.len() >= MAX_MP4_SAMPLES {
+                        return None;
+                    }
                     let time_in_segment_us = scale_large_timestamp(
-                        timestamps[j as usize] - edit_media_time,
+                        timestamps[j as usize].saturating_sub(edit_media_time),
                         MICROS_PER_SECOND,
                         timescale,
                     );
@@ -1076,5 +1093,41 @@ mod tests {
         assert!(idx.has_text_tracks);
         assert_eq!(idx.tables.len(), 1);
         assert!(idx.tables[0].timestamps_us.is_empty());
+    }
+
+    #[test]
+    fn elst_with_absurd_entry_count_and_min_media_time_never_panics_or_ooms() {
+        // Corrupt elst claiming 999_999 entries in a 16-byte box -> rejected safely without prealloc OOM.
+        let mut moov = build_synthetic_moov(
+            b"tx3g",
+            &[10, 12],
+            &[(2, 1000)],
+            Some(&[(1000, 0, 1)]),
+        );
+        let needle = b"elst";
+        if let Some(pos) = moov.windows(needle.len()).position(|w| w == needle) {
+            // Version/flags at pos+4..pos+8, entry_count at pos+8..pos+12
+            moov[pos + 8..pos + 12].copy_from_slice(&999_999u32.to_be_bytes());
+        }
+        // parse_elst rejects the bogus header cleanly -> track fails safely without OOMing.
+        assert!(parse_moov_subtitles(&moov).is_none());
+
+        // Zero-duration shift with i32::MIN media_time does not overflow/panic.
+        let moov_shift = build_synthetic_moov(
+            b"tx3g",
+            &[10, 12],
+            &[(2, 1000)],
+            Some(&[(0, i32::MIN, 1)]),
+        );
+        assert!(parse_moov_subtitles(&moov_shift).is_some());
+    }
+
+    #[test]
+    fn elst_expansion_exceeding_max_samples_returns_none_for_track() {
+        // 600 samples repeated 1_000 times = 600_000 > MAX_MP4_SAMPLES (500_000) -> rejected safely.
+        let sizes = vec![10u32; 600];
+        let edits = vec![(600_000u32, 0i32, 1i16); 1_000];
+        let moov = build_synthetic_moov(b"tx3g", &sizes, &[(600, 1000)], Some(&edits));
+        assert!(parse_moov_subtitles(&moov).is_none());
     }
 }

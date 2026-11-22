@@ -41,7 +41,6 @@ const MAX_ARCHIVE_ENTRIES: usize = 100;
 const MIN_SELECTED_CUES: usize = 4;
 
 const MIN_FULL_DIALOGUE_CUES: usize = 8;
-const MIN_FULL_DIALOGUE_SPAN_MS: i64 = 30_000;
 const MIN_FULL_DIALOGUE_DENSITY_PER_MINUTE: f64 = 2.0;
 const MIN_INDEXED_REFERENCE_SPAN_MS: i64 = 45_000;
 
@@ -135,6 +134,10 @@ pub struct SubtitleCandidateInput {
     pub lang: Option<String>,
     #[allow(dead_code)]
     pub title: Option<String>,
+    pub release: Option<String>,
+    pub filename: Option<String>,
+    pub season: Option<u32>,
+    pub episode: Option<u32>,
     pub headers: Option<HashMap<String, String>>,
     pub local_trusted: Option<bool>,
     pub download_auth: Option<DownloadAuthInput>,
@@ -178,6 +181,7 @@ pub enum AlignOutcome {
     NoFit,
     NoSubtitleTracks,
     NoUsableReference,
+    ContainerUnavailable,
     Inconclusive,
     Cancelled,
 }
@@ -287,7 +291,9 @@ pub async fn subsync_align_subtitles(
             return Ok(AlignSubtitlesResponse::empty(AlignOutcome::NoUsableReference));
         }
         ContainerLoadOutcome::Unavailable => {
-            return Ok(AlignSubtitlesResponse::empty(AlignOutcome::NoUsableReference));
+            return Ok(AlignSubtitlesResponse::empty(
+                AlignOutcome::ContainerUnavailable,
+            ));
         }
     };
 
@@ -889,7 +895,8 @@ async fn finalize_pool_response(
         selected_url,
         out_format.ext(),
         &final_text,
-    )?;
+    )
+    .await?;
 
     let (selected_original_path, selected_original_text, selected_original_format) =
         if chosen_is_selected {
@@ -907,6 +914,7 @@ async fn finalize_pool_response(
                     orig_fmt.ext(),
                     &orig_text,
                 )
+                .await
                 .ok();
                 (orig_path, Some(orig_text), Some(orig_fmt))
             } else {
@@ -968,7 +976,26 @@ fn autosync_temp_dir() -> PathBuf {
     std::env::temp_dir().join("harbor-subs").join("prepared")
 }
 
-fn write_autosync_temp_file(
+async fn write_autosync_temp_file(
+    file_prefix: &str,
+    media_url: &str,
+    track_key: &str,
+    ext: &str,
+    contents: &str,
+) -> Result<String, String> {
+    let file_prefix = file_prefix.to_string();
+    let media_url = media_url.to_string();
+    let track_key = track_key.to_string();
+    let ext = ext.to_string();
+    let contents = contents.to_string();
+    tokio::task::spawn_blocking(move || {
+        write_autosync_temp_file_sync(&file_prefix, &media_url, &track_key, &ext, &contents)
+    })
+    .await
+    .map_err(|e| format!("write temp task failed: {e}"))?
+}
+
+fn write_autosync_temp_file_sync(
     file_prefix: &str,
     media_url: &str,
     track_key: &str,
@@ -976,7 +1003,21 @@ fn write_autosync_temp_file(
     contents: &str,
 ) -> Result<String, String> {
     let dir = autosync_temp_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)
+            .map_err(|e| format!("create temp dir: {e}"))?;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
+    }
+
     let media_track_hash = sha256_hex16(&format!("{media_url}\0{track_key}"));
     let content_hash = sha256_hex16(contents);
     let prefix = format!("{file_prefix}{media_track_hash}_");
@@ -994,8 +1035,26 @@ fn write_autosync_temp_file(
         }
     }
 
-    std::fs::write(&target_path, contents.as_bytes())
-        .map_err(|e| format!("write retimed subtitle: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&target_path)
+            .map_err(|e| format!("write retimed subtitle: {e}"))?;
+        let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+        f.write_all(contents.as_bytes())
+            .map_err(|e| format!("write retimed subtitle: {e}"))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&target_path, contents.as_bytes())
+            .map_err(|e| format!("write retimed subtitle: {e}"))?;
+    }
     Ok(target_path.to_string_lossy().into_owned())
 }
 
@@ -1027,7 +1086,6 @@ fn select_and_filter_references(
             || label_lower.contains("songs only");
 
         let candidate = cues >= MIN_FULL_DIALOGUE_CUES
-            && span >= MIN_FULL_DIALOGUE_SPAN_MS
             && span >= MIN_INDEXED_REFERENCE_SPAN_MS
             && !is_commentary
             && !is_descriptive
@@ -1386,6 +1444,29 @@ async fn load_candidates_parallel(
     out
 }
 
+async fn decode_and_parse_blocking(
+    bytes: Vec<u8>,
+    source_label: String,
+    format_hint: Option<String>,
+    lang_hint: Option<String>,
+) -> Option<LoadedSubtitle> {
+    tokio::task::spawn_blocking(move || {
+        let text = decode_subtitle_bytes(&bytes, lang_hint.as_deref());
+        let (fmt, cues) = parse_subtitles(&text, Some(&source_label), format_hint.as_deref());
+        if cues.len() < MIN_SELECTED_CUES {
+            return None;
+        }
+        Some(LoadedSubtitle {
+            format: fmt,
+            cues,
+            raw_body: text,
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 async fn load_candidate_subtitle(
     cand: &SubtitleCandidateInput,
     cancel: Arc<AtomicBool>,
@@ -1395,31 +1476,41 @@ async fn load_candidate_subtitle(
     }
 
     if let Some(ref inline) = cand.inline_text {
-        let (fmt, cues) = parse_subtitles(inline, Some(&cand.url), cand.format.as_deref());
-        if cues.len() >= MIN_SELECTED_CUES {
-            return Some(LoadedSubtitle {
-                format: fmt,
-                cues,
-                raw_body: inline.clone(),
-            });
+        let inline_owned = inline.clone();
+        let url_owned = cand.url.clone();
+        let fmt_owned = cand.format.clone();
+        let parsed = tokio::task::spawn_blocking(move || {
+            let (fmt, cues) = parse_subtitles(&inline_owned, Some(&url_owned), fmt_owned.as_deref());
+            if cues.len() >= MIN_SELECTED_CUES {
+                Some(LoadedSubtitle {
+                    format: fmt,
+                    cues,
+                    raw_body: inline_owned,
+                })
+            } else {
+                None
+            }
+        })
+        .await
+        .ok()
+        .flatten();
+        if parsed.is_some() {
+            return parsed;
         }
     }
 
     if let Some(ref lp) = cand.local_path {
         if let Some(path) = url_guard::local_file_path(lp).or_else(|| Some(PathBuf::from(lp))) {
             if let Some(bytes) = read_local_file_limited(&path, MAX_SUBTITLE_RESPONSE_BYTES).await {
-                let text = decode_subtitle_bytes(&bytes, cand.lang.as_deref());
-                let (fmt, cues) = parse_subtitles(
-                    &text,
-                    Some(&path.to_string_lossy()),
-                    cand.format.as_deref(),
-                );
-                if cues.len() >= MIN_SELECTED_CUES {
-                    return Some(LoadedSubtitle {
-                        format: fmt,
-                        cues,
-                        raw_body: text,
-                    });
+                if let Some(loaded) = decode_and_parse_blocking(
+                    bytes,
+                    path.to_string_lossy().into_owned(),
+                    cand.format.clone(),
+                    cand.lang.clone(),
+                )
+                .await
+                {
+                    return Some(loaded);
                 }
             }
         }
@@ -1428,16 +1519,13 @@ async fn load_candidate_subtitle(
     // Check if url itself is a local file path.
     if let Some(local_path) = url_guard::local_file_path(&cand.url) {
         if let Some(bytes) = read_local_file_limited(&local_path, MAX_SUBTITLE_RESPONSE_BYTES).await {
-            let text = decode_subtitle_bytes(&bytes, cand.lang.as_deref());
-            let (fmt, cues) =
-                parse_subtitles(&text, Some(&cand.url), cand.format.as_deref());
-            if cues.len() >= MIN_SELECTED_CUES {
-                return Some(LoadedSubtitle {
-                    format: fmt,
-                    cues,
-                    raw_body: text,
-                });
-            }
+            return decode_and_parse_blocking(
+                bytes,
+                cand.url.clone(),
+                cand.format.clone(),
+                cand.lang.clone(),
+            )
+            .await;
         }
         return None;
     }
@@ -1448,21 +1536,35 @@ async fn load_candidate_subtitle(
     }
     let is_zip = raw_bytes.starts_with(b"PK\x03\x04") || raw_bytes.starts_with(b"PK\x05\x06");
     if is_zip {
-        return extract_best_subtitle_from_zip(&raw_bytes, cand.lang.as_deref());
+        let lang = cand.lang.clone();
+        let season = cand.season;
+        let episode = cand.episode;
+        let release = cand.release.clone();
+        let filename = cand.filename.clone();
+        return tokio::task::spawn_blocking(move || {
+            extract_best_subtitle_from_zip(
+                &raw_bytes,
+                lang.as_deref(),
+                season,
+                episode,
+                release.as_deref(),
+                filename.as_deref(),
+            )
+        })
+        .await
+        .ok()
+        .flatten();
     }
     if raw_bytes.len() > MAX_SUBTITLE_RESPONSE_BYTES {
         return None;
     }
-    let text = decode_subtitle_bytes(&raw_bytes, cand.lang.as_deref());
-    let (fmt, cues) = parse_subtitles(&text, Some(&cand.url), cand.format.as_deref());
-    if cues.len() < MIN_SELECTED_CUES {
-        return None;
-    }
-    Some(LoadedSubtitle {
-        format: fmt,
-        cues,
-        raw_body: text,
-    })
+    decode_and_parse_blocking(
+        raw_bytes,
+        cand.url.clone(),
+        cand.format.clone(),
+        cand.lang.clone(),
+    )
+    .await
 }
 
 async fn read_local_file_limited(path: &std::path::Path, max_bytes: usize) -> Option<Vec<u8>> {
@@ -1609,9 +1711,205 @@ fn is_safe_archive_entry_name(name: &str) -> bool {
     true
 }
 
+fn episode_from_name(name: &str) -> Option<(Option<u32>, u32)> {
+    let lower = name.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    // 1. SxxExx (allowing optional separators like '.' or '_' between season and episode)
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let at_boundary = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+        if at_boundary && bytes[i] == b's' {
+            let mut j = i + 1;
+            let s_start = j;
+            while j < bytes.len() && bytes[j].is_ascii_digit() && j - s_start < 3 {
+                j += 1;
+            }
+            if j > s_start && j - s_start <= 2 {
+                let s_val = lower[s_start..j].parse::<u32>().ok();
+                while j < bytes.len() && matches!(bytes[j], b'.' | b'_' | b'-' | b' ') {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'e' {
+                    j += 1;
+                    let e_start = j;
+                    while j < bytes.len() && bytes[j].is_ascii_digit() && j - e_start < 4 {
+                        j += 1;
+                    }
+                    let trailing_ok = j >= bytes.len() || !bytes[j].is_ascii_digit();
+                    if j > e_start && trailing_ok {
+                        if let Ok(e_val) = lower[e_start..j].parse::<u32>() {
+                            return Some((s_val, e_val));
+                        }
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+
+    // 2. 1x02 notation
+    i = 0;
+    while i < bytes.len() {
+        let at_boundary = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+        if at_boundary && bytes[i].is_ascii_digit() {
+            let s_start = i;
+            let mut j = i;
+            while j < bytes.len() && bytes[j].is_ascii_digit() && j - s_start < 3 {
+                j += 1;
+            }
+            if j - s_start <= 2 && j < bytes.len() && bytes[j] == b'x' {
+                let s_val = lower[s_start..j].parse::<u32>().ok();
+                j += 1;
+                let e_start = j;
+                while j < bytes.len() && bytes[j].is_ascii_digit() && j - e_start < 4 {
+                    j += 1;
+                }
+                let trailing_ok = j >= bytes.len() || !bytes[j].is_ascii_alphanumeric();
+                if j > e_start && trailing_ok {
+                    if let Ok(e_val) = lower[e_start..j].parse::<u32>() {
+                        return Some((s_val, e_val));
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+
+    None
+}
+
+fn filename_tokens(text: &str) -> HashSet<String> {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .map(|s| s.to_ascii_lowercase())
+        .filter(|s| {
+            s.len() >= 2
+                && !matches!(
+                    s.as_str(),
+                    "srt" | "ass" | "ssa" | "vtt" | "ttml" | "dfxp" | "sub" | "txt"
+                )
+        })
+        .collect()
+}
+
+fn canonical_lang_code(tok: &str) -> Option<&'static str> {
+    match tok {
+        "en" | "eng" | "english" => Some("en"),
+        "es" | "spa" | "spanish" => Some("es"),
+        "pt" | "por" | "portuguese" => Some("pt"),
+        "fr" | "fre" | "fra" | "french" => Some("fr"),
+        "de" | "ger" | "deu" | "german" => Some("de"),
+        "it" | "ita" | "italian" => Some("it"),
+        "ru" | "rus" | "russian" => Some("ru"),
+        "ar" | "ara" | "arabic" => Some("ar"),
+        "ja" | "jpn" | "japanese" => Some("ja"),
+        "ko" | "kor" | "korean" => Some("ko"),
+        "zh" | "chi" | "zho" | "chinese" => Some("zh"),
+        "pl" | "pol" | "polish" => Some("pl"),
+        "tr" | "tur" | "turkish" => Some("tr"),
+        "he" | "heb" | "iw" | "hebrew" => Some("he"),
+        "nl" | "dut" | "nld" | "dutch" => Some("nl"),
+        "sv" | "swe" | "swedish" => Some("sv"),
+        "no" | "nor" | "norwegian" => Some("no"),
+        "da" | "dan" | "danish" => Some("da"),
+        "fi" | "fin" | "finnish" => Some("fi"),
+        "cs" | "cze" | "ces" | "czech" => Some("cs"),
+        "hu" | "hun" | "hungarian" => Some("hu"),
+        "ro" | "ron" | "rum" | "romanian" => Some("ro"),
+        "el" | "gre" | "ell" | "greek" => Some("el"),
+        "th" | "tha" | "thai" => Some("th"),
+        "vi" | "vie" | "vietnamese" => Some("vi"),
+        "uk" | "ukr" | "ukrainian" => Some("uk"),
+        "bg" | "bul" | "bulgarian" => Some("bg"),
+        _ => None,
+    }
+}
+
+fn score_zip_entry(
+    entry_name: &str,
+    format_score: i32,
+    cue_count: usize,
+    lang_hint: Option<&str>,
+    season: Option<u32>,
+    episode: Option<u32>,
+    release: Option<&str>,
+    filename: Option<&str>,
+) -> i32 {
+    let mut score = format_score * 25 + (cue_count.min(1000) as i32);
+    let entry_tokens = filename_tokens(entry_name);
+
+    if let Some(target_ep) = episode {
+        if let Some((s_opt, ep)) = episode_from_name(entry_name) {
+            let season_ok = match (season, s_opt) {
+                (Some(ts), Some(es)) => ts == es,
+                _ => true,
+            };
+            if ep == target_ep && season_ok {
+                score += 5_000;
+            } else {
+                score -= 10_000;
+            }
+        }
+    }
+
+    if let Some(want_lang_raw) = lang_hint {
+        let want_primary = want_lang_raw
+            .trim()
+            .to_ascii_lowercase()
+            .split(['-', '_'])
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let want_canon = canonical_lang_code(&want_primary);
+        let mut saw_wanted = false;
+        let mut saw_other = false;
+        for tok in &entry_tokens {
+            if let Some(canon) = canonical_lang_code(tok) {
+                if want_canon == Some(canon) || (!want_primary.is_empty() && tok == &want_primary) {
+                    saw_wanted = true;
+                } else {
+                    saw_other = true;
+                }
+            }
+        }
+        if saw_wanted {
+            score += 400;
+        } else if saw_other {
+            score -= 400;
+        }
+    }
+
+    let mut target_tokens: HashSet<String> = HashSet::new();
+    if let Some(rel) = release {
+        target_tokens.extend(filename_tokens(rel));
+    }
+    if let Some(fname) = filename {
+        target_tokens.extend(filename_tokens(fname));
+    }
+    if !target_tokens.is_empty() {
+        let overlap = target_tokens
+            .intersection(&entry_tokens)
+            .filter(|t| canonical_lang_code(t).is_none())
+            .count();
+        score += (overlap.min(12) as i32) * 150;
+    }
+
+    if entry_tokens.contains("forced")
+        || entry_tokens.contains("signs")
+        || entry_tokens.contains("songs")
+    {
+        score -= 100;
+    }
+
+    score
+}
+
 fn extract_best_subtitle_from_zip(
     zip_bytes: &[u8],
     lang_hint: Option<&str>,
+    season: Option<u32>,
+    episode: Option<u32>,
+    release: Option<&str>,
+    filename: Option<&str>,
 ) -> Option<LoadedSubtitle> {
     let reader = Cursor::new(zip_bytes);
     let mut archive = zip::ZipArchive::new(reader).ok()?;
@@ -1632,10 +1930,12 @@ fn extract_best_subtitle_from_zip(
         }
         let lower = name.to_ascii_lowercase();
         let format_score = if lower.ends_with(".srt") {
-            3
+            4
         } else if lower.ends_with(".ass") || lower.ends_with(".ssa") {
-            2
+            3
         } else if lower.ends_with(".vtt") {
+            2
+        } else if lower.ends_with(".ttml") || lower.ends_with(".dfxp") {
             1
         } else {
             continue;
@@ -1662,7 +1962,16 @@ fn extract_best_subtitle_from_zip(
         if cues.len() < MIN_SELECTED_CUES {
             continue;
         }
-        let score = format_score * 10 + (cues.len().min(1000) as i32);
+        let score = score_zip_entry(
+            &name,
+            format_score,
+            cues.len(),
+            lang_hint,
+            season,
+            episode,
+            release,
+            filename,
+        );
         if best.as_ref().is_none_or(|(bs, _)| score > *bs) {
             best = Some((
                 score,
@@ -1715,6 +2024,10 @@ mod tests {
                 format: None,
                 lang: Some("en".to_string()),
                 title: None,
+                release: None,
+                filename: None,
+                season: None,
+                episode: None,
                 headers: None,
                 local_trusted: Some(false),
                 download_auth: None,
@@ -1772,10 +2085,79 @@ Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,Line 4
             zw.finish().unwrap();
         }
         let zip_bytes = cursor.into_inner();
-        let loaded = extract_best_subtitle_from_zip(&zip_bytes, Some("en"))
-            .expect("extract ass from zip");
+        let loaded = extract_best_subtitle_from_zip(
+            &zip_bytes,
+            Some("en"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("extract ass from zip");
         assert_eq!(loaded.format, SubtitleFormat::Ass);
         assert_eq!(loaded.cues.len(), 4);
+    }
+
+    #[test]
+    fn zip_extraction_prefers_matching_episode_language_release_and_supports_ttml() {
+        let make_srt = |tag: &str| {
+            format!(
+                "1\n00:00:01,000 --> 00:00:02,000\n{tag} 1\n\n\
+                 2\n00:00:03,000 --> 00:00:04,000\n{tag} 2\n\n\
+                 3\n00:00:05,000 --> 00:00:06,000\n{tag} 3\n\n\
+                 4\n00:00:07,000 --> 00:00:08,000\n{tag} 4\n"
+            )
+        };
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut zw = ZipWriter::new(&mut cursor);
+            zw.start_file("Show.S01E01.WEB.en.srt", SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(make_srt("ep1").as_bytes()).unwrap();
+            zw.start_file("Show.S01E02.BLURAY.fr.srt", SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(make_srt("ep2fr").as_bytes()).unwrap();
+            zw.start_file("Show.S01E02.WEB-DL.en.srt", SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(make_srt("ep2en_web").as_bytes()).unwrap();
+            zw.finish().unwrap();
+        }
+        let loaded = extract_best_subtitle_from_zip(
+            &cursor.into_inner(),
+            Some("en"),
+            Some(1),
+            Some(2),
+            Some("Show.S01E02.1080p.WEB-DL"),
+            None,
+        )
+        .expect("extract matching ep2");
+        assert!(loaded.raw_body.contains("ep2en_web 1"));
+
+        let ttml = "<tt><body><div>\
+            <p begin=\"1.0s\" end=\"2.0s\">A</p>\
+            <p begin=\"3.0s\" end=\"4.0s\">B</p>\
+            <p begin=\"5.0s\" end=\"6.0s\">C</p>\
+            <p begin=\"7.0s\" end=\"8.0s\">D</p>\
+            </div></body></tt>";
+        let mut cursor2 = Cursor::new(Vec::new());
+        {
+            let mut zw = ZipWriter::new(&mut cursor2);
+            zw.start_file("movie.dfxp", SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(ttml.as_bytes()).unwrap();
+            zw.finish().unwrap();
+        }
+        let ttml_loaded = extract_best_subtitle_from_zip(
+            &cursor2.into_inner(),
+            Some("en"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("extract dfxp");
+        assert_eq!(ttml_loaded.format, SubtitleFormat::Ttml);
+        assert_eq!(ttml_loaded.cues.len(), 4);
     }
 
     #[tokio::test]
@@ -2035,6 +2417,10 @@ Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,Line 4
             format: None,
             lang: Some("en".to_string()),
             title: None,
+            release: None,
+            filename: None,
+            season: None,
+            episode: None,
             headers: None,
             local_trusted: Some(true),
             download_auth: None,
@@ -2044,6 +2430,14 @@ Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,Line 4
         let resp = subsync_align_subtitles(req).await.expect("align cmd");
         assert_eq!(resp.outcome, AlignOutcome::Inconclusive);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn disallowed_media_url_returns_container_unavailable_instead_of_no_usable_ref() {
+        let mut req = base_request(0, "https://subs.example/en.srt");
+        req.media_url = "http://169.254.169.254/latest/meta-data".to_string();
+        let resp = subsync_align_subtitles(req).await.expect("align cmd");
+        assert_eq!(resp.outcome, AlignOutcome::ContainerUnavailable);
     }
 }
 

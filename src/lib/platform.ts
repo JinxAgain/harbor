@@ -48,6 +48,11 @@ export function isAndroid(): boolean {
   return osClass() === "android";
 }
 
+export function isDesktopTauri(): boolean {
+  const cls = osClass();
+  return cls === "linux" || cls === "macos" || cls === "windows";
+}
+
 // Every other platform answers from plugin-os, which reports only "android" for
 // a phone and a television alike. Leanback is not an OS, so the panel can only
 // be told apart by the strings the WebView carries.

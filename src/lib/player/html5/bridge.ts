@@ -846,22 +846,10 @@ export function createHtml5Bridge(): PlayerBridge {
       const prepared = takePreparedSubtitle(url);
       const providerDerived = metadata?.providerDerived ?? Boolean(metadata?.provider);
       if (!prepared && providerDerived && !isSafeProviderSubtitleUrl(url)) return false;
-      // Replace a previous track for the same source (or explicit replacement target) so
-      // re-fetched or auto-synced subtitles do not stack duplicates.
+      // Defer replacing a previous track for the same source until the replacement loads
+      // cleanly so a failed load never strips the user's current working subtitle.
       const sourceUrl = metadata?.originalUrl ?? url;
       const shouldReplace = !prepared || metadata?.replaceExisting === true;
-      if (shouldReplace) {
-        const priorIdx = subTracks.findIndex((track) =>
-          metadata?.replaceTrackId
-            ? track.id === metadata.replaceTrackId
-            : track.originalUrl === sourceUrl || track.url === sourceUrl,
-        );
-        if (priorIdx >= 0) {
-          const [oldTrack] = subTracks.splice(priorIdx, 1);
-          oldTrack.cleanup?.();
-          if (activeSubId === oldTrack.id) activeSubId = null;
-        }
-      }
       let resolvedUrl = url;
       if (
         !/^(https?|blob|data):/i.test(url) &&
@@ -900,6 +888,21 @@ export function createHtml5Bridge(): PlayerBridge {
       };
       subTracks.push(track);
       noteSubtitleOrigin(resolvedUrl, url);
+      const removeSupersededTrack = () => {
+        if (!shouldReplace) return;
+        const priorIdx = subTracks.findIndex(
+          (candidate) =>
+            candidate !== track &&
+            (metadata?.replaceTrackId
+              ? candidate.id === metadata.replaceTrackId
+              : candidate.originalUrl === sourceUrl || candidate.url === sourceUrl),
+        );
+        if (priorIdx >= 0) {
+          const [oldTrack] = subTracks.splice(priorIdx, 1);
+          oldTrack.cleanup?.();
+          if (activeSubId === oldTrack.id) activeSubId = null;
+        }
+      };
       if (selectionRequest) {
         const loaded = await ensureLoaded(track);
         if (requestMediaRevision !== mediaRevision || !subTracks.includes(track)) {
@@ -927,10 +930,12 @@ export function createHtml5Bridge(): PlayerBridge {
           activeSubId = settlement.selectedId;
           lastCueId = "";
         }
+        if (loaded) removeSupersededTrack();
         refreshSnapshot();
         tickCues();
         return loaded;
       }
+      removeSupersededTrack();
       refreshSnapshot();
       return true;
     },

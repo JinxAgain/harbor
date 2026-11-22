@@ -107,9 +107,8 @@ fn dir_size(path: &PathBuf) -> u64 {
     total
 }
 
-fn harbor_temp_dirs() -> Vec<PathBuf> {
-    let dir = std::env::temp_dir();
-    let entries = match std::fs::read_dir(&dir) {
+fn harbor_temp_dirs_at(dir: &std::path::Path) -> Vec<PathBuf> {
+    let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return Vec::new(),
     };
@@ -122,9 +121,21 @@ fn harbor_temp_dirs() -> Vec<PathBuf> {
         }
         if is_updater_dir(&name) || is_orphan_dir(&name) || name == "harbor-trailers" {
             out.push(entry.path());
+        } else if name == "harbor-subs" {
+            let prepared = entry.path().join("prepared");
+            if std::fs::metadata(&prepared)
+                .map(|m| m.is_dir())
+                .unwrap_or(false)
+            {
+                out.push(prepared);
+            }
         }
     }
     out
+}
+
+fn harbor_temp_dirs() -> Vec<PathBuf> {
+    harbor_temp_dirs_at(&std::env::temp_dir())
 }
 
 #[tauri::command]
@@ -194,6 +205,29 @@ mod tests {
 
         assert!(!root.join("harbor-subs").join("prepared").exists());
         assert!(saved.join("kept.srt").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn harbor_temp_dirs_includes_prepared_subs_but_preserves_saved() {
+        let root = std::env::temp_dir().join(format!(
+            "harbor-temp-dirs-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let prepared = root.join("harbor-subs").join("prepared");
+        let saved = root.join("harbor-subs").join("saved");
+        std::fs::create_dir_all(&prepared).unwrap();
+        std::fs::create_dir_all(&saved).unwrap();
+        std::fs::write(prepared.join("autosync_tmp.srt"), b"temp").unwrap();
+        std::fs::write(saved.join("kept.srt"), b"export").unwrap();
+
+        let dirs = harbor_temp_dirs_at(&root);
+        assert_eq!(dirs, vec![prepared.clone()]);
+
         std::fs::remove_dir_all(root).unwrap();
     }
 }

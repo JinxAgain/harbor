@@ -8,12 +8,22 @@ import { emptySnapshot, type PlayerSnapshot } from "@/lib/player/bridge";
 import { createForwardingMpvBridge } from "@/lib/player/mpv-forward";
 import { buildSubtitleTimingMediaKey } from "@/lib/player/subtitle-fps";
 import {
+  HDR_STAGE_AUTOSYNC_DISMISS,
+  HDR_STAGE_AUTOSYNC_REVERT,
+  HDR_STAGE_AUTOSYNC_RUN,
+  HDR_STAGE_AUTOSYNC_STOP,
+  HDR_STAGE_SET_SUB_DELAY,
   hdrOverlayEmitAction,
   onHdrStageProps,
   type HdrNavigationRequest,
+  type HdrStageAutoSyncState,
+  type HdrStageSubDelayRequest,
 } from "@/lib/hdr-overlay";
+import { publishAutoSync } from "@/components/player/autosync/autosync-store";
+import { SubSyncBar } from "@/components/player/sub-sync-bar";
 import { PlayerNavigationProvider, type PlayerNavigation, type PlayerSrc } from "@/lib/view";
 import { PlayerInteractionLockControls } from "@/components/player/player-interaction-lock";
+import type { AutoSyncHandle } from "./player/hooks/use-auto-sync";
 import { usePlayerInteractionBlocker } from "./player/hooks/use-player-interaction-lock";
 
 export type HdrStagePayload = {
@@ -33,6 +43,7 @@ export type HdrStagePayload = {
   screenLocked: boolean;
   screenLockControlsVisible: boolean;
   screenLockBinding: string;
+  autoSync?: HdrStageAutoSyncState;
 };
 
 function emitDead() {
@@ -104,6 +115,41 @@ function HdrOverlayChrome() {
   const reportLockedActivity = useCallback(
     () => void hdrOverlayEmitAction("hdr-stage://activity", {}),
     [],
+  );
+
+  const autoSyncState = payload?.autoSync;
+  const forwardedAutoSync = useMemo<AutoSyncHandle | null>(() => {
+    if (!autoSyncState) return null;
+    return {
+      ...autoSyncState,
+      run: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_RUN, {}),
+      stop: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_STOP, {}),
+      revert: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_REVERT, {}),
+      dismiss: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_DISMISS, {}),
+    };
+  }, [autoSyncState]);
+
+  useEffect(() => {
+    publishAutoSync(forwardedAutoSync);
+    return () => publishAutoSync(null);
+  }, [forwardedAutoSync]);
+
+  const currentMediaKey = payload
+    ? buildSubtitleTimingMediaKey({
+        sourceUrl: payload.src.url,
+        mediaId: payload.src.meta.id,
+        season: payload.src.episode?.season,
+        episode: payload.src.episode?.episode,
+      })
+    : "";
+
+  const handleSubDelay = useCallback(
+    (sec: number) => {
+      if (!currentMediaKey) return;
+      const req: HdrStageSubDelayRequest = { mediaKey: currentMediaKey, sec };
+      void hdrOverlayEmitAction(HDR_STAGE_SET_SUB_DELAY, req);
+    },
+    [currentMediaKey],
   );
 
   usePlayerInteractionBlocker({
@@ -227,6 +273,7 @@ function HdrOverlayChrome() {
         onSeek={(sec) => act("hdr-stage://seek", { sec })}
         onSeekStep={(delta) => act("hdr-stage://seek-step", { delta })}
         rememberSubChoice={(t) => act("hdr-stage://remember-sub", { lang: t?.lang ?? null })}
+        onSubDelay={handleSubDelay}
         onPiP={() => act("hdr-stage://pip")}
         onFullscreen={() => act("hdr-stage://fullscreen")}
         openCastMenu={() => act("hdr-stage://cast")}
@@ -258,6 +305,13 @@ function HdrOverlayChrome() {
         download={download}
         sleep={undefined}
       />
+      {!payload.pipMode && (
+        <SubSyncBar
+          delaySec={snap.subDelaySec}
+          onDelay={handleSubDelay}
+          syncAvailable={snap.subtitleTracks.some((t) => t.selected)}
+        />
+      )}
       <PlayerInteractionLockControls
         enabled={payload.screenLockEnabled}
         locked={payload.screenLocked}

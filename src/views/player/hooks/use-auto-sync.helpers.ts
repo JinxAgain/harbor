@@ -196,13 +196,21 @@ export async function commitSyncedSubtitleTrack(params: {
 
   const tracks = getCurrentTracks();
   const committedTrack =
-    tracks.find((t) => t.selected && t.autoSynced === true) ?? null;
+    tracks.find(
+      (t) =>
+        t.selected &&
+        t.autoSynced === true &&
+        (!replaceTrackId || t.id !== replaceTrackId),
+    ) ?? null;
+  // Pre-seed the deterministic source key because HTML5 emits snapshot updates asynchronously
+  // after addSubtitle resolves and liveSnapRef may still hold pre-commit tracks here.
+  const deterministicKey = normalizeUrlKey(chosenUrl || playableUrl);
 
   bridge.setSubDelay(0);
   return {
     ok: true,
     committedTrackId: committedTrack?.id ?? null,
-    committedTrackKey: committedTrack ? trackAutoSyncKey(committedTrack) : null,
+    committedTrackKey: committedTrack ? trackAutoSyncKey(committedTrack) : deterministicKey,
   };
 }
 
@@ -321,7 +329,94 @@ export function canPrefetchEmbeddedMedia(
   return true;
 }
 
-export function buildSelectedCandidateInput(track: TrackInfo): SubtitleCandidateInput | null {
+export type AutoSyncRunTarget = {
+  sourceTrack: TrackInfo;
+  selectedInput: SubtitleCandidateInput;
+  replaceTrackId: string;
+  preservedApplied: AppliedAutoSyncState | null;
+};
+
+function isRetimedAutosyncPath(value: string | null | undefined): boolean {
+  return typeof value === "string" && /(?:^|[\\/])autosync_(?!orig_)/i.test(value);
+}
+
+/**
+ * Resolves the original pre-sync source when re-running auto-sync on an already synced track
+ * so repeated clicks of "Re-sync" align the un-retimed source and preserve backup/delay state.
+ */
+export function resolveAutoSyncRunTarget(params: {
+  currentSelected: TrackInfo;
+  applied: AppliedAutoSyncState;
+  currentMediaKey: string;
+  season?: number;
+  episode?: number;
+}): AutoSyncRunTarget | null {
+  const { currentSelected, applied, currentMediaKey, season, episode } = params;
+  if (!currentSelected.autoSynced) {
+    const selectedInput = buildSelectedCandidateInput(currentSelected, { season, episode });
+    if (!selectedInput) return null;
+    return {
+      sourceTrack: currentSelected,
+      selectedInput,
+      replaceTrackId: currentSelected.id,
+      preservedApplied: null,
+    };
+  }
+
+  const sameApplied =
+    applied.changed &&
+    applied.scope?.mediaKey === currentMediaKey &&
+    matchesCommittedSyncedTrack(applied, currentSelected);
+
+  if (sameApplied && applied.replacedSelected && applied.originalTrack) {
+    const orig = applied.originalTrack;
+    const origSanitized: TrackInfo = isRetimedAutosyncPath(orig.externalFilename)
+      ? { ...orig, externalFilename: undefined, prepared: false }
+      : orig;
+    const selectedInput = buildSelectedCandidateInput(origSanitized, { season, episode });
+    if (!selectedInput) return null;
+    if (applied.originalBackupPath && !isRetimedAutosyncPath(applied.originalBackupPath)) {
+      selectedInput.localPath = applied.originalBackupPath;
+    }
+    if (applied.originalBackupText != null) {
+      selectedInput.inlineText = applied.originalBackupText;
+      selectedInput.format = applied.originalBackupFormat ?? selectedInput.format;
+    }
+    return {
+      sourceTrack: orig,
+      selectedInput,
+      replaceTrackId: currentSelected.id,
+      preservedApplied: applied,
+    };
+  }
+
+  // Fallback for an auto-synced alternative track or restored UI state: use its original URL
+  // while stripping the temporary `autosync_*` retimed filename so we never feed retimed text back.
+  const externalTemp = isRetimedAutosyncPath(currentSelected.externalFilename);
+  const sourceUrl =
+    currentSelected.originalUrl || (!externalTemp ? currentSelected.url : undefined);
+  if (!sourceUrl || isRetimedAutosyncPath(sourceUrl)) return null;
+  const sanitized: TrackInfo = {
+    ...currentSelected,
+    url: sourceUrl,
+    originalUrl: sourceUrl,
+    externalFilename: externalTemp ? undefined : currentSelected.externalFilename,
+    prepared: externalTemp ? false : currentSelected.prepared,
+  };
+  const selectedInput = buildSelectedCandidateInput(sanitized, { season, episode });
+  if (!selectedInput) return null;
+  return {
+    sourceTrack: sanitized,
+    selectedInput,
+    replaceTrackId: currentSelected.id,
+    preservedApplied: sameApplied ? applied : null,
+  };
+}
+
+export function buildSelectedCandidateInput(
+  track: TrackInfo,
+  context?: { season?: number; episode?: number },
+): SubtitleCandidateInput | null {
   const sourceUrl = track.originalUrl || track.url || track.externalFilename;
   if (!sourceUrl) return null;
   const localPath =
@@ -340,6 +435,10 @@ export function buildSelectedCandidateInput(track: TrackInfo): SubtitleCandidate
     format: track.format,
     lang: track.lang,
     title: track.title,
+    release: track.release,
+    filename: track.externalFilename,
+    season: context?.season,
+    episode: context?.episode,
     headers,
     localTrusted: track.localTrusted === true,
     downloadAuth: track.downloadAuth,

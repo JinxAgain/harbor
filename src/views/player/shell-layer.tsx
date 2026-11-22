@@ -27,6 +27,7 @@ export const ShellLayer = memo(function ShellLayer({
   onSeek,
   onSeekStep,
   rememberSubChoice,
+  onSubDelay,
   onEnterSync,
   cropMode,
   onCropMode,
@@ -85,6 +86,7 @@ export const ShellLayer = memo(function ShellLayer({
   onSeek: (sec: number) => void;
   onSeekStep: (delta: number) => void;
   rememberSubChoice: (t: SubChoiceInput | null | undefined) => void;
+  onSubDelay?: (sec: number) => void;
   onEnterSync?: () => void;
   cropMode?: string;
   onCropMode?: (id: string) => void;
@@ -174,8 +176,12 @@ export const ShellLayer = memo(function ShellLayer({
         rememberSubChoice(snapRef.current.subtitleTracks.find((x) => x.id === id));
       }}
       onSubDelay={(s) => {
-        bridgeRef.current?.setSubDelay(s);
-        writePlayerPrefs(metaId, { subDelaySec: s });
+        if (onSubDelay) {
+          onSubDelay(s);
+        } else {
+          bridgeRef.current?.setSubDelay(s);
+          writePlayerPrefs(metaId, { subDelaySec: s });
+        }
       }}
       onEnterSync={onEnterSync}
       onAudioDelay={(s) => bridgeRef.current?.setAudioDelay(s)}

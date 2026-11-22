@@ -20,6 +20,10 @@ export type SubtitleCandidateInput = {
   format?: string;
   lang?: string;
   title?: string;
+  release?: string;
+  filename?: string;
+  season?: number;
+  episode?: number;
   headers?: Record<string, string>;
   localTrusted?: boolean;
   downloadAuth?: SubtitleDownloadAuth;
@@ -48,6 +52,7 @@ export type AlignOutcome =
   | "no_fit"
   | "no_subtitle_tracks"
   | "no_usable_reference"
+  | "container_unavailable"
   | "inconclusive"
   | "cancelled";
 
@@ -122,6 +127,7 @@ export function collectSameLanguageCandidates(
   availableSubs: readonly SubResult[],
   allTracks: readonly TrackInfo[],
   limit = 12,
+  context?: { season?: number; episode?: number },
 ): SubtitleCandidateInput[] {
   const targetLang = normalizeLang(selected.lang ?? "");
   const selectedUrls = new Set(
@@ -153,6 +159,10 @@ export function collectSameLanguageCandidates(
       format: track.format,
       lang: track.lang,
       title: track.title,
+      release: track.release,
+      filename: track.externalFilename,
+      season: context?.season,
+      episode: context?.episode,
       headers: subtitleTrackDownloadHeaders(track.downloadAuth, url, providerDerived),
       localTrusted: track.localTrusted === true,
       downloadAuth: track.downloadAuth,
@@ -170,6 +180,9 @@ export function collectSameLanguageCandidates(
       format: res.format,
       lang: res.lang,
       title: res.title,
+      release: res.release,
+      season: context?.season,
+      episode: context?.episode,
       headers: subtitleTrackDownloadHeaders(res.downloadAuth, res.url, true),
       localTrusted: res.localTrusted === true,
       downloadAuth: res.downloadAuth,

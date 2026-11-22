@@ -3,11 +3,17 @@ import {
   HDR_OVERLAY_WINDOW_LABEL,
   HDR_STAGE_ADD_SUBTITLE,
   HDR_STAGE_ADD_SUBTITLE_RESULT,
+  HDR_STAGE_AUTOSYNC_DISMISS,
+  HDR_STAGE_AUTOSYNC_REVERT,
+  HDR_STAGE_AUTOSYNC_RUN,
+  HDR_STAGE_AUTOSYNC_STOP,
   HDR_STAGE_SET_SECONDARY_SUBTITLE_TRACK,
+  HDR_STAGE_SET_SUB_DELAY,
   HDR_STAGE_SET_SUBTITLE_TRACK,
   hdrOverlayEmitProps,
   type HdrStageAddSubtitleRequest,
   type HdrStageAddSubtitleResult,
+  type HdrStageSubDelayRequest,
   type HdrStageSubtitleTrackRequest,
   type HdrNavigationRequest,
 } from "@/lib/hdr-overlay";
@@ -33,6 +39,11 @@ export type HdrStageHandlers = {
   activity: () => void;
   lock: () => void;
   unlock: () => void;
+  setSubDelay: (sec: number) => void;
+  autoSyncRun: () => void;
+  autoSyncStop: () => void;
+  autoSyncRevert: () => void;
+  autoSyncDismiss: () => void;
 } & Pick<PlayerBridge, "setSubtitleTrack" | "setSecondarySubtitleTrack" | "addSubtitle">;
 
 export function HdrStageBridge({
@@ -179,6 +190,17 @@ export function HdrStageBridge({
           );
         })();
       });
+      await bind(HDR_STAGE_SET_SUB_DELAY, (p) => {
+        const request = p as Partial<HdrStageSubDelayRequest>;
+        if (!isCurrentMediaRequest(request.mediaKey)) return;
+        if (typeof request.sec === "number" && Number.isFinite(request.sec)) {
+          h().setSubDelay(request.sec);
+        }
+      });
+      await bind(HDR_STAGE_AUTOSYNC_RUN, () => h().autoSyncRun());
+      await bind(HDR_STAGE_AUTOSYNC_STOP, () => h().autoSyncStop());
+      await bind(HDR_STAGE_AUTOSYNC_REVERT, () => h().autoSyncRevert());
+      await bind(HDR_STAGE_AUTOSYNC_DISMISS, () => h().autoSyncDismiss());
       if (!cancelled) {
         listening.current = true;
         void hdrOverlayEmitProps(payloadRef.current);

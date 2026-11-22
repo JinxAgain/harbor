@@ -37,6 +37,7 @@ export type BpTenFootProps = {
   bridgeRef: RefObject<PlayerBridge | null>;
   snapRef: RefObject<PlayerSnapshot>;
   rememberSubChoice: (t: SubChoiceInput | null | undefined) => void;
+  onSubDelay?: (sec: number) => void;
   metaImdbId: string | null;
   metaReleaseDate: string | null;
   isLocalSrc: boolean;
@@ -94,10 +95,14 @@ function BpTenFoot(props: BpTenFootProps) {
 
   const onSubDelay = useCallback(
     (sec: number) => {
-      bridgeRef.current?.setSubDelay(sec);
-      writePlayerPrefs(metaId, { subDelaySec: sec });
+      if (props.onSubDelay) {
+        props.onSubDelay(sec);
+      } else {
+        bridgeRef.current?.setSubDelay(sec);
+        writePlayerPrefs(metaId, { subDelaySec: sec });
+      }
     },
-    [bridgeRef, metaId],
+    [props.onSubDelay, bridgeRef, metaId],
   );
 
   const onAddSubtitle = useCallback<SubtitleMenuProps["onAddSubtitle"]>(
@@ -315,6 +320,7 @@ export function BpTenFootLayer({ p }: { p: PlayerOverlayLayersProps }) {
       bridgeRef={p.bridgeRef}
       snapRef={p.snapRef}
       rememberSubChoice={p.rememberSubChoice}
+      onSubDelay={p.onSubDelay}
       metaImdbId={p.resolvedImdbId}
       metaReleaseDate={p.src.meta.releaseDate ?? null}
       isLocalSrc={p.isLocalSrc}

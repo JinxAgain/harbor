@@ -2,7 +2,11 @@
 //!
 //! Ported from NuvioMobile's `AutoSyncSubtitleCueParser.kt` and `AutoSyncAssDialogueFilter.kt`.
 
-use encoding_rs::{Encoding, UTF_16BE, UTF_16LE, UTF_8, WINDOWS_1252};
+use encoding_rs::{
+    Encoding, BIG5, EUC_KR, GB18030, KOI8_R, SHIFT_JIS, UTF_16BE, UTF_16LE, WINDOWS_1250,
+    WINDOWS_1251, WINDOWS_1252, WINDOWS_1253, WINDOWS_1254, WINDOWS_1255, WINDOWS_1256,
+    WINDOWS_1258, WINDOWS_874,
+};
 use regex::Regex;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -70,87 +74,528 @@ struct AssEvent {
     raw_text: String,
 }
 
-/// Decodes raw subtitle bytes into UTF-8 text with BOM detection, strict UTF-8 check,
-/// and language-aware single-byte / CJK encoding fallback.
-pub fn decode_subtitle_bytes(bytes: &[u8], language_hint: Option<&str>) -> String {
-    if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
-        return String::from_utf8_lossy(&bytes[3..]).into_owned();
-    }
-    if bytes.starts_with(&[0xff, 0xfe]) {
-        let (decoded, _, _) = UTF_16LE.decode(&bytes[2..]);
-        return decoded.into_owned();
-    }
-    if bytes.starts_with(&[0xfe, 0xff]) {
-        let (decoded, _, _) = UTF_16BE.decode(&bytes[2..]);
-        return decoded.into_owned();
-    }
-    if let Ok(utf8) = std::str::from_utf8(bytes) {
-        return utf8.to_string();
-    }
+const CHARSET_SAMPLE_BYTES: usize = 4096;
 
-    // Try UTF-8 only if lossless wasn't possible -> choose candidates informed by language hint.
-    let lang = language_hint
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    let mut candidate_labels: Vec<&'static [u8]> = Vec::new();
-    match lang.split(['-', '_']).next().unwrap_or("") {
-        "ar" | "ara" => candidate_labels.extend([b"windows-1256".as_slice(), b"iso-8859-6"]),
-        "ru" | "rus" | "uk" | "ukr" | "bg" | "bul" | "sr" | "srp" | "mk" | "be" => {
-            candidate_labels.extend([b"windows-1251".as_slice(), b"koi8-r"]);
-        }
-        "pl" | "pol" | "cs" | "ces" | "cze" | "sk" | "slk" | "hu" | "hun" | "ro" | "ron"
-        | "hr" | "sl" => {
-            candidate_labels.extend([b"windows-1250".as_slice(), b"iso-8859-2"]);
-        }
-        "el" | "ell" | "gre" => candidate_labels.extend([b"windows-1253".as_slice(), b"iso-8859-7"]),
-        "tr" | "tur" => candidate_labels.extend([b"windows-1254".as_slice(), b"iso-8859-9"]),
-        "he" | "heb" | "iw" => candidate_labels.extend([b"windows-1255".as_slice(), b"iso-8859-8"]),
-        "vi" | "vie" => candidate_labels.push(b"windows-1258"),
-        "th" | "tha" => candidate_labels.push(b"windows-874"),
-        "ja" | "jpn" => candidate_labels.extend([b"shift_jis".as_slice(), b"euc-jp"]),
-        "ko" | "kor" => candidate_labels.push(b"euc-kr"),
-        "zh" | "zho" | "chi" => candidate_labels.extend([b"gbk".as_slice(), b"big5"]),
-        _ => {}
-    }
-    candidate_labels.extend([
-        b"windows-1252".as_slice(),
-        b"windows-1250",
-        b"windows-1251",
-        b"windows-1256",
-        b"shift_jis",
-        b"gbk",
-    ]);
-
-    let (utf8_lossy, _, utf8_errors) = UTF_8.decode(bytes);
-    if !utf8_errors {
-        return utf8_lossy.into_owned();
-    }
-
-    let mut best_text = String::new();
-    let mut best_errors = usize::MAX;
-    let mut best_replacements = usize::MAX;
-    for label in candidate_labels {
-        let Some(enc) = Encoding::for_label(label) else {
-            continue;
-        };
-        let (decoded, _, had_errors) = enc.decode(bytes);
-        let replacements = decoded.chars().filter(|&c| c == '\u{FFFD}').count();
-        let err_score = usize::from(had_errors);
-        if (err_score, replacements) < (best_errors, best_replacements) {
-            best_errors = err_score;
-            best_replacements = replacements;
-            best_text = decoded.into_owned();
-            if err_score == 0 && replacements == 0 {
-                return best_text;
+fn win1252_reverse_map() -> &'static HashMap<char, u8> {
+    static MAP: OnceLock<HashMap<char, u8>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        let mut map = HashMap::with_capacity(256);
+        for b in 0u8..=255 {
+            let single = [b];
+            if let Some(decoded) = WINDOWS_1252.decode_without_bom_handling_and_without_replacement(&single)
+            {
+                let mut chars = decoded.chars();
+                if let (Some(ch), None) = (chars.next(), chars.next()) {
+                    if ch != '\u{FFFD}' {
+                        map.insert(ch, b);
+                    }
+                }
             }
         }
+        map
+    })
+}
+
+fn decode_without_bom(bytes: &[u8], enc: &'static Encoding) -> String {
+    enc.decode_without_bom_handling(bytes).0.into_owned()
+}
+
+fn is_cjk_clean(bytes: &[u8], enc: &'static Encoding) -> bool {
+    enc.decode_without_bom_handling_and_without_replacement(bytes)
+        .is_some()
+}
+
+fn count_block_matches(
+    bytes: &[u8],
+    enc: &'static Encoding,
+    start_lo: char,
+    end_hi: char,
+) -> usize {
+    let Some(decoded) = enc.decode_without_bom_handling_and_without_replacement(bytes) else {
+        return 0;
+    };
+    decoded
+        .chars()
+        .filter(|c| *c >= start_lo && *c <= end_hi)
+        .count()
+}
+
+fn has_koi8_vowels(bytes: &[u8]) -> bool {
+    let sample = &bytes[..bytes.len().min(CHARSET_SAMPLE_BYTES)];
+    let mut russian_vowels = 0usize;
+    let mut koi8_vowels = 0usize;
+    for &b in sample {
+        if matches!(b, 0xEE | 0xE0 | 0xE5 | 0xE8 | 0xFF | 0xFB) {
+            russian_vowels += 1;
+        }
+        if matches!(b, 0xCF | 0xC1 | 0xC5 | 0xC9 | 0xD5 | 0xDF) {
+            koi8_vowels += 1;
+        }
     }
-    if best_text.is_empty() {
-        WINDOWS_1252.decode(bytes).0.into_owned()
-    } else {
-        best_text
+    koi8_vowels > russian_vowels && koi8_vowels >= 3
+}
+
+/// Repairs Windows-1255 Hebrew bytes that were decoded as Latin-1/Windows-1252 and saved as UTF-8.
+fn repair_double_encoded_utf8_if_needed(text: String, language_hint: Option<&str>) -> String {
+    if text.is_empty() {
+        return text;
     }
+
+    let normalized_hint = language_hint
+        .map(|h| h.trim().to_ascii_lowercase())
+        .filter(|h| !h.is_empty());
+    let primary_lang = normalized_hint
+        .as_deref()
+        .and_then(|h| h.split(['-', '_']).next());
+    let is_hebrew_hint = matches!(primary_lang, Some("heb" | "he" | "iw"))
+        || primary_lang.is_some_and(|l| l.starts_with("hebrew"));
+
+    // Do not attempt Hebrew mojibake repair when a non-Hebrew language hint is explicitly known.
+    if !is_hebrew_hint && normalized_hint.is_some() {
+        return text;
+    }
+
+    let words: Vec<&str> = text
+        .split_whitespace()
+        .filter(|w| w.chars().count() >= 2 && w.chars().any(|c| c.is_alphabetic()))
+        .collect();
+    if words.is_empty() {
+        return text;
+    }
+
+    let mojibake_words = words
+        .iter()
+        .filter(|word| {
+            word.chars().all(|c| {
+                ('\u{00E0}'..='\u{00FA}').contains(&c)
+                    || "<i></i>-.,!?:'\"<>/\\_()".contains(c)
+            })
+        })
+        .count();
+
+    let threshold = if is_hebrew_hint { 5 } else { 10 };
+    if mojibake_words >= threshold && mojibake_words * 2 >= words.len() {
+        let rev = win1252_reverse_map();
+        if rev.is_empty() {
+            return text;
+        }
+        let mut win1252_bytes = Vec::with_capacity(text.len());
+        for ch in text.chars() {
+            match rev.get(&ch) {
+                Some(&b) => win1252_bytes.push(b),
+                None => return text,
+            }
+        }
+        let hebrew_candidate = decode_without_bom(&win1252_bytes, WINDOWS_1255);
+        let hebrew_chars = hebrew_candidate
+            .chars()
+            .filter(|c| ('\u{0590}'..='\u{05FF}').contains(c))
+            .count();
+        if hebrew_chars >= 10 {
+            return hebrew_candidate;
+        }
+    }
+
+    text
+}
+
+fn resolve_charset_from_language_hint(
+    bytes: &[u8],
+    language_hint: Option<&str>,
+) -> Option<&'static Encoding> {
+    let hint = language_hint?.trim();
+    if hint.is_empty() {
+        return None;
+    }
+    let normalized = hint.to_ascii_lowercase();
+    let lang = normalized.split(['-', '_']).next().unwrap_or("");
+
+    if matches!(lang, "heb" | "he" | "iw") || lang.starts_with("hebrew") {
+        return Some(WINDOWS_1255);
+    }
+    if matches!(lang, "ara" | "ar") || lang.starts_with("arabic") {
+        return Some(WINDOWS_1256);
+    }
+    if matches!(lang, "ell" | "el" | "gre") || lang.starts_with("greek") {
+        return Some(WINDOWS_1253);
+    }
+    if matches!(lang, "tur" | "tr") || lang.starts_with("turkish") {
+        return Some(WINDOWS_1254);
+    }
+    if matches!(
+        lang,
+        "rus" | "ru" | "ukr" | "uk" | "bel" | "be" | "bul" | "bg" | "mkd" | "mk" | "srp" | "sr"
+    ) || lang.starts_with("russian")
+        || lang.starts_with("ukrainian")
+        || lang.starts_with("bulgarian")
+        || lang.starts_with("serbian")
+        || lang.starts_with("cyrillic")
+    {
+        return Some(if has_koi8_vowels(bytes) {
+            KOI8_R
+        } else {
+            WINDOWS_1251
+        });
+    }
+    if matches!(
+        lang,
+        "por"
+            | "pt"
+            | "spa"
+            | "es"
+            | "fra"
+            | "fre"
+            | "fr"
+            | "deu"
+            | "ger"
+            | "de"
+            | "ita"
+            | "it"
+            | "nld"
+            | "dut"
+            | "nl"
+            | "eng"
+            | "en"
+            | "dan"
+            | "da"
+            | "swe"
+            | "sv"
+            | "nor"
+            | "no"
+            | "fin"
+            | "fi"
+            | "cat"
+            | "ca"
+            | "glg"
+            | "gl"
+            | "eus"
+            | "baq"
+            | "eu"
+    ) || lang.starts_with("portuguese")
+        || lang.starts_with("spanish")
+        || lang.starts_with("french")
+        || lang.starts_with("german")
+        || lang.starts_with("italian")
+        || lang.starts_with("dutch")
+        || lang.starts_with("english")
+        || lang.starts_with("danish")
+        || lang.starts_with("swedish")
+        || lang.starts_with("norwegian")
+        || lang.starts_with("finnish")
+        || lang.starts_with("catalan")
+        || lang.starts_with("galician")
+        || lang.starts_with("basque")
+    {
+        return Some(WINDOWS_1252);
+    }
+    if matches!(lang, "tha" | "th") || lang.starts_with("thai") {
+        return Some(WINDOWS_874);
+    }
+    if matches!(lang, "vie" | "vi") || lang.starts_with("vietnamese") {
+        return Some(WINDOWS_1258);
+    }
+    if matches!(
+        lang,
+        "pol"
+            | "pl"
+            | "ces"
+            | "cs"
+            | "cze"
+            | "hun"
+            | "hu"
+            | "slv"
+            | "sl"
+            | "hrv"
+            | "hr"
+            | "ron"
+            | "ro"
+            | "rum"
+            | "slk"
+            | "sk"
+    ) || lang.starts_with("polish")
+        || lang.starts_with("czech")
+        || lang.starts_with("hungarian")
+        || lang.starts_with("romanian")
+        || lang.starts_with("croatian")
+        || lang.starts_with("slovak")
+        || lang.starts_with("slovenian")
+    {
+        return Some(WINDOWS_1250);
+    }
+    if matches!(lang, "zho" | "zh" | "chi") || lang.starts_with("chinese") {
+        if normalized.contains("tw")
+            || normalized.contains("hk")
+            || normalized.contains("traditional")
+            || normalized.contains("hant")
+        {
+            return Some(BIG5);
+        }
+        if normalized.contains("cn")
+            || normalized.contains("sg")
+            || normalized.contains("simplified")
+            || normalized.contains("hans")
+        {
+            return Some(GB18030);
+        }
+        return Some(if is_cjk_clean(bytes, BIG5) {
+            BIG5
+        } else {
+            GB18030
+        });
+    }
+    if matches!(lang, "jpn" | "ja") || lang.starts_with("japanese") {
+        return Some(SHIFT_JIS);
+    }
+    if matches!(lang, "kor" | "ko") || lang.starts_with("korean") {
+        return Some(EUC_KR);
+    }
+    None
+}
+
+fn detect_universal_charset(bytes: &[u8]) -> &'static Encoding {
+    let Some(first_non_ascii) = bytes.iter().position(|&b| b >= 0x80) else {
+        return encoding_rs::UTF_8;
+    };
+    let sample_start = first_non_ascii.saturating_sub(100);
+    let sample_end = (sample_start + CHARSET_SAMPLE_BYTES).min(bytes.len());
+    let sample = &bytes[sample_start..sample_end];
+
+    let mut ascii_letters = 0usize;
+    let mut non_ascii = 0usize;
+    let mut consecutive_non_ascii = 0usize;
+    let mut max_consecutive_non_ascii = 0usize;
+
+    for &b in sample {
+        if b.is_ascii_alphabetic() {
+            ascii_letters += 1;
+            consecutive_non_ascii = 0;
+        } else if b >= 0x80 {
+            non_ascii += 1;
+            consecutive_non_ascii += 1;
+            if consecutive_non_ascii > max_consecutive_non_ascii {
+                max_consecutive_non_ascii = consecutive_non_ascii;
+            }
+        } else {
+            consecutive_non_ascii = 0;
+        }
+    }
+
+    if non_ascii == 0 {
+        return encoding_rs::UTF_8;
+    }
+
+    // Japanese Shift_JIS check (Hiragana in 0x82 0x9F..0xF1).
+    let mut hiragana_count = 0usize;
+    let mut sjis_idx = 0usize;
+    while sjis_idx + 1 < sample.len() {
+        let b1 = sample[sjis_idx];
+        let b2 = sample[sjis_idx + 1];
+        if b1 == 0x82 && (0x9F..=0xF1).contains(&b2) {
+            hiragana_count += 1;
+            sjis_idx += 2;
+        } else {
+            sjis_idx += 1;
+        }
+    }
+    if hiragana_count >= 2 {
+        return SHIFT_JIS;
+    }
+
+    // Korean EUC-KR / Chinese GB18030 checks via strict decode + Unicode block hits.
+    let hangul_score = count_block_matches(sample, EUC_KR, '\u{AC00}', '\u{D7AF}');
+    let gb_hanzi_score = count_block_matches(sample, GB18030, '\u{4E00}', '\u{9FFF}');
+
+    if hangul_score >= 4 && hangul_score >= gb_hanzi_score && max_consecutive_non_ascii >= 4 {
+        return EUC_KR;
+    }
+
+    // Thai single-byte consonants check (0xA1..0xBF).
+    let thai_consonants_early = sample
+        .iter()
+        .filter(|&&b| (0xA1..=0xBF).contains(&b))
+        .count();
+    if thai_consonants_early * 4 >= non_ascii && thai_consonants_early >= 4 {
+        return WINDOWS_874;
+    }
+
+    if gb_hanzi_score >= 4 && max_consecutive_non_ascii >= 6 {
+        let mut big5_trail_count = 0usize;
+        let mut i = 0usize;
+        while i + 1 < sample.len() {
+            let b1 = sample[i];
+            let b2 = sample[i + 1];
+            if (0xA1..=0xF9).contains(&b1) && (0x40..=0x7E).contains(&b2) {
+                big5_trail_count += 1;
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+        if big5_trail_count >= 2 && is_cjk_clean(sample, BIG5) {
+            return BIG5;
+        }
+        return GB18030;
+    }
+
+    let score_latin_scripts = |slice: &[u8]| -> (usize, usize, usize) {
+        let mut turkish_score = 0usize;
+        let mut ce_score = 0usize;
+        let mut vietnamese_score = 0usize;
+        for &b in slice {
+            if matches!(b, 0xCC | 0xD2 | 0xF2 | 0xF5) {
+                vietnamese_score += 1;
+            }
+            if matches!(b, 0xF0 | 0xFE | 0xFD | 0xD0 | 0xDE | 0xDD) {
+                turkish_score += 1;
+            }
+            if matches!(
+                b,
+                0xB9 | 0xB3
+                    | 0x9C
+                    | 0x9F
+                    | 0x9A
+                    | 0x9E
+                    | 0x8C
+                    | 0x8F
+                    | 0x8A
+                    | 0x8E
+                    | 0x8D
+                    | 0x9D
+                    | 0xCF
+                    | 0xEF
+                    | 0xBE
+            ) {
+                ce_score += 1;
+            }
+        }
+        (turkish_score, ce_score, vietnamese_score)
+    };
+
+    // Predominantly Latin text: avoid false-positive non-Latin triggers.
+    if ascii_letters >= non_ascii || max_consecutive_non_ascii <= 2 {
+        let (turkish_score, ce_score, vietnamese_score) = score_latin_scripts(sample);
+        if turkish_score >= 2 && turkish_score > ce_score {
+            return WINDOWS_1254;
+        }
+        if ce_score >= 2 && ce_score >= vietnamese_score {
+            return WINDOWS_1250;
+        }
+        if vietnamese_score >= 2 {
+            return WINDOWS_1258;
+        }
+        return WINDOWS_1252;
+    }
+
+    // Statistical evaluation for non-Latin single-byte alphabets (Hebrew, Arabic, Thai, Cyrillic, Greek).
+    let mut thai_consonants = 0usize;
+    let mut hebrew_letters = 0usize;
+    let mut arabic_al_count = 0usize;
+    let mut russian_vowels = 0usize;
+    let mut koi8_vowels = 0usize;
+    let mut greek_vowels = 0usize;
+    let mut bytes_c0_to_df = 0usize;
+
+    for (idx, &b) in sample.iter().enumerate() {
+        if (0xA1..=0xBF).contains(&b) {
+            thai_consonants += 1;
+        }
+        if (0xE0..=0xFA).contains(&b) {
+            hebrew_letters += 1;
+        }
+        if (0xC0..=0xDF).contains(&b) {
+            bytes_c0_to_df += 1;
+        }
+        if matches!(
+            b,
+            0xEE | 0xE0 | 0xE5 | 0xE8 | 0xFF | 0xFB | 0xF3 | 0xFD | 0xFE
+        ) {
+            russian_vowels += 1;
+        }
+        if matches!(b, 0xCF | 0xC1 | 0xC5 | 0xC9 | 0xD5 | 0xDF) {
+            koi8_vowels += 1;
+        }
+        if matches!(
+            b,
+            0xE1 | 0xEF
+                | 0xE5
+                | 0xE7
+                | 0xFD
+                | 0xFE
+                | 0xE9
+                | 0xF5
+                | 0xF9
+                | 0xDC
+                | 0xDD
+                | 0xDE
+                | 0xDF
+                | 0xFA
+                | 0xFB
+                | 0xFC
+        ) {
+            greek_vowels += 1;
+        }
+        if b == 0xC7 && sample.get(idx + 1).copied() == Some(0xE1) {
+            arabic_al_count += 1;
+        }
+    }
+
+    if hebrew_letters == non_ascii && hebrew_letters >= 4 && bytes_c0_to_df == 0 {
+        return WINDOWS_1255;
+    }
+    if thai_consonants * 4 >= non_ascii && thai_consonants >= 4 {
+        return WINDOWS_874;
+    }
+    if arabic_al_count > 0 {
+        return WINDOWS_1256;
+    }
+    if koi8_vowels > russian_vowels && koi8_vowels >= 3 {
+        return KOI8_R;
+    }
+    if russian_vowels > greek_vowels && russian_vowels >= 4 {
+        return WINDOWS_1251;
+    }
+    if greek_vowels > russian_vowels && greek_vowels >= 4 {
+        return WINDOWS_1253;
+    }
+
+    let (turkish_score, ce_score, vietnamese_score) = score_latin_scripts(sample);
+    if turkish_score > ce_score && turkish_score > 0 {
+        return WINDOWS_1254;
+    }
+    if ce_score > 0 && ce_score >= vietnamese_score {
+        return WINDOWS_1250;
+    }
+    if vietnamese_score >= 2 {
+        return WINDOWS_1258;
+    }
+
+    WINDOWS_1252
+}
+
+/// Decodes raw subtitle bytes into UTF-8 text with BOM detection, strict UTF-8 validation,
+/// NuvioMobile-equivalent language-hint + script heuristics, and double-encoded Hebrew repair.
+pub fn decode_subtitle_bytes(bytes: &[u8], language_hint: Option<&str>) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+        let utf8 = String::from_utf8_lossy(&bytes[3..]).into_owned();
+        return repair_double_encoded_utf8_if_needed(utf8, language_hint);
+    }
+    if bytes.starts_with(&[0xff, 0xfe]) {
+        return decode_without_bom(&bytes[2..], UTF_16LE);
+    }
+    if bytes.starts_with(&[0xfe, 0xff]) {
+        return decode_without_bom(&bytes[2..], UTF_16BE);
+    }
+    if let Ok(utf8) = std::str::from_utf8(bytes) {
+        return repair_double_encoded_utf8_if_needed(utf8.to_string(), language_hint);
+    }
+
+    let enc = resolve_charset_from_language_hint(bytes, language_hint)
+        .unwrap_or_else(|| detect_universal_charset(bytes));
+    let decoded = decode_without_bom(bytes, enc);
+    repair_double_encoded_utf8_if_needed(decoded, language_hint)
 }
 
 pub fn detect_format(source_url: Option<&str>, text: &str, format_hint: Option<&str>) -> SubtitleFormat {
@@ -900,8 +1345,42 @@ mod tests {
     #[test]
     fn decodes_legacy_encodings() {
         // "Café" in Windows-1252: 43 61 66 E9
-        let decoded = decode_subtitle_bytes(b"Caf\xe9", Some("en"));
-        assert_eq!(decoded, "Café");
+        assert_eq!(decode_subtitle_bytes(b"Caf\xe9", Some("en")), "Café");
+
+        // Windows-1251 Russian without language hint ("Привет мир")
+        let ru_win1251 = WINDOWS_1251.encode("Привет мир, как дела").0;
+        assert_eq!(decode_subtitle_bytes(&ru_win1251, None), "Привет мир, как дела");
+
+        // KOI8-R Russian with full language name hint ("Russian")
+        let ru_koi8 = KOI8_R.encode("Привет мир, как твои дела сегодня").0;
+        assert_eq!(
+            decode_subtitle_bytes(&ru_koi8, Some("Russian")),
+            "Привет мир, как твои дела сегодня"
+        );
+
+        // Windows-1256 Arabic without hint ("مرحبا بكم في عالم السينما")
+        let ar_1256 = WINDOWS_1256.encode("مرحبا بكم في عالم السينما").0;
+        assert_eq!(
+            decode_subtitle_bytes(&ar_1256, None),
+            "مرحبا بكم في عالم السينما"
+        );
+
+        // Windows-1250 Polish with distinctive letters ("Zażółć gęślą jaźń")
+        let pl_1250 = WINDOWS_1250.encode("Zażółć gęślą jaźń").0;
+        assert_eq!(decode_subtitle_bytes(&pl_1250, None), "Zażółć gęślą jaźń");
+
+        // Shift_JIS without hint ("こんにちは世界")
+        let ja_sjis = SHIFT_JIS.encode("こんにちは世界").0;
+        assert_eq!(decode_subtitle_bytes(&ja_sjis, None), "こんにちは世界");
+
+        // Double-encoded Hebrew (Win-1255 misread as Win-1252 and saved as UTF-8)
+        let he_phrase = "שלום עולם מה שלומך הבוקר חבר יקר";
+        let he_1255 = WINDOWS_1255.encode(he_phrase).0;
+        let mojibake = WINDOWS_1252.decode(&he_1255).0.into_owned();
+        assert_eq!(
+            decode_subtitle_bytes(mojibake.as_bytes(), Some("heb")),
+            he_phrase
+        );
     }
 
     #[test]

@@ -531,6 +531,7 @@ export function useTrackAutoload(params: {
     key: string;
     attempts: number;
     attemptedAt: number;
+    satisfiedKey?: string;
   } | null>(null);
   const subRestoreAddRef = useRef<{ key: string; pending: boolean } | null>(null);
   const subRestoreTimerRef = useRef<{ id: number; dueAt: number } | null>(null);
@@ -566,6 +567,8 @@ export function useTrackAutoload(params: {
     const bridge = bridgeRef.current;
     if (!bridge) return;
     if (bridge.canAutoSelectSubtitle?.() === false) return;
+    // Never overwrite a track committed by embedded auto-sync with the pre-sync track.
+    if (snap.subtitleTracks.some((t) => t.selected && t.autoSynced === true)) return;
     const sameLang = (a?: string | null, b?: string | null) =>
       normalizeLang(a ?? "") === normalizeLang(b ?? "");
 
@@ -644,15 +647,24 @@ export function useTrackAutoload(params: {
       if (existing) {
         subRestoreWaitRef.current = null;
         subRestoreAddRef.current = null;
+        const selectionKey = `${restoreKey}|${existing.id}`;
         if (existing.selected) {
-          subRestoreSelectRef.current = null;
+          subRestoreSelectRef.current = {
+            key: selectionKey,
+            attempts: 0,
+            attemptedAt: Date.now(),
+            satisfiedKey: restoreKey,
+          };
           autoSubIdRef.current = existing.id;
           if (remembered.imported && remembered.title) markImportedSub(remembered.title);
           else markAddedSub(source);
           return;
         }
-        const selectionKey = `${restoreKey}|${existing.id}`;
         const previous = subRestoreSelectRef.current;
+        // Once restore has succeeded (or auto-sync chose an alternative), don't fight later changes.
+        if (previous?.satisfiedKey === restoreKey) {
+          return;
+        }
         const attempts = previous?.key === selectionKey ? previous.attempts : 0;
         const elapsed =
           previous?.key === selectionKey ? Date.now() - previous.attemptedAt : Infinity;

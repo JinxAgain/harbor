@@ -41,10 +41,19 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
 
   useEffect(() => {
     setDismissed(false);
+    setHeld(false);
   }, [handle.status, handle.trigger, handle.offsetMs]);
 
+  const visible = !dismissed && shouldShowPopover(handle);
+
   useEffect(() => {
-    if (!shouldShowPopover(handle)) return;
+    if (!visible) {
+      setHeld(false);
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return;
     const ms = dwellMsFor(handle);
     if (ms == null || held) return;
     const id = window.setTimeout(() => {
@@ -52,11 +61,12 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
       handle.dismiss();
     }, ms);
     return () => window.clearTimeout(id);
-  }, [handle, held]);
+  }, [handle, held, visible]);
 
-  if (dismissed || !shouldShowPopover(handle)) return null;
+  if (!visible) return null;
 
   const dismissNow = () => {
+    setHeld(false);
     setDismissed(true);
     handle.dismiss();
   };
@@ -87,7 +97,10 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
             <span>{tr("Syncing subtitles…")}</span>
             <button
               type="button"
-              onClick={() => handle.stop()}
+              onClick={() => {
+                setHeld(false);
+                handle.stop();
+              }}
               className="rounded-full px-2 py-0.5 text-[12px] font-semibold text-ink-muted transition-colors hover:bg-raised hover:text-ink"
             >
               {tr("Cancel")}
@@ -107,6 +120,7 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
               <button
                 type="button"
                 onClick={() => {
+                  setHeld(false);
                   handle.revert();
                   setDismissed(true);
                 }}
@@ -140,7 +154,10 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
             {handle.status === "error" && (
               <button
                 type="button"
-                onClick={() => handle.run()}
+                onClick={() => {
+                  setHeld(false);
+                  handle.run();
+                }}
                 className="inline-flex items-center gap-1 rounded-full bg-raised px-2.5 py-0.5 text-[12px] font-semibold text-ink transition-colors hover:bg-surface-hover"
               >
                 <RotateCcw size={12} strokeWidth={2.3} />

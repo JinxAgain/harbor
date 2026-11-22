@@ -1,6 +1,8 @@
 // @ts-expect-error Node test types are intentionally outside the browser-only tsconfig.
 import assert from "node:assert/strict";
 // @ts-expect-error Node test types are intentionally outside the browser-only tsconfig.
+import { readFileSync } from "node:fs";
+// @ts-expect-error Node test types are intentionally outside the browser-only tsconfig.
 import test from "node:test";
 import { parseStoredSettings } from "../src/lib/settings/load.ts";
 import { takePreparedSubtitle } from "../src/lib/subtitles/prepared-registry.ts";
@@ -14,6 +16,8 @@ import {
   buildRestoreMetadata,
   commitSyncedSubtitleTrack,
   EMPTY_APPLIED_STATE,
+  matchesCommittedSyncedTrack,
+  resolveAutoSyncRunTarget,
   restoreRevertedSubtitleTrack,
   shouldResetAutoSyncOnTrackChange,
   type AppliedAutoSyncState,
@@ -426,4 +430,241 @@ test("commitSyncedSubtitleTrack and restoreRevertedSubtitleTrack handle mpv and 
   assert.notEqual(restoredUrls[1], htmlOriginal.url);
   assert.equal(htmlTracks[0]?.autoSynced, false);
   takePreparedSubtitle(restoredUrls[1])?.cleanup();
+});
+
+test("HTML5 deferred snapshot commit pre-seeds committedTrackKey so matchesCommittedSyncedTrack holds", async () => {
+  const preCommitTrack: TrackInfo = {
+    id: "html-0",
+    label: "English",
+    lang: "en",
+    kind: "subtitle",
+    selected: true,
+    external: true,
+    url: "blob:https://harbor.local/pre-commit",
+    originalUrl: "https://subs.example/deferred.srt",
+  };
+  const addedBlobs: string[] = [];
+  let renderedTracks: TrackInfo[] = [preCommitTrack];
+  let deferredNextTrack: TrackInfo | null = null;
+
+  const commit = await commitSyncedSubtitleTrack({
+    bridge: {
+      async addSubtitle(url, lang, title, select, metadata) {
+        addedBlobs.push(url);
+        // Simulate HTML5 emit()->setSnap() committing only after current microtask:
+        deferredNextTrack = {
+          id: "html-synced-1",
+          label: title ?? "Sub",
+          lang,
+          kind: "subtitle",
+          selected: Boolean(select),
+          external: true,
+          url,
+          originalUrl: metadata?.originalUrl,
+          autoSynced: metadata?.autoSynced,
+        };
+        return true;
+      },
+      setSubDelay() {},
+    },
+    engine: "html5",
+    chosenUrl: "https://subs.example/deferred.srt",
+    retimedPath: null,
+    retimedText: "1\n00:00:02,000 --> 00:00:04,000\nSynced\n",
+    format: "srt",
+    lang: "en",
+    title: "English",
+    baseMetadata: buildRestoreMetadata(preCommitTrack),
+    replaceExisting: true,
+    replaceTrackId: "html-0",
+    commitOrigin: "automatic",
+    getCurrentTracks: () => renderedTracks,
+    isStillCurrent: () => true,
+  });
+
+  assert.equal(commit.ok, true);
+  assert.equal(commit.committedTrackId, null);
+  assert.equal(commit.committedTrackKey, "https://subs.example/deferred.srt");
+
+  assert.ok(deferredNextTrack);
+  renderedTracks = [deferredNextTrack];
+  assert.equal(
+    matchesCommittedSyncedTrack(
+      {
+        changed: true,
+        committedTrackId: commit.committedTrackId,
+        committedTrackKey: commit.committedTrackKey,
+      },
+      renderedTracks[0],
+    ),
+    true,
+  );
+  takePreparedSubtitle(addedBlobs[0])?.cleanup();
+});
+
+test("resolveAutoSyncRunTarget uses original backup and delay on Re-sync, never retimed temp files", () => {
+  const originalTrack: TrackInfo = {
+    id: "sub-orig",
+    label: "English",
+    lang: "en",
+    kind: "subtitle",
+    selected: false,
+    external: true,
+    url: "https://subs.example/show-s02e07.srt",
+    originalUrl: "https://subs.example/show-s02e07.srt",
+    release: "Show.S02E07.1080p.WEB-DL",
+    externalFilename: "C:\\tmp\\show-s02e07.srt",
+    prepared: true,
+  };
+  const syncedTrack: TrackInfo = {
+    id: "sub-synced-1",
+    label: "English",
+    lang: "en",
+    kind: "subtitle",
+    selected: true,
+    external: true,
+    url: "C:\\tmp\\autosync_aaa_111.srt",
+    originalUrl: "https://subs.example/show-s02e07.srt",
+    externalFilename: "C:\\tmp\\autosync_aaa_111.srt",
+    prepared: true,
+    autoSynced: true,
+  };
+  const applied: AppliedAutoSyncState = {
+    originalTrack,
+    replacedSelected: true,
+    originalTrackId: originalTrack.id,
+    originalTrackKey: "https://subs.example/show-s02e07.srt",
+    committedTrackId: syncedTrack.id,
+    committedTrackKey: "https://subs.example/show-s02e07.srt",
+    originalBackupPath: "C:\\tmp\\autosync_orig_aaa_000.srt",
+    originalBackupText: "1\n00:00:01,000 --> 00:00:02,000\nOriginal\n",
+    originalBackupFormat: "srt",
+    subDelayBefore: 1.5,
+    scope: { mediaKey: "m-s02e07", trackId: originalTrack.id },
+    changed: true,
+  };
+
+  const target = resolveAutoSyncRunTarget({
+    currentSelected: syncedTrack,
+    applied,
+    currentMediaKey: "m-s02e07",
+    season: 2,
+    episode: 7,
+  });
+  assert.ok(target);
+  assert.equal(target.sourceTrack.id, "sub-orig");
+  assert.equal(target.replaceTrackId, "sub-synced-1");
+  assert.equal(target.preservedApplied, applied);
+  assert.equal(target.selectedInput.localPath, "C:\\tmp\\autosync_orig_aaa_000.srt");
+  assert.equal(target.selectedInput.inlineText, applied.originalBackupText);
+  assert.equal(target.selectedInput.season, 2);
+  assert.equal(target.selectedInput.episode, 7);
+
+  // Alternative synced track (replacedSelected: false): strips autosync_* localPath, keeps originalUrl.
+  const altSynced: TrackInfo = {
+    ...syncedTrack,
+    id: "sub-alt-synced",
+    originalUrl: "https://subs.example/alt-s02e07.srt",
+    externalFilename: "/tmp/autosync_alt_222.srt",
+  };
+  const altTarget = resolveAutoSyncRunTarget({
+    currentSelected: altSynced,
+    applied: {
+      ...applied,
+      replacedSelected: false,
+      committedTrackId: altSynced.id,
+      committedTrackKey: "https://subs.example/alt-s02e07.srt",
+    },
+    currentMediaKey: "m-s02e07",
+    season: 2,
+    episode: 7,
+  });
+  assert.ok(altTarget);
+  assert.equal(altTarget.selectedInput.url, "https://subs.example/alt-s02e07.srt");
+  assert.equal(altTarget.selectedInput.localPath, undefined);
+});
+
+test("collectSameLanguageCandidates forwards episode and release metadata for ZIP selection", () => {
+  const selected: TrackInfo = {
+    id: "t0",
+    label: "English",
+    lang: "en",
+    kind: "subtitle",
+    selected: true,
+    external: true,
+    url: "https://subs.example/selected.srt",
+    originalUrl: "https://subs.example/selected.srt",
+  };
+  const cands = collectSameLanguageCandidates(
+    selected,
+    [
+      {
+        id: "r1",
+        url: "https://subs.example/pack.zip",
+        lang: "en",
+        release: "Show.S03E09.1080p.NF.WEB-DL",
+      },
+    ],
+    [
+      {
+        id: "t1",
+        label: "English Alt",
+        lang: "en",
+        kind: "subtitle",
+        selected: false,
+        external: true,
+        url: "https://subs.example/alt.zip",
+        originalUrl: "https://subs.example/alt.zip",
+        release: "Show.S03E09.BLURAY",
+        externalFilename: "Show.S03E09.en.zip",
+      },
+    ],
+    12,
+    { season: 3, episode: 9 },
+  );
+  assert.equal(cands.length, 2);
+  assert.equal(cands[0].release, "Show.S03E09.BLURAY");
+  assert.equal(cands[0].filename, "Show.S03E09.en.zip");
+  assert.equal(cands[0].season, 3);
+  assert.equal(cands[0].episode, 9);
+  assert.equal(cands[1].release, "Show.S03E09.1080p.NF.WEB-DL");
+  assert.equal(cands[1].season, 3);
+  assert.equal(cands[1].episode, 9);
+});
+
+test("regression contracts: deferred replacement removal, popover held reset, restore guard, desktop gate", () => {
+  const mpvSrc = readFileSync(new URL("../src/lib/player/mpv.ts", import.meta.url), "utf8");
+  const mpvAddBlock = mpvSrc.slice(mpvSrc.indexOf("async addSubtitle"), mpvSrc.indexOf("getSelectedTrackCues"));
+  assert.ok(mpvAddBlock.indexOf('"mpv_sub_add"') > 0);
+  assert.ok(mpvAddBlock.indexOf('"mpv_sub_remove"') > mpvAddBlock.indexOf('"mpv_sub_add"'));
+
+  const htmlSrc = readFileSync(new URL("../src/lib/player/html5/bridge.ts", import.meta.url), "utf8");
+  const htmlAddBlock = htmlSrc.slice(htmlSrc.indexOf("async addSubtitle"), htmlSrc.indexOf("getSelectedTrackCues"));
+  assert.ok(htmlAddBlock.indexOf("await ensureLoaded(track)") > 0);
+  assert.ok(
+    htmlAddBlock.indexOf("if (loaded) removeSupersededTrack()") >
+      htmlAddBlock.indexOf("await ensureLoaded(track)"),
+  );
+
+  const popoverSrc = readFileSync(
+    new URL("../src/components/player/autosync/autosync-popover.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(popoverSrc.includes("if (!visible) {\n      setHeld(false);") || popoverSrc.includes("if (!visible)"));
+  assert.ok((popoverSrc.match(/setHeld\(false\)/g) ?? []).length >= 5);
+
+  const autoloadSrc = readFileSync(
+    new URL("../src/views/player/hooks/use-track-autoload.ts", import.meta.url),
+    "utf8",
+  );
+  assert.ok(autoloadSrc.includes("t.autoSynced === true"));
+  assert.ok(autoloadSrc.includes("satisfiedKey: restoreKey"));
+
+  const hookSrc = readFileSync(
+    new URL("../src/views/player/hooks/use-auto-sync.ts", import.meta.url),
+    "utf8",
+  );
+  assert.ok(hookSrc.includes("isDesktopTauri()"));
+  assert.ok(!hookSrc.includes("isNativeTauri"));
+  assert.ok(hookSrc.includes('case "container_unavailable":'));
 });

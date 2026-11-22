@@ -54,6 +54,7 @@ export function useKeyboardShortcuts(params: {
   onAnime4kOff?: () => void;
   onReloadSource?: () => void;
   onRestartServer?: () => void;
+  onSubDelay?: (sec: number) => void;
   onVolumeFeedback?: (volume: number, muted: boolean) => void;
 }) {
   const {
@@ -94,6 +95,7 @@ export function useKeyboardShortcuts(params: {
     onAnime4kOff,
     onReloadSource,
     onRestartServer,
+    onSubDelay,
     onVolumeFeedback,
   } = params;
   const { settings, update } = useSettings();
@@ -420,22 +422,18 @@ export function useKeyboardShortcuts(params: {
         writePlayerPrefs(metaId, { rate: r });
         return;
       }
-      if (match("playerSubDelayDown")) {
+      if (match("playerSubDelayDown") || match("playerSubDelayUp")) {
         e.preventDefault();
         const step = e.shiftKey ? 0.05 : 0.1;
-        const delay = round2(snap.subDelaySec - step);
-        bridgeRef.current?.setSubDelay(delay);
+        const signedStep = match("playerSubDelayUp") ? step : -step;
+        const delay = round2(snap.subDelaySec + signedStep);
+        if (onSubDelay) {
+          onSubDelay(delay);
+        } else {
+          bridgeRef.current?.setSubDelay(delay);
+          writePlayerPrefs(metaId, { subDelaySec: delay });
+        }
         showSubtitleOffset(delay);
-        writePlayerPrefs(metaId, { subDelaySec: delay });
-        return;
-      }
-      if (match("playerSubDelayUp")) {
-        e.preventDefault();
-        const step = e.shiftKey ? 0.05 : 0.1;
-        const delay = round2(snap.subDelaySec + step);
-        bridgeRef.current?.setSubDelay(delay);
-        showSubtitleOffset(delay);
-        writePlayerPrefs(metaId, { subDelaySec: delay });
         return;
       }
       if (match("playerSubPosDown")) {
@@ -603,6 +601,7 @@ export function useKeyboardShortcuts(params: {
     onAnime4kOff,
     onReloadSource,
     onRestartServer,
+    onSubDelay,
     onFrameStep,
     onVolumeFeedback,
     settings.playerEscExitsFullscreen,

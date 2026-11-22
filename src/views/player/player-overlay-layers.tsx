@@ -191,7 +191,8 @@ export type PlayerOverlayLayersProps = {
   showNoAudioWarning: boolean;
   onUseMpv: () => void;
   onDismissNoAudio: () => void;
-  // Text-sync feature
+  // Text-sync & manual subtitle delay
+  onSubDelay?: (sec: number) => void;
   onEnterSync?: () => void;
   syncMode: ReturnType<typeof useTextSync>["syncMode"];
   syncApi: ReturnType<typeof useTextSync>;
@@ -242,8 +243,12 @@ export const PlayerOverlayLayers = memo(function PlayerOverlayLayers(p: PlayerOv
         contentAdvisory={p.contentAdvisory}
         contentAdvisoryPosition={contentAdvisoryPosition}
         onSubDelay={(s) => {
-          p.bridgeRef.current?.setSubDelay(s);
-          writePlayerPrefs(p.metaId, { subDelaySec: s });
+          if (p.onSubDelay) {
+            p.onSubDelay(s);
+          } else {
+            p.bridgeRef.current?.setSubDelay(s);
+            writePlayerPrefs(p.metaId, { subDelaySec: s });
+          }
         }}
         onEnterSync={p.onEnterSync}
         chromeVisible={p.showChrome}
@@ -381,6 +386,7 @@ export const PlayerOverlayLayers = memo(function PlayerOverlayLayers(p: PlayerOv
           onSeek={p.seekTo}
           onSeekStep={p.onSeekStep}
           rememberSubChoice={p.rememberSubChoice}
+          onSubDelay={p.onSubDelay}
           onEnterSync={p.onEnterSync}
           cropMode={p.cropMode}
           onCropMode={p.onCropMode}

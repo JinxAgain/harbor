@@ -28,7 +28,7 @@ const MAX_SEEK_HEAD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_INFO_BYTES: usize = 512 * 1024;
 const MAX_TRACKS_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CUES_BYTES: usize = 8 * 1024 * 1024;
-const MAX_TOTAL_READ_BYTES: u64 = 24 * 1024 * 1024;
+const MAX_TOTAL_READ_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_RANGE_REQUESTS: usize = 16;
 const MAX_SEEK_HEAD_HOPS: usize = 4;
 const DEFAULT_TIMESTAMP_SCALE_NS: u64 = 1_000_000;
@@ -229,18 +229,25 @@ pub async fn load_embedded_timeline(
         let mut guard = cache_state().lock().unwrap_or_else(|p| p.into_inner());
         if let Some(entry) = guard.entries.get(&key).cloned() {
             match entry {
-                CachedEntry::Positive(tl) => return ContainerLoadOutcome::Ready(tl),
+                CachedEntry::Positive(tl) => {
+                    touch_lru(&mut guard, &key);
+                    return ContainerLoadOutcome::Ready(tl);
+                }
                 CachedEntry::NoSubtitleTracks { created_at } => {
                     if created_at.elapsed() < NEGATIVE_CACHE_TTL {
+                        touch_lru(&mut guard, &key);
                         return ContainerLoadOutcome::NoSubtitleTracks;
                     }
                     guard.entries.remove(&key);
+                    guard.order.retain(|k| k != &key);
                 }
                 CachedEntry::Negative { created_at } => {
                     if created_at.elapsed() < NEGATIVE_CACHE_TTL {
+                        touch_lru(&mut guard, &key);
                         return ContainerLoadOutcome::NoUsableReference;
                     }
                     guard.entries.remove(&key);
+                    guard.order.retain(|k| k != &key);
                 }
             }
         }
@@ -275,9 +282,13 @@ pub async fn load_embedded_timeline(
     ContainerLoadOutcome::Unavailable
 }
 
+fn touch_lru(guard: &mut CacheState, key: &str) {
+    guard.order.retain(|k| k != key);
+    guard.order.push_back(key.to_string());
+}
+
 fn insert_lru(guard: &mut CacheState, key: String, entry: CachedEntry) {
-    guard.order.retain(|k| k != &key);
-    guard.order.push_back(key.clone());
+    touch_lru(guard, &key);
     guard.entries.insert(key, entry);
     while guard.order.len() > MAX_CACHE_ENTRIES {
         if let Some(evict) = guard.order.pop_front() {
@@ -302,7 +313,7 @@ async fn load_and_classify(
     if let Some(local_path) = url_guard::local_file_path(source_url) {
         let path_clone = local_path.clone();
         let inspect_res = tokio::time::timeout(TOTAL_TIMEOUT, async move {
-            let mut reader = LocalSourceReader::open(path_clone)?;
+            let mut reader = LocalSourceReader::open(path_clone).await?;
             inspect_container(&mut reader, true).await
         })
         .await;
@@ -388,11 +399,17 @@ struct LocalSourceReader {
 }
 
 impl LocalSourceReader {
-    fn open(path: PathBuf) -> Result<Self, TimedOrPermanent> {
-        let meta = std::fs::metadata(&path).map_err(|_| TimedOrPermanent::Transient)?;
+    async fn open(path: PathBuf) -> Result<Self, TimedOrPermanent> {
+        let meta_len = tokio::task::spawn_blocking({
+            let p = path.clone();
+            move || std::fs::metadata(&p).map(|m| m.len())
+        })
+        .await
+        .map_err(|_| TimedOrPermanent::Transient)?
+        .map_err(|_| TimedOrPermanent::Transient)?;
         Ok(Self {
             path,
-            total_len: meta.len(),
+            total_len: meta_len,
             bytes_read: 0,
             requests: 0,
         })
@@ -543,7 +560,18 @@ impl RandomAccessReader for HttpRangeReader {
             return Err(TimedOrPermanent::Permanent);
         }
         let remaining_budget = self.remaining_byte_budget();
-        if (len as u64) > remaining_budget {
+        if remaining_budget == 0 {
+            return Err(TimedOrPermanent::Permanent);
+        }
+        let effective_len = if require_exact {
+            if (len as u64) > remaining_budget {
+                return Err(TimedOrPermanent::Permanent);
+            }
+            len
+        } else {
+            len.min(remaining_budget as usize)
+        };
+        if effective_len == 0 {
             return Err(TimedOrPermanent::Permanent);
         }
         let now = Instant::now();
@@ -551,12 +579,13 @@ impl RandomAccessReader for HttpRangeReader {
             return Err(TimedOrPermanent::Transient);
         }
         let end = start
-            .checked_add(len as u64 - 1)
+            .checked_add(effective_len as u64 - 1)
             .ok_or(TimedOrPermanent::Permanent)?;
         self.requests += 1;
 
         let mut current_url = self.url.clone();
         let mut current_headers = self.headers.clone();
+        let mut redirected = false;
         let mut final_resp: Option<reqwest::Response> = None;
 
         for hop in 0..=5 {
@@ -565,7 +594,7 @@ impl RandomAccessReader for HttpRangeReader {
                 return Err(TimedOrPermanent::Transient);
             }
             let req_timeout = (self.deadline - now).min(Duration::from_secs(5));
-            let client = self.client_for_url(&current_url, hop == 0).await?;
+            let client = self.client_for_url(&current_url, hop == 0 || redirected).await?;
 
             let mut req = client
                 .get(current_url.clone())
@@ -597,7 +626,12 @@ impl RandomAccessReader for HttpRangeReader {
                         .retain(|(k, _)| crate::http_redirect::safe_cross_origin_header(k));
                 }
                 current_url = next_url;
+                redirected = true;
                 continue;
+            }
+            if redirected && (200..300).contains(&status) {
+                self.url = current_url.clone();
+                self.headers = current_headers.clone();
             }
             final_resp = Some(resp);
             break;
@@ -631,8 +665,8 @@ impl RandomAccessReader for HttpRangeReader {
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse::<u64>().ok());
 
-        let mut out = Vec::with_capacity(len.min(1024 * 1024));
-        while out.len() < len {
+        let mut out = Vec::with_capacity(effective_len.min(1024 * 1024));
+        while out.len() < effective_len {
             if Instant::now() >= self.deadline {
                 return Err(TimedOrPermanent::Transient);
             }
@@ -642,9 +676,12 @@ impl RandomAccessReader for HttpRangeReader {
             let Some(chunk) = resp.chunk().await.map_err(|_| TimedOrPermanent::Transient)? else {
                 break;
             };
+            if chunk.is_empty() {
+                continue;
+            }
             let take = chunk
                 .len()
-                .min(len - out.len())
+                .min(effective_len - out.len())
                 .min(self.remaining_byte_budget() as usize);
             if take == 0 {
                 return Err(TimedOrPermanent::Permanent);
@@ -652,7 +689,7 @@ impl RandomAccessReader for HttpRangeReader {
             out.extend_from_slice(&chunk[..take]);
             self.bytes_read += take as u64;
         }
-        if out.is_empty() || (require_exact && out.len() != len) {
+        if out.is_empty() || (require_exact && out.len() != effective_len) {
             return Err(TimedOrPermanent::Permanent);
         }
         let total_length = content_range
@@ -876,6 +913,13 @@ async fn inspect_container(
     }
 
     if reference_tracks.is_empty() {
+        if allow_local_ffprobe {
+            return Ok(InspectResult::NeedsLocalFfprobeFallback {
+                tracks: subtitle_tracks,
+                bytes_read: reader.bytes_read(),
+                range_requests: reader.requests_made(),
+            });
+        }
         return Ok(InspectResult::Outcome(ContainerLoadOutcome::NoUsableReference));
     }
 
@@ -1116,22 +1160,51 @@ async fn cached_ffprobe_path() -> Option<PathBuf> {
         .clone()
 }
 
+fn select_ffprobe_text_tracks(tracks: &[MatroskaSubtitleTrack]) -> Vec<(usize, MatroskaSubtitleTrack)> {
+    let mut candidates: Vec<(usize, MatroskaSubtitleTrack)> = tracks
+        .iter()
+        .cloned()
+        .enumerate()
+        .filter(|(_, t)| {
+            !t.codec_id.as_deref().is_some_and(|c| {
+                let up = c.to_ascii_uppercase();
+                up == MATROSKA_PGS_CODEC_ID || up.contains("VOBSUB") || up.contains("PGS")
+            })
+        })
+        .collect();
+    candidates.sort_by_key(|(ord, t)| {
+        let name_lower = t.name.as_deref().unwrap_or("").to_ascii_lowercase();
+        let is_commentary = t.commentary || name_lower.contains("commentary");
+        let is_descriptive = t.visual_impaired
+            || t.text_descriptions
+            || name_lower.contains("audio description")
+            || name_lower.contains("descriptive subtitle");
+        let is_forced = t.forced
+            || name_lower.contains("forced")
+            || name_lower.contains("foreign only")
+            || name_lower.contains("signs only")
+            || name_lower.contains("songs only");
+        let tier = if is_commentary || is_descriptive {
+            3u8
+        } else if is_forced {
+            2u8
+        } else if t.hearing_impaired {
+            1u8
+        } else {
+            0u8
+        };
+        (tier, !t.is_default, *ord)
+    });
+    candidates.truncate(2);
+    candidates
+}
+
 async fn ffprobe_mkv_text_subtitles(
     local_path: &Path,
     tracks: &[MatroskaSubtitleTrack],
 ) -> Option<Vec<ReferenceTrack>> {
     let ffprobe = cached_ffprobe_path().await?;
-    // Try up to 2 non-PGS text tracks (dialogue preferred).
-    let text_indices: Vec<(usize, &MatroskaSubtitleTrack)> = tracks
-        .iter()
-        .enumerate()
-        .filter(|(_, t)| {
-            !t.codec_id
-                .as_deref()
-                .is_some_and(|c| c.eq_ignore_ascii_case(MATROSKA_PGS_CODEC_ID) || c.contains("VOBSUB") || c.contains("PGS"))
-        })
-        .take(2)
-        .collect();
+    let text_indices = select_ffprobe_text_tracks(tracks);
     if text_indices.is_empty() {
         return None;
     }
@@ -1206,7 +1279,7 @@ async fn ffprobe_mkv_text_subtitles(
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| s.to_string())
-                .unwrap_or_else(|| build_fallback_track_label(track));
+                .unwrap_or_else(|| build_fallback_track_label(&track));
             out.push(ReferenceTrack {
                 key: format!("ffprobe-pkts:{}", track.number),
                 language: lang,
@@ -2187,6 +2260,88 @@ mod tests {
         assert!(!cache_state().lock().unwrap().in_flight.contains_key(&key));
 
         task.abort();
+    }
+
+    #[tokio::test]
+    async fn cache_hit_promotes_key_to_mru_tail() {
+        let mut guard = CacheState {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            in_flight: HashMap::new(),
+        };
+        let dummy = IndexedEmbeddedTimeline {
+            tracks: Vec::new(),
+            source: "test".to_string(),
+            no_subtitle_tracks: false,
+            bytes_read: 0,
+            range_requests: 0,
+        };
+        insert_lru(&mut guard, "a".to_string(), CachedEntry::Positive(dummy.clone()));
+        insert_lru(&mut guard, "b".to_string(), CachedEntry::Positive(dummy.clone()));
+        touch_lru(&mut guard, "a");
+        insert_lru(&mut guard, "c".to_string(), CachedEntry::Positive(dummy));
+        assert!(guard.entries.contains_key("a"));
+        assert!(!guard.entries.contains_key("b"));
+        assert!(guard.entries.contains_key("c"));
+
+        // Ensure ffprobe selection skips forced/commentary/bitmap tracks when full dialogue exists.
+        let tracks = vec![
+            MatroskaSubtitleTrack {
+                number: 1,
+                name: Some("English (Forced)".to_string()),
+                language: Some("eng".to_string()),
+                language_ietf: None,
+                codec_id: Some("S_TEXT/UTF8".to_string()),
+                is_default: true,
+                forced: true,
+                hearing_impaired: false,
+                visual_impaired: false,
+                text_descriptions: false,
+                commentary: false,
+            },
+            MatroskaSubtitleTrack {
+                number: 2,
+                name: Some("Director Commentary".to_string()),
+                language: Some("eng".to_string()),
+                language_ietf: None,
+                codec_id: Some("S_TEXT/UTF8".to_string()),
+                is_default: false,
+                forced: false,
+                hearing_impaired: false,
+                visual_impaired: false,
+                text_descriptions: false,
+                commentary: true,
+            },
+            MatroskaSubtitleTrack {
+                number: 3,
+                name: Some("English".to_string()),
+                language: Some("eng".to_string()),
+                language_ietf: None,
+                codec_id: Some("S_TEXT/ASS".to_string()),
+                is_default: false,
+                forced: false,
+                hearing_impaired: false,
+                visual_impaired: false,
+                text_descriptions: false,
+                commentary: false,
+            },
+        ];
+        let picked = select_ffprobe_text_tracks(&tracks);
+        assert_eq!(picked[0].0, 2);
+        assert_eq!(picked[0].1.number, 3);
+        assert_eq!(picked[1].0, 0);
+        assert_eq!(picked[1].1.number, 1);
+
+        // Non-exact range read clamps to remaining byte budget instead of failing.
+        let bytes = vec![b'X'; 64];
+        let dir = std::env::temp_dir().join(format!("harbor-range-clamp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("small.bin");
+        std::fs::write(&file_path, &bytes).unwrap();
+        let mut reader = LocalSourceReader::open(file_path).await.unwrap();
+        let got = reader.read_range(0, 128, false, false).await.unwrap();
+        assert_eq!(got.bytes.len(), 64);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

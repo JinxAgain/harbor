@@ -9,6 +9,7 @@ import { useActiveKid } from "@/lib/profiles";
 import { type PlayerBridge } from "@/lib/player/bridge";
 import { useDebridClients } from "@/lib/debrid/registry";
 import { useSettings } from "@/lib/settings";
+import { writePlayerPrefs } from "@/lib/player-prefs";
 import { writePlayerVolume } from "@/lib/player-volume";
 import { nameColor } from "@/lib/together/colors";
 import { useTogether } from "@/lib/together/provider";
@@ -522,6 +523,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     download,
     subDropToast,
     suspendAutoSyncForManualTiming,
+    hdrAutoSyncState,
+    hdrAutoSyncActions,
   } = usePlayerMedia({
     src: activeMediaSrc,
     snap,
@@ -860,6 +863,15 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     void textSync.enter(src.url, src.headers);
   }, [textSync.enter, src.url, src.headers, suspendAutoSyncForManualTiming]);
 
+  const handleManualSubDelay = useCallback(
+    (sec: number) => {
+      suspendAutoSyncForManualTiming();
+      bridgeRef.current?.setSubDelay(sec);
+      writePlayerPrefs(src.meta.id, { subDelaySec: sec });
+    },
+    [bridgeRef, src.meta.id, suspendAutoSyncForManualTiming],
+  );
+
   const volumeIndicatorTimerRef = useRef<number | null>(null);
   const [volumeIndicator, setVolumeIndicator] = useState<VolumeIndicatorState>({
     visible: false,
@@ -1094,6 +1106,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     },
     onReloadSource: reloadSource,
     onRestartServer: restartStreamServer,
+    onSubDelay: handleManualSubDelay,
     gif,
     clip,
     videoFill,
@@ -1534,7 +1547,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     showNoAudioWarning,
     onUseMpv: () => update({ playerEngine: "mpv" }),
     onDismissNoAudio: () => setNoAudioDismissed(true),
-    // Text-sync props (preserved from fork)
+    // Text-sync & manual subtitle delay
+    onSubDelay: handleManualSubDelay,
     onEnterSync: handleEnterSync,
     syncMode: textSync.syncMode,
     syncApi: textSync,
@@ -1711,6 +1725,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
           screenLockEnabled,
           screenLockControlsVisible,
           screenLockBinding,
+          autoSync: hdrAutoSyncState,
         }}
         handlers={{
           playPause: playPauseToggle,
@@ -1723,6 +1738,11 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
           addSubtitle: (url, lang, title, select, metadata) =>
             bridgeRef.current?.addSubtitle(url, lang, title, select, metadata) ??
             Promise.resolve(false),
+          setSubDelay: handleManualSubDelay,
+          autoSyncRun: hdrAutoSyncActions.run,
+          autoSyncStop: hdrAutoSyncActions.stop,
+          autoSyncRevert: hdrAutoSyncActions.revert,
+          autoSyncDismiss: hdrAutoSyncActions.dismiss,
           pip: togglePipMode,
           cast: () => cast.openCastMenu(null),
           back: backFromPlayer,
