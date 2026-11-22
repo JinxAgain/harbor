@@ -58,6 +58,9 @@ export type AlignSubtitlesResponse = {
   retimedPath: string | null;
   retimedText: string | null;
   format: "srt" | "vtt" | "ass" | "ssa" | "ttml" | null;
+  selectedOriginalPath?: string | null;
+  selectedOriginalText?: string | null;
+  selectedOriginalFormat?: "srt" | "vtt" | "ass" | "ssa" | "ttml" | null;
   medianOffsetMs: number;
   maxShiftMs: number;
   scale: number;
@@ -140,7 +143,7 @@ export function collectSameLanguageCandidates(
     if (out.length >= limit) break;
     if (!track.external) continue;
     const trackLang = normalizeLang(track.lang ?? "");
-    if (targetLang && trackLang && trackLang !== targetLang) continue;
+    if (targetLang && trackLang !== targetLang) continue;
     const url = track.originalUrl || track.url;
     if (!url || !/^https?:/i.test(url)) continue;
     const providerDerived = track.providerDerived ?? Boolean(track.provider);
@@ -160,7 +163,7 @@ export function collectSameLanguageCandidates(
   for (const res of availableSubs) {
     if (out.length >= limit) break;
     const resLang = normalizeLang(res.lang ?? "");
-    if (targetLang && resLang && resLang !== targetLang) continue;
+    if (targetLang && resLang !== targetLang) continue;
     if (!res.url || !/^https?:/i.test(res.url)) continue;
     pushCandidate({
       url: res.url,

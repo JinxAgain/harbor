@@ -9,11 +9,12 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
-use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use tokio::sync::{watch, Mutex};
+use sha2::{Digest, Sha256};
+use tokio::sync::{watch, OnceCell};
 
 use crate::subsync::cue_parser::{filter_indexed_ass_dialogue_cues, SubtitleCue};
 use crate::subsync::mp4_samples::{parse_moov_subtitles, Mp4SubtitleCodec, Mp4SubtitleSampleTable};
@@ -139,16 +140,80 @@ fn cache_state() -> &'static Mutex<CacheState> {
 }
 
 fn make_cache_key(source_url: &str, headers: &HashMap<String, String>) -> String {
-    let mut pairs: Vec<(&String, &String)> = headers.iter().collect();
-    pairs.sort_by(|a, b| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()));
-    let mut out = String::from(source_url);
+    let mut pairs: Vec<(String, &str)> = headers
+        .iter()
+        .map(|(k, v)| (k.to_ascii_lowercase(), v.as_str()))
+        .collect();
+    pairs.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+    let mut hasher = Sha256::new();
+    hasher.update(source_url.as_bytes());
+    hasher.update(b"\0");
     for (k, v) in pairs {
-        out.push('|');
-        out.push_str(&k.to_ascii_lowercase());
-        out.push('=');
-        out.push_str(v);
+        hasher.update(k.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(v.as_bytes());
+        hasher.update(b"\0");
     }
-    out
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(64);
+    for b in digest {
+        use std::fmt::Write;
+        let _ = write!(&mut hex, "{b:02x}");
+    }
+    hex
+}
+
+struct InFlightCleanupGuard {
+    key: String,
+    tx: Option<watch::Sender<Option<ContainerLoadOutcome>>>,
+}
+
+impl InFlightCleanupGuard {
+    fn complete(mut self, outcome: ContainerLoadOutcome) {
+        let tx = self.tx.take();
+        {
+            let mut guard = cache_state().lock().unwrap_or_else(|p| p.into_inner());
+            guard.in_flight.remove(&self.key);
+            match &outcome {
+                ContainerLoadOutcome::Ready(tl) => {
+                    insert_lru(&mut guard, self.key.clone(), CachedEntry::Positive(tl.clone()));
+                }
+                ContainerLoadOutcome::NoSubtitleTracks => {
+                    insert_lru(
+                        &mut guard,
+                        self.key.clone(),
+                        CachedEntry::NoSubtitleTracks {
+                            created_at: Instant::now(),
+                        },
+                    );
+                }
+                ContainerLoadOutcome::NoUsableReference => {
+                    insert_lru(
+                        &mut guard,
+                        self.key.clone(),
+                        CachedEntry::Negative {
+                            created_at: Instant::now(),
+                        },
+                    );
+                }
+                ContainerLoadOutcome::Unavailable => {}
+            }
+        }
+        if let Some(tx) = tx {
+            let _ = tx.send(Some(outcome));
+        }
+    }
+}
+
+impl Drop for InFlightCleanupGuard {
+    fn drop(&mut self) {
+        if let Some(tx) = self.tx.take() {
+            let mut guard = cache_state().lock().unwrap_or_else(|p| p.into_inner());
+            guard.in_flight.remove(&self.key);
+            drop(guard);
+            let _ = tx.send(Some(ContainerLoadOutcome::Unavailable));
+        }
+    }
 }
 
 pub async fn load_embedded_timeline(
@@ -159,11 +224,9 @@ pub async fn load_embedded_timeline(
         return ContainerLoadOutcome::Unavailable;
     }
     let key = make_cache_key(source_url, headers);
-    let mut tx_opt: Option<watch::Sender<Option<ContainerLoadOutcome>>> = None;
-    let mut rx_wait: Option<watch::Receiver<Option<ContainerLoadOutcome>>> = None;
 
-    {
-        let mut guard = cache_state().lock().await;
+    let mut rx = {
+        let mut guard = cache_state().lock().unwrap_or_else(|p| p.into_inner());
         if let Some(entry) = guard.entries.get(&key).cloned() {
             match entry {
                 CachedEntry::Positive(tl) => return ContainerLoadOutcome::Ready(tl),
@@ -182,61 +245,34 @@ pub async fn load_embedded_timeline(
             }
         }
         if let Some(existing_rx) = guard.in_flight.get(&key) {
-            rx_wait = Some(existing_rx.clone());
+            existing_rx.clone()
         } else {
             let (tx, rx) = watch::channel(None);
-            guard.in_flight.insert(key.clone(), rx);
-            tx_opt = Some(tx);
+            guard.in_flight.insert(key.clone(), rx.clone());
+            let key_owned = key.clone();
+            let source_owned = source_url.to_string();
+            let headers_owned = headers.clone();
+            tokio::spawn(async move {
+                let cleanup = InFlightCleanupGuard {
+                    key: key_owned,
+                    tx: Some(tx),
+                };
+                let outcome = load_and_classify(&source_owned, &headers_owned).await;
+                cleanup.complete(outcome);
+            });
+            rx
         }
-    }
+    };
 
-    if let Some(mut rx) = rx_wait {
+    if let Some(res) = rx.borrow().clone() {
+        return res;
+    }
+    while rx.changed().await.is_ok() {
         if let Some(res) = rx.borrow().clone() {
             return res;
         }
-        while rx.changed().await.is_ok() {
-            if let Some(res) = rx.borrow().clone() {
-                return res;
-            }
-        }
-        return ContainerLoadOutcome::Unavailable;
     }
-
-    let tx = tx_opt.expect("sender must exist for owning loader");
-    let source_owned = source_url.to_string();
-    let headers_owned = headers.clone();
-    let outcome = load_and_classify(&source_owned, &headers_owned).await;
-
-    let mut guard = cache_state().lock().await;
-    guard.in_flight.remove(&key);
-    match &outcome {
-        ContainerLoadOutcome::Ready(tl) => {
-            insert_lru(&mut guard, key, CachedEntry::Positive(tl.clone()));
-        }
-        ContainerLoadOutcome::NoSubtitleTracks => {
-            insert_lru(
-                &mut guard,
-                key,
-                CachedEntry::NoSubtitleTracks {
-                    created_at: Instant::now(),
-                },
-            );
-        }
-        ContainerLoadOutcome::NoUsableReference => {
-            insert_lru(
-                &mut guard,
-                key,
-                CachedEntry::Negative {
-                    created_at: Instant::now(),
-                },
-            );
-        }
-        ContainerLoadOutcome::Unavailable => {
-            // Do not negatively cache timeouts / transient transport errors.
-        }
-    }
-    let _ = tx.send(Some(outcome.clone()));
-    outcome
+    ContainerLoadOutcome::Unavailable
 }
 
 fn insert_lru(guard: &mut CacheState, key: String, entry: CachedEntry) {
@@ -250,22 +286,47 @@ fn insert_lru(guard: &mut CacheState, key: String, entry: CachedEntry) {
     }
 }
 
+enum InspectResult {
+    Outcome(ContainerLoadOutcome),
+    NeedsLocalFfprobeFallback {
+        tracks: Vec<MatroskaSubtitleTrack>,
+        bytes_read: u64,
+        range_requests: usize,
+    },
+}
+
 async fn load_and_classify(
     source_url: &str,
     headers: &HashMap<String, String>,
 ) -> ContainerLoadOutcome {
     if let Some(local_path) = url_guard::local_file_path(source_url) {
         let path_clone = local_path.clone();
-        let headers_clone = headers.clone();
-        let src_clone = source_url.to_string();
-        return match tokio::time::timeout(TOTAL_TIMEOUT, async move {
+        let inspect_res = tokio::time::timeout(TOTAL_TIMEOUT, async move {
             let mut reader = LocalSourceReader::open(path_clone)?;
-            inspect_container(&mut reader, Some(&src_clone), Some(&headers_clone)).await
+            inspect_container(&mut reader, true).await
         })
-        .await
-        {
-            Ok(Ok(outcome)) => outcome,
-            Ok(Err(_)) => ContainerLoadOutcome::NoUsableReference,
+        .await;
+        return match inspect_res {
+            Ok(Ok(InspectResult::Outcome(outcome))) => outcome,
+            Ok(Ok(InspectResult::NeedsLocalFfprobeFallback {
+                tracks,
+                bytes_read,
+                range_requests,
+            })) => {
+                if let Some(ref_tracks) = ffprobe_mkv_text_subtitles(&local_path, &tracks).await {
+                    ContainerLoadOutcome::Ready(IndexedEmbeddedTimeline {
+                        tracks: ref_tracks,
+                        source: "ffprobe-subtitle-packets".to_string(),
+                        no_subtitle_tracks: false,
+                        bytes_read,
+                        range_requests,
+                    })
+                } else {
+                    ContainerLoadOutcome::NoUsableReference
+                }
+            }
+            Ok(Err(TimedOrPermanent::Transient)) => ContainerLoadOutcome::Unavailable,
+            Ok(Err(TimedOrPermanent::Permanent)) => ContainerLoadOutcome::NoUsableReference,
             Err(_) => ContainerLoadOutcome::Unavailable,
         };
     }
@@ -273,18 +334,22 @@ async fn load_and_classify(
     let src = source_url.to_string();
     let hdrs = headers.clone();
     match tokio::time::timeout(TOTAL_TIMEOUT, async move {
-        let mut reader = HttpRangeReader::new(src.clone(), hdrs.clone())?;
-        inspect_container(&mut reader, Some(&src), Some(&hdrs)).await
+        let mut reader = HttpRangeReader::new(src, hdrs)?;
+        inspect_container(&mut reader, false).await
     })
     .await
     {
-        Ok(Ok(outcome)) => outcome,
+        Ok(Ok(InspectResult::Outcome(outcome))) => outcome,
+        Ok(Ok(InspectResult::NeedsLocalFfprobeFallback { .. })) => {
+            ContainerLoadOutcome::NoUsableReference
+        }
         Ok(Err(TimedOrPermanent::Transient)) => ContainerLoadOutcome::Unavailable,
         Ok(Err(TimedOrPermanent::Permanent)) => ContainerLoadOutcome::NoUsableReference,
         Err(_) => ContainerLoadOutcome::Unavailable,
     }
 }
 
+#[derive(Debug)]
 enum TimedOrPermanent {
     Transient,
     Permanent,
@@ -400,30 +465,68 @@ impl RandomAccessReader for LocalSourceReader {
 }
 
 struct HttpRangeReader {
-    client: reqwest::Client,
-    url: String,
+    url: url::Url,
     headers: Vec<(String, String)>,
+    cached_client: Option<(String, u16, reqwest::Client)>,
     deadline: Instant,
     bytes_read: u64,
     requests: usize,
 }
 
 impl HttpRangeReader {
-    fn new(url: String, raw_headers: HashMap<String, String>) -> Result<Self, TimedOrPermanent> {
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(5))
-            .connect_timeout(Duration::from_secs(4))
-            .build()
-            .map_err(|_| TimedOrPermanent::Transient)?;
+    fn new(url_str: String, raw_headers: HashMap<String, String>) -> Result<Self, TimedOrPermanent> {
+        let parsed = url::Url::parse(&url_str).map_err(|_| TimedOrPermanent::Permanent)?;
+        url_guard::check_http_url(&parsed, true).map_err(|_| TimedOrPermanent::Permanent)?;
         let headers = url_guard::safe_reqwest_headers(&raw_headers, true);
         Ok(Self {
-            client,
-            url,
+            url: parsed,
             headers,
+            cached_client: None,
             deadline: Instant::now() + TOTAL_TIMEOUT,
             bytes_read: 0,
             requests: 0,
         })
+    }
+
+    async fn client_for_url(
+        &mut self,
+        target: &url::Url,
+        cache_if_initial: bool,
+    ) -> Result<reqwest::Client, TimedOrPermanent> {
+        let host_key = target
+            .host_str()
+            .ok_or(TimedOrPermanent::Permanent)?
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_string();
+        let port_key = target
+            .port_or_known_default()
+            .ok_or(TimedOrPermanent::Permanent)?;
+        if let Some((ref cached_host, cached_port, ref cached)) = self.cached_client {
+            if cached_host == &host_key && cached_port == port_key {
+                return Ok(cached.clone());
+            }
+        }
+        let (resolved_host, addrs) = url_guard::resolve_and_validate_http_target(target, true)
+            .await
+            .map_err(|e| {
+                if e == "dns-lookup-failed" {
+                    TimedOrPermanent::Transient
+                } else {
+                    TimedOrPermanent::Permanent
+                }
+            })?;
+        let client = url_guard::build_pinned_http_client(
+            &resolved_host,
+            &addrs,
+            Duration::from_secs(4),
+            None,
+        )
+        .map_err(|_| TimedOrPermanent::Transient)?;
+        if cache_if_initial {
+            self.cached_client = Some((host_key, port_key, client.clone()));
+        }
+        Ok(client)
     }
 }
 
@@ -447,21 +550,60 @@ impl RandomAccessReader for HttpRangeReader {
         if now >= self.deadline {
             return Err(TimedOrPermanent::Transient);
         }
-        let req_timeout = (self.deadline - now).min(Duration::from_secs(5));
-        let end = start.checked_add(len as u64 - 1).ok_or(TimedOrPermanent::Permanent)?;
+        let end = start
+            .checked_add(len as u64 - 1)
+            .ok_or(TimedOrPermanent::Permanent)?;
         self.requests += 1;
 
-        let mut req = self
-            .client
-            .get(&self.url)
-            .timeout(req_timeout)
-            .header("Range", format!("bytes={start}-{end}"))
-            .header("Accept-Encoding", "identity");
-        for (k, v) in &self.headers {
-            req = req.header(k.as_str(), v.as_str());
+        let mut current_url = self.url.clone();
+        let mut current_headers = self.headers.clone();
+        let mut final_resp: Option<reqwest::Response> = None;
+
+        for hop in 0..=5 {
+            let now = Instant::now();
+            if now >= self.deadline {
+                return Err(TimedOrPermanent::Transient);
+            }
+            let req_timeout = (self.deadline - now).min(Duration::from_secs(5));
+            let client = self.client_for_url(&current_url, hop == 0).await?;
+
+            let mut req = client
+                .get(current_url.clone())
+                .timeout(req_timeout)
+                .header("Range", format!("bytes={start}-{end}"))
+                .header("Accept-Encoding", "identity");
+            for (k, v) in &current_headers {
+                req = req.header(k.as_str(), v.as_str());
+            }
+
+            let resp = req.send().await.map_err(|_| TimedOrPermanent::Transient)?;
+            let status = resp.status().as_u16();
+            if matches!(status, 301 | 302 | 303 | 307 | 308) {
+                let loc = resp
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                    .ok_or(TimedOrPermanent::Permanent)?;
+                let next_url = current_url
+                    .join(loc)
+                    .map_err(|_| TimedOrPermanent::Permanent)?;
+                url_guard::check_http_url(&next_url, true)
+                    .map_err(|_| TimedOrPermanent::Permanent)?;
+                if current_url.scheme() == "https" && next_url.scheme() == "http" {
+                    return Err(TimedOrPermanent::Permanent);
+                }
+                if !crate::http_redirect::same_origin(&current_url, &next_url) {
+                    current_headers
+                        .retain(|(k, _)| crate::http_redirect::safe_cross_origin_header(k));
+                }
+                current_url = next_url;
+                continue;
+            }
+            final_resp = Some(resp);
+            break;
         }
 
-        let mut resp = req.send().await.map_err(|_| TimedOrPermanent::Transient)?;
+        let mut resp = final_resp.ok_or(TimedOrPermanent::Permanent)?;
         let status = resp.status().as_u16();
         if !(200..300).contains(&status) {
             return Err(TimedOrPermanent::Permanent);
@@ -545,10 +687,13 @@ struct ContentRange {
 
 fn parse_content_range(value: &str) -> Option<ContentRange> {
     let trimmed = value.trim();
-    if trimmed.len() < 6 || !trimmed[..6].eq_ignore_ascii_case("bytes ") {
+    if !trimmed
+        .get(..6)
+        .is_some_and(|head| head.eq_ignore_ascii_case("bytes "))
+    {
         return None;
     }
-    let (range_part, total_part) = trimmed[6..].split_once('/')?;
+    let (range_part, total_part) = trimmed.get(6..)?.split_once('/')?;
     let (s_str, e_str) = range_part.split_once('-')?;
     let start = s_str.trim().parse::<u64>().ok();
     let end = e_str.trim().parse::<u64>().ok();
@@ -567,15 +712,14 @@ fn parse_content_range(value: &str) -> Option<ContentRange> {
 
 async fn inspect_container(
     reader: &mut dyn RandomAccessReader,
-    ffprobe_url: Option<&str>,
-    ffprobe_headers: Option<&HashMap<String, String>>,
-) -> Result<ContainerLoadOutcome, TimedOrPermanent> {
+    allow_local_ffprobe: bool,
+) -> Result<InspectResult, TimedOrPermanent> {
     let initial = reader
         .read_range(0, INITIAL_PROBE_BYTES, false, false)
         .await?;
 
     let Some(segment) = find_segment(&initial.bytes) else {
-        return load_mp4_index(reader, &initial).await;
+        return Ok(InspectResult::Outcome(load_mp4_index(reader, &initial).await?));
     };
 
     let segment_data_start = segment.data_start as u64;
@@ -629,24 +773,28 @@ async fn inspect_container(
     };
 
     let Some(&tracks_pos) = resolved.get(&ID_TRACKS).or_else(|| direct_positions.get(&ID_TRACKS)) else {
-        return Ok(ContainerLoadOutcome::NoUsableReference);
+        return Ok(InspectResult::Outcome(ContainerLoadOutcome::NoUsableReference));
     };
     let Some(tracks_bytes) = (match extract_element_from_probe(&initial.bytes, tracks_pos, ID_TRACKS, MAX_TRACKS_BYTES) {
         Some(b) => Some(b),
         None => fetch_element_at(reader, tracks_pos, ID_TRACKS, MAX_TRACKS_BYTES).await?,
     }) else {
-        return Ok(ContainerLoadOutcome::NoUsableReference);
+        return Ok(InspectResult::Outcome(ContainerLoadOutcome::NoUsableReference));
     };
     let subtitle_tracks = parse_subtitle_tracks(&tracks_bytes);
     if subtitle_tracks.is_empty() {
-        return Ok(ContainerLoadOutcome::NoSubtitleTracks);
+        return Ok(InspectResult::Outcome(ContainerLoadOutcome::NoSubtitleTracks));
     }
 
     let cues_pos = resolved.get(&ID_CUES).or_else(|| direct_positions.get(&ID_CUES)).copied();
     let parsed_cues = if let Some(pos) = cues_pos {
         let cues_bytes = match extract_element_from_probe(&initial.bytes, pos, ID_CUES, MAX_CUES_BYTES) {
             Some(b) => Some(b),
-            None => fetch_element_at(reader, pos, ID_CUES, MAX_CUES_BYTES).await?,
+            None => match fetch_element_at(reader, pos, ID_CUES, MAX_CUES_BYTES).await {
+                Ok(b) => b,
+                Err(TimedOrPermanent::Permanent) => None,
+                Err(TimedOrPermanent::Transient) => return Err(TimedOrPermanent::Transient),
+            },
         };
         cues_bytes.map(|b| parse_subtitle_cue_timelines(&b, &subtitle_tracks, timestamp_scale_ns))
     } else {
@@ -669,22 +817,16 @@ async fn inspect_container(
         .iter()
         .all(|t| parsed_cues.get(&t.number).is_none_or(|c| c.is_empty()))
     {
-        // Optional lightweight ffprobe packet timestamp fallback ONLY when MKV has non-PGS text
-        // subtitle tracks in Tracks but 0 subtitle entries indexed in Cues.
-        if let Some(url) = ffprobe_url {
-            let empty_hdrs = HashMap::new();
-            let hdrs = ffprobe_headers.unwrap_or(&empty_hdrs);
-            if let Some(ref_tracks) = ffprobe_mkv_text_subtitles(url, hdrs, &subtitle_tracks).await {
-                return Ok(ContainerLoadOutcome::Ready(IndexedEmbeddedTimeline {
-                    tracks: ref_tracks,
-                    source: "ffprobe-subtitle-packets".to_string(),
-                    no_subtitle_tracks: false,
-                    bytes_read: reader.bytes_read(),
-                    range_requests: reader.requests_made(),
-                }));
-            }
+        // Local MKV files with text tracks in Tracks but 0 indexed entries in Cues fall back
+        // to ffprobe subtitle packet reading outside the EBML probe budget.
+        if allow_local_ffprobe {
+            return Ok(InspectResult::NeedsLocalFfprobeFallback {
+                tracks: subtitle_tracks,
+                bytes_read: reader.bytes_read(),
+                range_requests: reader.requests_made(),
+            });
         }
-        return Ok(ContainerLoadOutcome::NoUsableReference);
+        return Ok(InspectResult::Outcome(ContainerLoadOutcome::NoUsableReference));
     }
 
     let mut reference_tracks = Vec::new();
@@ -734,16 +876,18 @@ async fn inspect_container(
     }
 
     if reference_tracks.is_empty() {
-        return Ok(ContainerLoadOutcome::NoUsableReference);
+        return Ok(InspectResult::Outcome(ContainerLoadOutcome::NoUsableReference));
     }
 
-    Ok(ContainerLoadOutcome::Ready(IndexedEmbeddedTimeline {
-        tracks: reference_tracks,
-        source: "matroska-cues".to_string(),
-        no_subtitle_tracks: false,
-        bytes_read: reader.bytes_read(),
-        range_requests: reader.requests_made(),
-    }))
+    Ok(InspectResult::Outcome(ContainerLoadOutcome::Ready(
+        IndexedEmbeddedTimeline {
+            tracks: reference_tracks,
+            source: "matroska-cues".to_string(),
+            no_subtitle_tracks: false,
+            bytes_read: reader.bytes_read(),
+            range_requests: reader.requests_made(),
+        },
+    )))
 }
 
 async fn load_mp4_index(
@@ -959,12 +1103,24 @@ fn build_mp4_reference_track(table: &Mp4SubtitleSampleTable) -> Option<Reference
     })
 }
 
+async fn cached_ffprobe_path() -> Option<PathBuf> {
+    static FFPROBE_PATH: OnceCell<Option<PathBuf>> = OnceCell::const_new();
+    FFPROBE_PATH
+        .get_or_init(|| async {
+            tokio::task::spawn_blocking(crate::transcode::locate_ffprobe)
+                .await
+                .ok()
+                .flatten()
+        })
+        .await
+        .clone()
+}
+
 async fn ffprobe_mkv_text_subtitles(
-    source_url: &str,
-    headers: &HashMap<String, String>,
+    local_path: &Path,
     tracks: &[MatroskaSubtitleTrack],
 ) -> Option<Vec<ReferenceTrack>> {
-    let ffprobe = crate::transcode::locate_ffprobe()?;
+    let ffprobe = cached_ffprobe_path().await?;
     // Try up to 2 non-PGS text tracks (dialogue preferred).
     let text_indices: Vec<(usize, &MatroskaSubtitleTrack)> = tracks
         .iter()
@@ -980,29 +1136,19 @@ async fn ffprobe_mkv_text_subtitles(
         return None;
     }
 
-    let header_blob = url_guard::safe_header_blob(headers);
-    let ua = url_guard::user_agent(headers);
-    let is_http = source_url.starts_with("http://") || source_url.starts_with("https://");
-
     let mut out = Vec::new();
     for (sub_ordinal, track) in text_indices {
         let mut cmd = tokio::process::Command::new(&ffprobe);
-        cmd.arg("-v").arg("error");
-        if is_http {
-            if let Some(ref u) = ua {
-                cmd.arg("-user_agent").arg(u);
-            }
-            if !header_blob.is_empty() {
-                cmd.arg("-headers").arg(&header_blob);
-            }
-        }
-        cmd.arg("-select_streams")
+        cmd.kill_on_drop(true);
+        cmd.arg("-v")
+            .arg("error")
+            .arg("-select_streams")
             .arg(format!("s:{}", sub_ordinal))
             .arg("-show_entries")
             .arg("packet=pts_time,duration_time")
             .arg("-of")
             .arg("csv=p=0")
-            .arg(source_url)
+            .arg(local_path)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -1581,9 +1727,25 @@ async fn find_and_parse_cues_near_end(
     let mut offsets = find_element_id_offsets(&tail.bytes, ID_CUES);
     offsets.reverse();
     for rel_offset in offsets {
-        let abs = start + rel_offset as u64;
-        if let Some(cues_bytes) = fetch_element_at(reader, abs, ID_CUES, MAX_CUES_BYTES).await? {
-            let parsed = parse_subtitle_cue_timelines(&cues_bytes, subtitle_tracks, timestamp_scale_ns);
+        let cues_bytes = match extract_element_from_probe(
+            &tail.bytes,
+            rel_offset as u64,
+            ID_CUES,
+            MAX_CUES_BYTES,
+        ) {
+            Some(b) => Some(b),
+            None => {
+                let abs = start + rel_offset as u64;
+                match fetch_element_at(reader, abs, ID_CUES, MAX_CUES_BYTES).await {
+                    Ok(b) => b,
+                    Err(TimedOrPermanent::Permanent) => continue,
+                    Err(TimedOrPermanent::Transient) => return Err(TimedOrPermanent::Transient),
+                }
+            }
+        };
+        if let Some(cues_bytes) = cues_bytes {
+            let parsed =
+                parse_subtitle_cue_timelines(&cues_bytes, subtitle_tracks, timestamp_scale_ns);
             if parsed.values().any(|c| c.len() >= MIN_INDEXED_CUES) {
                 return Ok(Some(parsed));
             }
@@ -1863,6 +2025,168 @@ mod tests {
         assert_eq!(paired.len(), 10);
         assert_eq!(paired[0].start_ms, 1_000);
         assert_eq!(paired[0].end_ms, 2_400);
+    }
+
+    #[test]
+    fn make_cache_key_delimiters_cannot_collide() {
+        let k1 = make_cache_key("http://a|b=c", &HashMap::new());
+        let mut h2 = HashMap::new();
+        h2.insert("b".to_string(), "c".to_string());
+        let k2 = make_cache_key("http://a", &h2);
+        assert_ne!(k1, k2);
+    }
+
+    #[tokio::test]
+    async fn tail_cues_recovers_after_false_positive_id_cues_bytes() {
+        let mut bytes = build_synthetic_mkv(true, true);
+        // Append false-positive ID_CUES bytes with an absurd size AFTER the real Cues element
+        // so reverse offset scan encounters the false positive first.
+        bytes.extend_from_slice(&element_id_bytes(ID_CUES));
+        bytes.extend_from_slice(&[0x1F, 0xFF, 0xFF, 0xFF]);
+
+        let dir = std::env::temp_dir().join(format!("harbor-mkv-fp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("false_pos.mkv");
+        std::fs::write(&path, bytes).unwrap();
+
+        match load_embedded_timeline(path.to_str().unwrap(), &HashMap::new()).await {
+            ContainerLoadOutcome::Ready(tl) => {
+                assert_eq!(tl.tracks.len(), 1);
+                assert_eq!(tl.tracks[0].cues.len(), 16);
+            }
+            other => panic!("expected tail Cues recovery, got {:?}", other),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn http_range_reader_strips_headers_cross_origin_and_blocks_ssrf_redirects() {
+        use axum::{extract::Request, http::HeaderMap, routing::get, Router};
+        use std::sync::{Arc, Mutex as StdMutex};
+
+        let mkv = Arc::new(build_synthetic_mkv(true, false));
+        let seen_auth = Arc::new(StdMutex::new(Vec::<Option<String>>::new()));
+        let mkv_c = mkv.clone();
+        let seen_c = seen_auth.clone();
+
+        let target_router = Router::new().route(
+            "/video.mkv",
+            get(move |headers: HeaderMap| {
+                let data = mkv_c.clone();
+                let seen = seen_c.clone();
+                async move {
+                    let auth = headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .map(|s| s.to_string());
+                    seen.lock().unwrap().push(auth);
+                    let total = data.len();
+                    let range = headers
+                        .get("range")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("bytes=0-1023");
+                    let spec = range.trim_start_matches("bytes=");
+                    let (s_str, e_str) = spec.split_once('-').unwrap_or(("0", ""));
+                    let start = s_str.parse::<usize>().unwrap_or(0).min(total.saturating_sub(1));
+                    let end = e_str
+                        .parse::<usize>()
+                        .unwrap_or(total - 1)
+                        .min(total - 1);
+                    let slice = data[start..=end].to_vec();
+                    let content_range = format!("bytes {start}-{end}/{total}");
+                    (
+                        axum::http::StatusCode::PARTIAL_CONTENT,
+                        [("content-range", content_range)],
+                        slice,
+                    )
+                }
+            }),
+        );
+        let t_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let t_url = format!("http://{}", t_listener.local_addr().unwrap());
+        let t_task = tokio::spawn(async move { axum::serve(t_listener, target_router).await.unwrap() });
+
+        let dest = format!("{t_url}/video.mkv");
+        let redir_router = Router::new()
+            .route(
+                "/start",
+                get(move |_req: Request| {
+                    let loc = dest.clone();
+                    async move { (axum::http::StatusCode::FOUND, [("location", loc)]) }
+                }),
+            )
+            .route(
+                "/ssrf",
+                get(|| async {
+                    (
+                        axum::http::StatusCode::FOUND,
+                        [("location", "http://169.254.169.254/latest/meta-data/")],
+                    )
+                }),
+            );
+        let r_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let r_url = format!("http://{}", r_listener.local_addr().unwrap());
+        let r_task = tokio::spawn(async move { axum::serve(r_listener, redir_router).await.unwrap() });
+
+        let mut hdrs = HashMap::new();
+        hdrs.insert("Authorization".to_string(), "Bearer top-secret".to_string());
+        let out = load_embedded_timeline(&format!("{r_url}/start"), &hdrs).await;
+        match out {
+            ContainerLoadOutcome::Ready(tl) => assert_eq!(tl.tracks[0].cues.len(), 16),
+            other => panic!("expected Ready, got {:?}", other),
+        }
+        let captured = seen_auth.lock().unwrap().clone();
+        assert!(!captured.is_empty());
+        assert!(captured.iter().all(|v| v.is_none()));
+
+        let mut reader = HttpRangeReader::new(format!("{r_url}/ssrf"), HashMap::new()).unwrap();
+        let ssrf_res = reader.read_range(0, 128, false, false).await;
+        assert!(matches!(ssrf_res, Err(TimedOrPermanent::Permanent)));
+
+        t_task.abort();
+        r_task.abort();
+    }
+
+    #[tokio::test]
+    async fn cancelling_in_flight_caller_does_not_poison_second_caller() {
+        use axum::{routing::get, Router};
+        use std::sync::Arc;
+
+        let mkv = Arc::new(build_synthetic_mkv(true, false));
+        let mkv_c = mkv.clone();
+        let router = Router::new().route(
+            "/slow.mkv",
+            get(move || {
+                let data = mkv_c.clone();
+                async move {
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                    let len = data.len();
+                    (
+                        axum::http::StatusCode::PARTIAL_CONTENT,
+                        [("content-range", format!("bytes 0-{}/{}", len - 1, len))],
+                        (*data).clone(),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/slow.mkv", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+        let url1 = url.clone();
+        let first = tokio::time::timeout(
+            Duration::from_millis(15),
+            load_embedded_timeline(&url1, &HashMap::new()),
+        )
+        .await;
+        assert!(first.is_err());
+
+        let second = load_embedded_timeline(&url, &HashMap::new()).await;
+        assert!(matches!(second, ContainerLoadOutcome::Ready(_)));
+        let key = make_cache_key(&url, &HashMap::new());
+        assert!(!cache_state().lock().unwrap().in_flight.contains_key(&key));
+
+        task.abort();
     }
 }
 

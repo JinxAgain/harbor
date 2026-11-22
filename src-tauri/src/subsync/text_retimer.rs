@@ -8,6 +8,7 @@ use regex::Regex;
 use std::sync::OnceLock;
 
 use crate::subsync::aligner::TimelineRetimeResult;
+use crate::subsync::cue_parser::SubtitleCue;
 
 const BOUNDARY_TOLERANCE_MS: i64 = 500;
 const ASS_DEFAULT_FIELD_COUNT: usize = 10;
@@ -114,7 +115,7 @@ fn timing_line_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r"^(\s*)((?:\d+:)?\d{1,2}:\d{2}(?:[.,]\d+)?)(\s*-->\s*)((?:\d+:)?\d{1,2}:\d{2}(?:[.,]\d+)?)(.*)$",
+            r"^(\s*)((?:[0-9]+:)?[0-9]{1,2}:[0-9]{2}(?:[.,][0-9]+)?)(\s*-->\s*)((?:[0-9]+:)?[0-9]{1,2}:[0-9]{2}(?:[.,][0-9]+)?)(.*)$",
         )
         .unwrap()
     })
@@ -122,7 +123,9 @@ fn timing_line_regex() -> &'static Regex {
 
 fn ts_parts_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^(?:(\d+):)?(\d{1,2}):(\d{2})(?:([.,])(\d+))?$").unwrap())
+    RE.get_or_init(|| {
+        Regex::new(r"^(?:([0-9]+):)?([0-9]{1,2}):([0-9]{2})(?:([.,])([0-9]+))?$").unwrap()
+    })
 }
 
 fn ttml_root_regex() -> &'static Regex {
@@ -231,8 +234,13 @@ fn retime_ass(text: &str, mapper: &TimelineTimeMapper) -> Option<String> {
         if !in_events {
             continue;
         }
-        if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("Format:") {
-            let fields: Vec<String> = trimmed[7..]
+        if trimmed
+            .get(..7)
+            .is_some_and(|head| head.eq_ignore_ascii_case("Format:"))
+        {
+            let fields: Vec<String> = trimmed
+                .get(7..)
+                .unwrap_or("")
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
@@ -247,7 +255,10 @@ fn retime_ass(text: &str, mapper: &TimelineTimeMapper) -> Option<String> {
                 .unwrap_or(ASS_DEFAULT_END_INDEX);
             continue;
         }
-        if trimmed.len() >= 9 && trimmed[..9].eq_ignore_ascii_case("Dialogue:") {
+        if trimmed
+            .get(..9)
+            .is_some_and(|head| head.eq_ignore_ascii_case("Dialogue:"))
+        {
             let Some(colon) = line.find(':') else {
                 continue;
             };
@@ -307,11 +318,11 @@ fn parse_timestamp(raw: &str) -> Option<ParsedTimestamp> {
         .and_then(|m| m.as_str().chars().next())
         .unwrap_or(',');
     let frac = cap.get(5).map(|m| m.as_str()).unwrap_or("");
-    let millis = match frac.len() {
+    let millis = match frac.chars().count() {
         0 => 0,
         1 => frac.parse::<i64>().ok()? * 100,
         2 => frac.parse::<i64>().ok()? * 10,
-        _ => frac[..3].parse::<i64>().ok()?,
+        _ => frac.chars().take(3).collect::<String>().parse::<i64>().ok()?,
     };
     let ms = ((hours * 3_600 + minutes * 60 + seconds) * 1_000) + millis;
     Some(ParsedTimestamp {
@@ -319,6 +330,58 @@ fn parse_timestamp(raw: &str) -> Option<ParsedTimestamp> {
         has_hours: !hours_text.is_empty(),
         separator: sep,
     })
+}
+
+fn format_srt_timestamp(ms: i64) -> String {
+    let clamped = ms.max(0);
+    let hours = clamped / 3_600_000;
+    let minutes = (clamped / 60_000) % 60;
+    let seconds = (clamped / 1_000) % 60;
+    let millis = clamped % 1_000;
+    format!("{hours:02}:{minutes:02}:{seconds:02},{millis:03}")
+}
+
+/// Serializes subtitle cues into standard SRT text.
+pub fn format_srt_from_cues(cues: &[SubtitleCue]) -> Option<String> {
+    if cues.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    for (idx, cue) in cues.iter().enumerate() {
+        let start_ms = cue.start_ms.max(0);
+        let end_ms = cue.end_ms.max(start_ms + 1);
+        out.push_str(&format!(
+            "{}\n{} --> {}\n{}\n\n",
+            idx + 1,
+            format_srt_timestamp(start_ms),
+            format_srt_timestamp(end_ms),
+            cue.text.trim()
+        ));
+    }
+    Some(out)
+}
+
+/// Serializes original TTML cues using retimed start/end boundaries into standard SRT text.
+pub fn format_srt_from_retimed_cues(
+    orig_cues: &[SubtitleCue],
+    timeline: &TimelineRetimeResult,
+) -> Option<String> {
+    if orig_cues.is_empty() || orig_cues.len() != timeline.cues.len() {
+        return None;
+    }
+    let mut out = String::new();
+    for (idx, (orig, timed)) in orig_cues.iter().zip(timeline.cues.iter()).enumerate() {
+        let start_ms = timed.start_ms.max(0);
+        let end_ms = timed.end_ms.max(start_ms + 1);
+        out.push_str(&format!(
+            "{}\n{} --> {}\n{}\n\n",
+            idx + 1,
+            format_srt_timestamp(start_ms),
+            format_srt_timestamp(end_ms),
+            orig.text.trim()
+        ));
+    }
+    Some(out)
 }
 
 fn format_like(ms: i64, original: ParsedTimestamp) -> String {
@@ -410,5 +473,42 @@ Dialogue: 0, 0:00:10.00, 0:00:12.00, Default, Speaker, 0, 0, 0, , {\\an8\\i1}Hel
         assert!(retimed.contains("[Fonts]\nfontname: test.ttf"));
         assert!(retimed.contains("Comment: 0,0:00:05.00,0:00:06.00,Default,,0,0,0,,Keep me unchanged"));
         assert!(retimed.contains("Dialogue: 0, 0:00:08.00, 0:00:10.00, Default, Speaker, 0, 0, 0, , {\\an8\\i1}Hello, world{\\i0}"));
+    }
+
+    #[test]
+    fn handles_non_ascii_ass_lines_and_arabic_indic_digits_without_panicking() {
+        let cues = vec![SubtitleCue::new(10_000, 12_000, "مرحبا".into())];
+        let tl = delay_timeline(1_000.0, &cues);
+
+        // 2-byte UTF-8 lines inside [Events] shorter than 7/9 bytes must not slice mid-char.
+        let ass = "\
+[Script Info]
+ScriptType: v4.00+
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+م
+ش
+س،ب
+Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,مرحبا بكم";
+        let retimed_ass = retime_subtitle_text(ass, &tl).expect("retime non-ascii ass");
+        assert!(retimed_ass.contains("Dialogue: 0,0:00:11.00,0:00:13.00,Default,,0,0,0,,مرحبا بكم"));
+
+        let arabic_digits = "1\n00:00:10,000 --> 00:00:12,000\nValid cue\n\n2\n٠٠:٠٠:٠١,١٢٣ --> ٠٠:٠٠:٠٢,٠٠٠\nIndic\n";
+        let retimed_srt = retime_subtitle_text(arabic_digits, &tl).expect("no panic on Arabic-Indic digits");
+        assert!(retimed_srt.contains("00:00:11,000 --> 00:00:13,000"));
+    }
+
+    #[test]
+    fn formats_ttml_cues_into_retimed_srt() {
+        let orig = vec![
+            SubtitleCue::new(1_000, 3_000, "First line".into()),
+            SubtitleCue::new(4_500, 6_250, "Second line".into()),
+        ];
+        let tl = delay_timeline(2_000.0, &orig);
+        let srt = format_srt_from_retimed_cues(&orig, &tl).expect("format ttml as srt");
+        assert!(srt.contains("1\n00:00:03,000 --> 00:00:05,000\nFirst line"));
+        assert!(srt.contains("2\n00:00:06,500 --> 00:00:08,250\nSecond line"));
+        assert!(!srt.contains("<tt"));
     }
 }

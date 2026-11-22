@@ -1,8 +1,9 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
+use std::time::Duration;
 
 const HOP_BY_HOP: &[&str] = &[
     "connection",
@@ -42,7 +43,7 @@ pub(crate) fn local_file_path(source: &str) -> Option<PathBuf> {
 }
 
 fn is_disallowed_ipv4(ip: Ipv4Addr, allow_lan_and_loopback: bool) -> Result<(), String> {
-    if ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() {
+    if ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() || ip.is_multicast() {
         return Err("internal-ip-blocked".into());
     }
     if ip.is_loopback() {
@@ -65,7 +66,7 @@ fn is_disallowed_ipv4(ip: Ipv4Addr, allow_lan_and_loopback: bool) -> Result<(), 
 }
 
 fn is_disallowed_ipv6(ip: Ipv6Addr, allow_lan_and_loopback: bool) -> Result<(), String> {
-    if ip.is_unspecified() {
+    if ip.is_unspecified() || ip.is_multicast() {
         return Err("internal-ip-blocked".into());
     }
     let seg = ip.segments();
@@ -94,16 +95,23 @@ fn is_disallowed_ipv6(ip: Ipv6Addr, allow_lan_and_loopback: bool) -> Result<(), 
     Ok(())
 }
 
+pub(crate) fn check_ip(ip: IpAddr, allow_lan_and_loopback: bool) -> Result<(), String> {
+    match ip {
+        IpAddr::V4(v4) => is_disallowed_ipv4(v4, allow_lan_and_loopback),
+        IpAddr::V6(v6) => is_disallowed_ipv6(v6, allow_lan_and_loopback),
+    }
+}
+
 fn check_host(parsed: &url::Url, allow_lan_and_loopback: bool) -> Result<(), String> {
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("userinfo-blocked".into());
+    }
     let host = parsed
         .host_str()
         .ok_or_else(|| "no-host".to_string())?;
     let trimmed = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = trimmed.parse::<IpAddr>() {
-        return match ip {
-            IpAddr::V4(v4) => is_disallowed_ipv4(v4, allow_lan_and_loopback),
-            IpAddr::V6(v6) => is_disallowed_ipv6(v6, allow_lan_and_loopback),
-        };
+        return check_ip(ip, allow_lan_and_loopback);
     }
     let lower = trimmed.to_ascii_lowercase();
     if lower == "metadata.google.internal" || lower == "169.254.169.254" {
@@ -118,6 +126,61 @@ fn check_host(parsed: &url::Url, allow_lan_and_loopback: bool) -> Result<(), Str
         return Err("local-hostname-blocked".into());
     }
     Ok(())
+}
+
+pub(crate) fn check_http_url(parsed: &url::Url, allow_lan_and_loopback: bool) -> Result<(), String> {
+    match parsed.scheme() {
+        "http" | "https" => check_host(parsed, allow_lan_and_loopback),
+        _ => Err("scheme-not-allowed".into()),
+    }
+}
+
+pub(crate) async fn resolve_and_validate_http_target(
+    parsed: &url::Url,
+    allow_lan_and_loopback: bool,
+) -> Result<(String, Vec<SocketAddr>), String> {
+    check_http_url(parsed, allow_lan_and_loopback)?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "no-host".to_string())?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| "no-port".to_string())?;
+    let trimmed = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = trimmed.parse::<IpAddr>() {
+        check_ip(ip, allow_lan_and_loopback)?;
+        return Ok((trimmed.to_string(), vec![SocketAddr::new(ip, port)]));
+    }
+    let addrs: Vec<SocketAddr> = tokio::net::lookup_host((trimmed, port))
+        .await
+        .map_err(|_| "dns-lookup-failed".to_string())?
+        .collect();
+    if addrs.is_empty() {
+        return Err("dns-empty".into());
+    }
+    for addr in &addrs {
+        check_ip(addr.ip(), allow_lan_and_loopback)?;
+    }
+    Ok((trimmed.to_string(), addrs))
+}
+
+pub(crate) fn build_pinned_http_client(
+    host: &str,
+    addrs: &[SocketAddr],
+    connect_timeout: Duration,
+    total_timeout: Option<Duration>,
+) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(connect_timeout);
+    if let Some(t) = total_timeout {
+        builder = builder.timeout(t);
+    }
+    if host.parse::<IpAddr>().is_err() {
+        builder = builder.resolve_to_addrs(host, addrs);
+    }
+    builder.build().map_err(|e| e.to_string())
 }
 
 /// Validates a currently-playing media source for reading container subtitle indexes.
@@ -136,10 +199,7 @@ pub(crate) fn validate_playback_media_url(source: &str) -> Result<(), String> {
         return Err("invalid-local-path".into());
     }
     let parsed = url::Url::parse(trimmed).map_err(|_| "invalid-url".to_string())?;
-    match parsed.scheme() {
-        "http" | "https" => check_host(&parsed, true),
-        _ => Err("scheme-not-allowed".into()),
-    }
+    check_http_url(&parsed, true)
 }
 
 /// Validates an external subtitle download URL. Blocks private/loopback networks unless
@@ -153,13 +213,8 @@ pub(crate) fn validate_subtitle_candidate_url(
         return Err("empty-subtitle-url".into());
     }
     let parsed = url::Url::parse(trimmed).map_err(|_| "invalid-url".to_string())?;
-    match parsed.scheme() {
-        "http" | "https" => {
-            check_host(&parsed, allow_local_trusted)?;
-            Ok(parsed)
-        }
-        _ => Err("scheme-not-allowed".into()),
-    }
+    check_http_url(&parsed, allow_local_trusted)?;
+    Ok(parsed)
 }
 
 fn has_ctl(s: &str) -> bool {
@@ -248,5 +303,32 @@ mod tests {
         assert!(!blob.contains("evil"));
         assert!(!blob.contains("connection"));
         assert!(user_agent(&h).is_none());
+    }
+
+    #[test]
+    fn blocks_userinfo_and_multicast_urls() {
+        assert!(validate_subtitle_candidate_url("https://user:pass@example.com/a.srt", true).is_err());
+        assert!(validate_playback_media_url("http://user:pass@127.0.0.1:8080/a.mkv").is_err());
+        assert!(validate_subtitle_candidate_url("http://224.0.0.1/a.srt", true).is_err());
+        assert!(validate_playback_media_url("http://[ff02::1]/a.mkv").is_err());
+    }
+
+    #[tokio::test]
+    async fn resolve_and_validate_pins_dns_and_blocks_loopback_when_disallowed() {
+        let ip_url = url::Url::parse("http://127.0.0.1:8080/sub.srt").unwrap();
+        assert!(resolve_and_validate_http_target(&ip_url, false).await.is_err());
+        let (host, addrs) = resolve_and_validate_http_target(&ip_url, true)
+            .await
+            .expect("loopback allowed when opted in");
+        assert_eq!(host, "127.0.0.1");
+        assert_eq!(addrs, vec!["127.0.0.1:8080".parse().unwrap()]);
+
+        let local_url = url::Url::parse("http://localhost:8080/sub.srt").unwrap();
+        assert!(resolve_and_validate_http_target(&local_url, false).await.is_err());
+        let resolved = resolve_and_validate_http_target(&local_url, true).await;
+        if let Ok((resolved_host, resolved_addrs)) = resolved {
+            assert_eq!(resolved_host, "localhost");
+            assert!(!resolved_addrs.is_empty());
+        }
     }
 }

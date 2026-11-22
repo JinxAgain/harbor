@@ -1420,7 +1420,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
           timingStatus: metadata?.timingStatus,
           timingMeasurementStatus: metadata?.timingMeasurementStatus,
           matchExplanation: metadata?.matchExplanation,
-          prepared: metadata?.prepared,
+          prepared: metadata?.prepared ?? (transferredPrepared != null ? true : undefined),
           autoSelectionEligible: metadata?.autoSelectionEligible,
           matchScore: metadata?.matchScore,
           matchConfidence: metadata?.matchConfidence,

@@ -3,6 +3,7 @@ import { Loader2, Wand2 } from "lucide-react";
 import { useAutoSyncHandle } from "@/components/player/autosync/autosync-store";
 import { loadSubPresets } from "@/lib/player/sub-presets";
 import { useSettings } from "@/lib/settings";
+import { formatSyncShift } from "@/lib/subtitles/autosync/embedded-sync";
 import { useBpT } from "../bp-i18n";
 import { Chip, LABEL, NOTE, Row, SPIN, Stepper, offsetLabel } from "./bp-subtitle-parts";
 
@@ -24,15 +25,37 @@ export function BpSubtitleSync({
   const t = useBpT();
   const autoSync = useAutoSyncHandle();
   const busy = autoSync?.status === "analyzing";
+  const synced = autoSync?.status === "synced";
   const offset = offsetLabel(delaySec, t);
+  const shiftLabel = autoSync?.offsetMs != null ? formatSyncShift(autoSync.offsetMs) : "";
+  const syncNote = (() => {
+    switch (autoSync?.status) {
+      case "analyzing":
+        return t("Syncing subtitles…");
+      case "synced":
+        return shiftLabel && shiftLabel !== "0s"
+          ? t("Subtitles synced ({shift})", { shift: shiftLabel })
+          : t("Subtitles synced");
+      case "within-tolerance":
+        return t("Subtitles already in sync");
+      case "no-embedded":
+        return t("No embedded subtitle reference found");
+      case "no-fit":
+        return t("Could not auto-sync subtitles");
+      case "error":
+        return autoSync.errorMessage || t("Auto-sync failed");
+      default:
+        return null;
+    }
+  })();
 
   return (
     <>
       <Row>
         <span className={LABEL}>{t("Auto sync")}</span>
         <Chip
-          label={busy ? t("Cancel sync") : t("Auto sync")}
-          on={busy}
+          label={busy ? t("Cancel sync") : synced ? t("Re-sync") : t("Auto sync")}
+          on={busy || synced}
           seed
           icon={busy ? <Loader2 size={19} className={SPIN} /> : <Wand2 size={19} strokeWidth={2.2} />}
           onPress={() => {
@@ -45,7 +68,11 @@ export function BpSubtitleSync({
           <Chip label={t("Revert")} onPress={() => autoSync.revert()} />
         )}
       </Row>
-      {!canSync && <p className={NOTE}>{t("Needs an external subtitle")}</p>}
+      {!canSync ? (
+        <p className={NOTE}>{t("Needs an external subtitle")}</p>
+      ) : syncNote ? (
+        <p className={NOTE}>{syncNote}</p>
+      ) : null}
       <Row>
         <span className={LABEL}>{t("Manual offset")}</span>
         {DELAY_STEPS.map((step) => (

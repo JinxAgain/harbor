@@ -277,7 +277,7 @@ fn strip_bom_and_crlf(raw: &str) -> String {
 
 fn timestamp_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^(?:(\d+):)?(\d{1,2}):(\d{2})(?:[.,](\d+))?$").unwrap())
+    RE.get_or_init(|| Regex::new(r"^(?:([0-9]+):)?([0-9]{1,2}):([0-9]{2})(?:[.,]([0-9]+))?$").unwrap())
 }
 
 fn ass_override_regex() -> &'static Regex {
@@ -329,7 +329,7 @@ fn typeset_tag_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r"\\(?:pos|move|org|i?clip)\s*\(|\\t\s*\(|\\p[1-9]|\\[kK][fo]?\d|\\fr[xyz]?-?\d|\\fa[xy]",
+            r"\\(?:pos|move|org|i?clip)\s*\(|\\t\s*\(|\\p[1-9]|\\[kK][fo]?[0-9]|\\fr[xyz]?-?[0-9]|\\fa[xy]",
         )
         .unwrap()
     })
@@ -496,8 +496,9 @@ fn parse_ass(text: &str) -> Vec<SubtitleCue> {
 }
 
 fn strip_prefix_ignore_case<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
-    if line.len() >= prefix.len() && line[..prefix.len()].eq_ignore_ascii_case(prefix) {
-        Some(&line[prefix.len()..])
+    let head = line.get(..prefix.len())?;
+    if head.eq_ignore_ascii_case(prefix) {
+        line.get(prefix.len()..)
     } else {
         None
     }
@@ -672,6 +673,12 @@ fn parse_ttml(text: &str) -> Vec<SubtitleCue> {
         let end_ms = end_raw
             .as_deref()
             .and_then(|raw| parse_ttml_timestamp(raw, frame_rate))
+            .or_else(|| {
+                attribute_value(attrs, "dur")
+                    .as_deref()
+                    .and_then(|raw| parse_ttml_timestamp(raw, frame_rate))
+                    .map(|dur| start_ms.saturating_add(dur))
+            })
             .unwrap_or(start_ms + 3_000);
         if end_ms <= start_ms {
             continue;
@@ -765,14 +772,28 @@ fn parse_clock_with_frames(raw: &str, frame_rate: f64) -> Option<i64> {
 }
 
 fn attribute_value(attrs: &str, name: &str) -> Option<String> {
-    let pattern = format!(r#"(?i)(?:^|\s){}\s*=\s*["']([^"']+)["']"#, regex::escape(name));
-    let re = Regex::new(&pattern).ok()?;
-    let val = re.captures(attrs)?.get(1)?.as_str().trim();
-    if val.is_empty() {
-        None
-    } else {
-        Some(val.to_string())
+    static ATTR_RE: OnceLock<Regex> = OnceLock::new();
+    let re = ATTR_RE.get_or_init(|| {
+        Regex::new(r#"(?:^|\s)([a-zA-Z0-9_:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap()
+    });
+    for cap in re.captures_iter(attrs) {
+        let Some(attr_name) = cap.get(1).map(|m| m.as_str()) else {
+            continue;
+        };
+        if attr_name.eq_ignore_ascii_case(name) {
+            let raw_val = cap
+                .get(2)
+                .or_else(|| cap.get(3))
+                .map(|m| m.as_str().trim())
+                .unwrap_or("");
+            return if raw_val.is_empty() {
+                None
+            } else {
+                Some(raw_val.to_string())
+            };
+        }
     }
+    None
 }
 
 fn parse_start_end_time_ms(timing_line: &str) -> Option<(i64, i64)> {
@@ -805,7 +826,7 @@ fn normalize_cue_text(text: &str) -> String {
     static HTML_TAG: OnceLock<Regex> = OnceLock::new();
     static WS_RE: OnceLock<Regex> = OnceLock::new();
     let vtt_tag = VTT_TIME_TAG
-        .get_or_init(|| Regex::new(r"<(?:\d+:)?\d{1,2}:\d{2}(?:[.,]\d+)?>").unwrap());
+        .get_or_init(|| Regex::new(r"<(?:[0-9]+:)?[0-9]{1,2}:[0-9]{2}(?:[.,][0-9]+)?>").unwrap());
     let html_tag =
         HTML_TAG.get_or_init(|| Regex::new(r"</?[a-zA-Z0-9._-]+(?: [^>]*)?>").unwrap());
     let ws = WS_RE.get_or_init(|| Regex::new(r"[ \t]+").unwrap());
@@ -881,5 +902,25 @@ mod tests {
         // "Café" in Windows-1252: 43 61 66 E9
         let decoded = decode_subtitle_bytes(b"Caf\xe9", Some("en"));
         assert_eq!(decoded, "Café");
+    }
+
+    #[test]
+    fn parses_non_ascii_ass_arabic_digits_and_ttml_dur() {
+        let ass = "[Script Info]\nTitle: AR\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nم\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,أهلا\n";
+        let (fmt, cues) = parse_subtitles(ass, Some("ar.ass"), None);
+        assert_eq!(fmt, SubtitleFormat::Ass);
+        assert_eq!(cues.len(), 1);
+        assert_eq!(cues[0].text, "أهلا");
+
+        let srt = "1\n00:00:01,000 --> 00:00:02,000\nLine 1\n\n2\n٠٠:٠٠:٠٣,٠٠٠ --> ٠٠:٠٠:٠٤,٠٠٠\nArabic digits\n";
+        let (_, scues) = parse_subtitles(srt, Some("ar.srt"), None);
+        assert_eq!(scues.len(), 1);
+
+        let ttml = r#"<tt xml:lang='en' ttp:frameRate='25'><body><div><p begin='1.5s' dur='2.25s'>Hello TTML</p></div></body></tt>"#;
+        let (tfmt, tcues) = parse_subtitles(ttml, Some("sub.ttml"), None);
+        assert_eq!(tfmt, SubtitleFormat::Ttml);
+        assert_eq!(tcues.len(), 1);
+        assert_eq!(tcues[0].start_ms, 1500);
+        assert_eq!(tcues[0].end_ms, 3750);
     }
 }

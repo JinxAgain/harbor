@@ -35,14 +35,27 @@ function callback(name: string, scope: Record<string, unknown>) {
 
 test("manual timing cancels background work without reverting the chosen delay", () => {
   let disposed = 0;
+  let canRevert = true;
   const manualTimingMediaRef = { current: null as string | null };
   const statusScopeRef = { current: {} as unknown };
+  const appliedRef = { current: { changed: true } as unknown };
+  const committingScopeRef = {
+    current: null as { mediaKey: string; trackId: string } | null,
+  };
+  const awaitingCommitRef = { current: null as unknown };
   const scope = {
     manualTimingMediaRef,
     statusScopeRef,
+    appliedRef,
+    EMPTY_APPLIED_STATE: { changed: false },
+    committingScopeRef,
+    awaitingCommitRef,
     srcRef: { current: "movie-A" },
     autoSyncMediaKey: (src: string) => src,
     activeDisposeRef: { current: () => disposed++ },
+    setCanRevert(value: boolean) {
+      canRevert = value;
+    },
     setErrorMessage() {},
     setStatus() {},
   };
@@ -50,6 +63,7 @@ test("manual timing cancels background work without reverting the chosen delay",
   assert.equal(disposed, 1);
   assert.equal(manualTimingMediaRef.current, "movie-A");
   assert.equal(statusScopeRef.current, null);
+  assert.equal(canRevert, false);
   const isCurrent = callback("isCurrentAutoSyncScope", {
     ...scope,
     liveSnapRef: { current: { subtitleTracks: [] } },

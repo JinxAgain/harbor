@@ -489,6 +489,7 @@ test("mpv lifecycle and Auto Sync boundaries reset only subtitle FPS", () => {
   const forwardingBridge = read("src/lib/player/mpv-forward.ts");
   const hdrStageBridge = read("src/views/player/hdr-stage-bridge.tsx");
   const autoSync = read("src/views/player/hooks/use-auto-sync.ts");
+  const autoSyncHelpers = read("src/views/player/hooks/use-auto-sync.helpers.ts");
   const player = read("src/views/player.tsx");
 
   assert.doesNotMatch(properties, /listen<MpvEvent>\("mpv:\/\/event"/);
@@ -555,13 +556,13 @@ test("mpv lifecycle and Auto Sync boundaries reset only subtitle FPS", () => {
   assert.match(autoSync, /runAfterSubtitleFpsReset/);
   assert.match(autoSync, /subtitle FPS reset failed[\s\S]*setStatus\("error"\)/);
   assert.match(autoSync, /runWithSubtitleFpsReset/);
-  assert.match(autoSync, /type AppliedState = \{[\s\S]*scope: AutoSyncScope \| null/);
+  assert.match(autoSyncHelpers, /type AppliedAutoSyncState = \{[\s\S]*scope: AutoSyncScope \| null/);
   assert.match(
     autoSync,
-    /const canRevertNow = a\.changed && isCurrentAutoSyncScope\(a\.scope\)[\s\S]*if \(b && canRevertNow\)/,
+    /const canRevertCurrent =[\s\S]*a\.changed &&[\s\S]*isCurrentAutoSyncScope\(a\.scope\)[\s\S]*if \(b && canRevertCurrent\)/,
   );
-  assert.match(autoSync, /changed: boolean/);
-  assert.match(autoSync, /a\.changed = true/);
+  assert.match(autoSyncHelpers, /changed: boolean/);
+  assert.match(autoSync, /changed: true/);
   assert.doesNotMatch(autoSync, /readMpvSubtitleDelay/);
 });
 

@@ -731,6 +731,16 @@ fn parse_stbl(
     sizes.truncate(sample_count);
     timestamps.truncate(sample_count);
     key_frames.truncate(sample_count);
+    if sample_count == 0 {
+        return Some(Mp4SubtitleSampleTable {
+            track_id,
+            codec,
+            language: mdhd.language,
+            timestamps_us: Vec::new(),
+            sizes: Vec::new(),
+            duration_us: 0,
+        });
+    }
 
     let duration_units = timestamp_units.saturating_add(timestamp_offset_units);
     let timescale = mdhd.timescale;
@@ -1046,5 +1056,25 @@ mod tests {
         let ticks = 100i64 * 3600 * 90_000;
         let us = scale_large_timestamp(ticks, 1_000_000, 90_000);
         assert_eq!(us, 100 * 3600 * 1_000_000);
+    }
+
+    #[test]
+    fn empty_chunk_with_edit_list_does_not_panic() {
+        let mut stsc_zero = build_synthetic_moov(
+            b"tx3g",
+            &[12, 14],
+            &[(2, 1000)],
+            Some(&[(1000, 0, 1)]),
+        );
+        // Zero out entries in stsc or construct an empty chunk table via sample_count = 0 in stsc:
+        // Replace stsc (1 chunk, 2 samples) -> (1 chunk, 0 samples) so chunk loop truncates sample_count = 0.
+        let needle = [0, 0, 0, 1u8, 0, 0, 0, 2u8, 0, 0, 0, 1u8];
+        if let Some(pos) = stsc_zero.windows(needle.len()).position(|w| w == needle) {
+            stsc_zero[pos + 7] = 0;
+        }
+        let idx = parse_moov_subtitles(&stsc_zero).expect("empty chunk table returns empty track");
+        assert!(idx.has_text_tracks);
+        assert_eq!(idx.tables.len(), 1);
+        assert!(idx.tables[0].timestamps_us.is_empty());
     }
 }

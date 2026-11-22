@@ -26,7 +26,9 @@ use crate::subsync::container_index::{
 use crate::subsync::cue_parser::{
     decode_subtitle_bytes, parse_subtitles, SubtitleCue, SubtitleFormat,
 };
-use crate::subsync::text_retimer::retime_subtitle_text;
+use crate::subsync::text_retimer::{
+    format_srt_from_cues, format_srt_from_retimed_cues, retime_subtitle_text,
+};
 use crate::subsync::url_guard;
 
 const MAX_PARALLEL_CANDIDATE_DOWNLOADS: usize = 6;
@@ -189,6 +191,9 @@ pub struct AlignSubtitlesResponse {
     pub retimed_path: Option<String>,
     pub retimed_text: Option<String>,
     pub format: Option<SubtitleFormat>,
+    pub selected_original_path: Option<String>,
+    pub selected_original_text: Option<String>,
+    pub selected_original_format: Option<SubtitleFormat>,
     pub median_offset_ms: i64,
     pub max_shift_ms: i64,
     pub scale: f64,
@@ -207,6 +212,9 @@ impl AlignSubtitlesResponse {
             retimed_path: None,
             retimed_text: None,
             format: None,
+            selected_original_path: None,
+            selected_original_text: None,
+            selected_original_format: None,
             median_offset_ms: 0,
             max_shift_ms: 0,
             scale: 1.0,
@@ -285,13 +293,13 @@ pub async fn subsync_align_subtitles(
 
     let cancel_prep = cancel.clone();
     let (primary_refs, forced_refs, ref_activity_cache) = tokio::task::spawn_blocking(move || {
-        let (mut primary_refs, forced_refs) =
+        let (mut primary_refs, mut forced_refs) =
             select_and_filter_references(&timeline.tracks, &cancel_prep);
         if cancel_prep.load(Ordering::Relaxed) {
             return (Vec::new(), Vec::new(), HashMap::new());
         }
         if primary_refs.is_empty() && !forced_refs.is_empty() {
-            primary_refs = forced_refs.clone();
+            primary_refs = std::mem::take(&mut forced_refs);
         }
         let mut ref_activity_cache: HashMap<String, Option<PreparedActivity>> = HashMap::new();
         for track in primary_refs.iter().chain(forced_refs.iter()) {
@@ -344,6 +352,7 @@ pub async fn subsync_align_subtitles(
             finalize_pool_response(&request, eval, &request.selected_track.url).await
         }
         AutoSyncCandidateScope::SelectedThenSearch => {
+            let mut selected_confirmed_no_fit = false;
             if !selected_only_list.is_empty() {
                 let first_eval = evaluate_pool_blocking(
                     selected_only_list,
@@ -366,8 +375,9 @@ pub async fn subsync_align_subtitles(
                     )
                     .await;
                 }
-                if !first_eval.confirmed_no_fit || request.candidates.is_empty() {
-                    let outcome = if first_eval.confirmed_no_fit {
+                selected_confirmed_no_fit = first_eval.confirmed_no_fit;
+                if request.candidates.is_empty() {
+                    let outcome = if selected_confirmed_no_fit {
                         AlignOutcome::NoFit
                     } else {
                         AlignOutcome::Inconclusive
@@ -375,13 +385,18 @@ pub async fn subsync_align_subtitles(
                     return Ok(AlignSubtitlesResponse::empty(outcome));
                 }
             }
-            // Restored/selected track confirmed NO_FIT (or failed to load) -> search same-language alternatives.
+            // Selected track did not align cleanly (or failed to load) -> search same-language alternatives.
             let loaded_alts = load_candidates_parallel(&request.candidates, 0, &cancel).await;
             if cancel.load(Ordering::Relaxed) {
                 return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
             }
             if loaded_alts.is_empty() {
-                return Ok(AlignSubtitlesResponse::empty(AlignOutcome::NoFit));
+                let outcome = if selected_confirmed_no_fit {
+                    AlignOutcome::NoFit
+                } else {
+                    AlignOutcome::Inconclusive
+                };
+                return Ok(AlignSubtitlesResponse::empty(outcome));
             }
             let alt_eval = evaluate_pool_blocking(
                 loaded_alts,
@@ -397,6 +412,40 @@ pub async fn subsync_align_subtitles(
         }
         AutoSyncCandidateScope::StartupSearch => {
             let mut pool: Vec<(usize, SubtitleCandidateInput, LoadedSubtitle)> = selected_only_list;
+            if !pool.is_empty() && !request.candidates.is_empty() {
+                let selected_eval = evaluate_pool_blocking(
+                    pool.clone(),
+                    Some(request.selected_track.url.clone()),
+                    Arc::clone(&primary_refs),
+                    Arc::clone(&forced_refs),
+                    Arc::clone(&ref_activity_cache),
+                    aggressive,
+                    Arc::clone(&cancel),
+                )
+                .await?;
+                if cancel.load(Ordering::Relaxed) {
+                    return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
+                }
+                if let Some(ref w) = selected_eval.winner {
+                    let fast_accept = is_exceptional_match(&w.reference, &w.timeline)
+                        || (!aggressive
+                            && (is_strong_checkpoint(&w.reference, &w.timeline, false)
+                                || is_asymmetric_checkpoint(
+                                    &w.reference,
+                                    &w.timeline,
+                                    w.loaded.cues.len(),
+                                )));
+                    if fast_accept {
+                        return finalize_pool_response(
+                            &request,
+                            selected_eval,
+                            &request.selected_track.url,
+                        )
+                        .await;
+                    }
+                }
+            }
+
             let loaded_alts = load_candidates_parallel(&request.candidates, 1, &cancel).await;
             if cancel.load(Ordering::Relaxed) {
                 return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
@@ -452,7 +501,6 @@ struct FamilyState {
     ranked_refs: Vec<(ReferenceTrack, f64, f64)>,
     evidence_map: HashMap<String, (DelayOnlySearchEvidence, Option<DelayOnlyAlignment>)>,
     preflight_champ_key: Option<String>,
-    best_idx: Option<usize>,
     evaluated_pairs: usize,
     no_fit_pairs: usize,
     completed_usable: usize,
@@ -535,7 +583,6 @@ fn evaluate_pool(
             ranked_refs: ranked,
             evidence_map,
             preflight_champ_key: pref_key,
-            best_idx: Some(*idx),
             evaluated_pairs: 0,
             no_fit_pairs: 0,
             completed_usable: 0,
@@ -627,7 +674,7 @@ fn evaluate_pool(
                 }
             }
 
-            // Update overall best and check early-stop checkpoints
+            // Update overall best and check early-stop checkpoints against the winning reference.
             if let Some((ref f_trk, ref f_tl, _)) = fam.best {
                 if f_tl.confident {
                     let better_overall = match &overall_best {
@@ -646,25 +693,32 @@ fn evaluate_pool(
                 }
             }
 
-            if let Some((_, ref best_tl, _)) = fam.best {
-                if is_exceptional_match(&ref_track, best_tl) {
-                    let _ = fam.best_idx;
+            if let Some((ref best_trk, ref best_tl, _)) = fam.best {
+                if is_exceptional_match(best_trk, best_tl) {
                     break;
                 }
                 let req_attempts = REFERENCE_SEARCH_CHECKPOINT.min(total_ranked);
                 if fam.completed_usable >= req_attempts
-                    && (is_strong_checkpoint(&ref_track, best_tl, aggressive)
-                        || is_asymmetric_checkpoint(&ref_track, best_tl, target_cues.len()))
+                    && (is_strong_checkpoint(best_trk, best_tl, aggressive)
+                        || is_asymmetric_checkpoint(best_trk, best_tl, target_cues.len()))
                 {
                     break;
                 }
             }
         }
 
-        // Quick exceptional global exit if top-priority family is already exceptional.
+        // Quick-mode global early exit or top-priority family exceptional match.
         if let Some((best_fi, ref best_trk, ref best_tl)) = overall_best {
-            if best_fi == f_idx && is_exceptional_match(best_trk, best_tl) {
-                break;
+            if best_fi == f_idx {
+                let fam = &families[f_idx];
+                let req_attempts = REFERENCE_SEARCH_CHECKPOINT.min(total_ranked);
+                let quick_strong = !aggressive
+                    && fam.completed_usable >= req_attempts
+                    && (is_strong_checkpoint(best_trk, best_tl, false)
+                        || is_asymmetric_checkpoint(best_trk, best_tl, target_cues.len()));
+                if is_exceptional_match(best_trk, best_tl) || quick_strong {
+                    break;
+                }
             }
         }
     }
@@ -779,7 +833,8 @@ async fn finalize_pool_response(
     let tl = &winner.timeline;
     let max_shift_ms = tl.max_alignment_shift_ms().round() as i64;
     let median_offset_ms = compute_median_shift_ms(tl);
-    let within_tolerance = max_shift_ms <= request.tolerance_ms.max(0);
+    // Tolerance 0 means "Off" — always apply the per-cue retiming result rather than skipping.
+    let within_tolerance = request.tolerance_ms > 0 && max_shift_ms <= request.tolerance_ms;
     let total_cue_count = tl.cues.len();
     let matched_cue_count = total_cue_count.saturating_sub(tl.skipped_target_cues);
     let chosen_is_selected = winner.candidate.url == selected_url;
@@ -792,6 +847,9 @@ async fn finalize_pool_response(
             retimed_path: None,
             retimed_text: None,
             format: Some(winner.loaded.format),
+            selected_original_path: None,
+            selected_original_text: None,
+            selected_original_format: None,
             median_offset_ms,
             max_shift_ms,
             scale: tl.alignment_scale,
@@ -802,22 +860,61 @@ async fn finalize_pool_response(
         });
     }
 
-    let final_text = if within_tolerance {
-        winner.loaded.raw_body.clone()
-    } else {
-        retime_subtitle_text(&winner.loaded.raw_body, tl)
-            .unwrap_or_else(|| winner.loaded.raw_body.clone())
+    let (out_format, final_text) = match winner.loaded.format {
+        SubtitleFormat::Ttml => {
+            let Some(srt) = (if within_tolerance {
+                format_srt_from_cues(&winner.loaded.cues)
+            } else {
+                format_srt_from_retimed_cues(&winner.loaded.cues, tl)
+            }) else {
+                return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Inconclusive));
+            };
+            (SubtitleFormat::Srt, srt)
+        }
+        other => {
+            if within_tolerance {
+                (other, winner.loaded.raw_body.clone())
+            } else {
+                let Some(retimed) = retime_subtitle_text(&winner.loaded.raw_body, tl) else {
+                    return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Inconclusive));
+                };
+                (other, retimed)
+            }
+        }
     };
-    let ext = match winner.loaded.format {
-        SubtitleFormat::Ttml => "srt",
-        other => other.ext(),
-    };
-    let retimed_path = write_retimed_temp_file(
+
+    let retimed_path = write_autosync_temp_file(
+        "autosync_",
         &request.media_url,
         selected_url,
-        ext,
+        out_format.ext(),
         &final_text,
     )?;
+
+    let (selected_original_path, selected_original_text, selected_original_format) =
+        if chosen_is_selected {
+            let orig_pair = match winner.loaded.format {
+                SubtitleFormat::Ttml => {
+                    format_srt_from_cues(&winner.loaded.cues).map(|s| (SubtitleFormat::Srt, s))
+                }
+                other => Some((other, winner.loaded.raw_body.clone())),
+            };
+            if let Some((orig_fmt, orig_text)) = orig_pair {
+                let orig_path = write_autosync_temp_file(
+                    "autosync_orig_",
+                    &request.media_url,
+                    selected_url,
+                    orig_fmt.ext(),
+                    &orig_text,
+                )
+                .ok();
+                (orig_path, Some(orig_text), Some(orig_fmt))
+            } else {
+                (None, None, None)
+            }
+        } else {
+            (None, None, None)
+        };
 
     Ok(AlignSubtitlesResponse {
         outcome: AlignOutcome::Synced,
@@ -825,7 +922,10 @@ async fn finalize_pool_response(
         chosen_sub_id: winner.candidate.sub_id,
         retimed_path: Some(retimed_path),
         retimed_text: Some(final_text),
-        format: Some(winner.loaded.format),
+        format: Some(out_format),
+        selected_original_path,
+        selected_original_text,
+        selected_original_format,
         median_offset_ms,
         max_shift_ms,
         scale: tl.alignment_scale,
@@ -864,17 +964,22 @@ fn sha256_hex16(input: &str) -> String {
     s
 }
 
-fn write_retimed_temp_file(
+fn autosync_temp_dir() -> PathBuf {
+    std::env::temp_dir().join("harbor-subs").join("prepared")
+}
+
+fn write_autosync_temp_file(
+    file_prefix: &str,
     media_url: &str,
     track_key: &str,
     ext: &str,
     contents: &str,
 ) -> Result<String, String> {
-    let dir = std::env::temp_dir().join("harbor-subs");
+    let dir = autosync_temp_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
-    let media_track_hash = sha256_hex16(&format!("{media_url}|{track_key}"));
+    let media_track_hash = sha256_hex16(&format!("{media_url}\0{track_key}"));
     let content_hash = sha256_hex16(contents);
-    let prefix = format!("autosync_{media_track_hash}_");
+    let prefix = format!("{file_prefix}{media_track_hash}_");
     let file_name = format!("{prefix}{content_hash}.{ext}");
     let target_path = dir.join(&file_name);
 
@@ -1302,23 +1407,19 @@ async fn load_candidate_subtitle(
 
     if let Some(ref lp) = cand.local_path {
         if let Some(path) = url_guard::local_file_path(lp).or_else(|| Some(PathBuf::from(lp))) {
-            if path.is_file() {
-                if let Ok(bytes) = tokio::fs::read(&path).await {
-                    if bytes.len() <= MAX_SUBTITLE_RESPONSE_BYTES {
-                        let text = decode_subtitle_bytes(&bytes, cand.lang.as_deref());
-                        let (fmt, cues) = parse_subtitles(
-                            &text,
-                            Some(&path.to_string_lossy()),
-                            cand.format.as_deref(),
-                        );
-                        if cues.len() >= MIN_SELECTED_CUES {
-                            return Some(LoadedSubtitle {
-                                format: fmt,
-                                cues,
-                                raw_body: text,
-                            });
-                        }
-                    }
+            if let Some(bytes) = read_local_file_limited(&path, MAX_SUBTITLE_RESPONSE_BYTES).await {
+                let text = decode_subtitle_bytes(&bytes, cand.lang.as_deref());
+                let (fmt, cues) = parse_subtitles(
+                    &text,
+                    Some(&path.to_string_lossy()),
+                    cand.format.as_deref(),
+                );
+                if cues.len() >= MIN_SELECTED_CUES {
+                    return Some(LoadedSubtitle {
+                        format: fmt,
+                        cues,
+                        raw_body: text,
+                    });
                 }
             }
         }
@@ -1326,20 +1427,16 @@ async fn load_candidate_subtitle(
 
     // Check if url itself is a local file path.
     if let Some(local_path) = url_guard::local_file_path(&cand.url) {
-        if local_path.is_file() {
-            if let Ok(bytes) = tokio::fs::read(&local_path).await {
-                if bytes.len() <= MAX_SUBTITLE_RESPONSE_BYTES {
-                    let text = decode_subtitle_bytes(&bytes, cand.lang.as_deref());
-                    let (fmt, cues) =
-                        parse_subtitles(&text, Some(&cand.url), cand.format.as_deref());
-                    if cues.len() >= MIN_SELECTED_CUES {
-                        return Some(LoadedSubtitle {
-                            format: fmt,
-                            cues,
-                            raw_body: text,
-                        });
-                    }
-                }
+        if let Some(bytes) = read_local_file_limited(&local_path, MAX_SUBTITLE_RESPONSE_BYTES).await {
+            let text = decode_subtitle_bytes(&bytes, cand.lang.as_deref());
+            let (fmt, cues) =
+                parse_subtitles(&text, Some(&cand.url), cand.format.as_deref());
+            if cues.len() >= MIN_SELECTED_CUES {
+                return Some(LoadedSubtitle {
+                    format: fmt,
+                    cues,
+                    raw_body: text,
+                });
             }
         }
         return None;
@@ -1351,11 +1448,7 @@ async fn load_candidate_subtitle(
     }
     let is_zip = raw_bytes.starts_with(b"PK\x03\x04") || raw_bytes.starts_with(b"PK\x05\x06");
     if is_zip {
-        return extract_best_subtitle_from_zip(
-            &raw_bytes,
-            cand.lang.as_deref(),
-            cand.format.as_deref(),
-        );
+        return extract_best_subtitle_from_zip(&raw_bytes, cand.lang.as_deref());
     }
     if raw_bytes.len() > MAX_SUBTITLE_RESPONSE_BYTES {
         return None;
@@ -1372,17 +1465,25 @@ async fn load_candidate_subtitle(
     })
 }
 
+async fn read_local_file_limited(path: &std::path::Path, max_bytes: usize) -> Option<Vec<u8>> {
+    use tokio::io::AsyncReadExt as _;
+    let file = tokio::fs::File::open(path).await.ok()?;
+    let mut limited = file.take((max_bytes + 1) as u64);
+    let mut buf = Vec::new();
+    limited.read_to_end(&mut buf).await.ok()?;
+    if buf.len() > max_bytes {
+        None
+    } else {
+        Some(buf)
+    }
+}
+
 async fn download_subtitle_bytes_with_429_retry(
     cand: &SubtitleCandidateInput,
     cancel: &AtomicBool,
 ) -> Option<Vec<u8>> {
     let allow_local = cand.local_trusted.unwrap_or(false);
     let parsed_url = url_guard::validate_subtitle_candidate_url(&cand.url, allow_local).ok()?;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(SUBTITLE_DOWNLOAD_TIMEOUT)
-        .build()
-        .ok()?;
 
     let credential = cand
         .download_auth
@@ -1390,7 +1491,6 @@ async fn download_subtitle_bytes_with_429_retry(
         .and_then(|a| crate::subtitle_credentials::resolve(&a.credential_id).ok());
 
     let first = fetch_with_redirects(
-        &client,
         parsed_url.clone(),
         cand.headers.as_ref(),
         credential.as_ref(),
@@ -1408,7 +1508,6 @@ async fn download_subtitle_bytes_with_429_retry(
                 return None;
             }
             match fetch_with_redirects(
-                &client,
                 parsed_url,
                 cand.headers.as_ref(),
                 credential.as_ref(),
@@ -1425,7 +1524,6 @@ async fn download_subtitle_bytes_with_429_retry(
 }
 
 async fn fetch_with_redirects(
-    client: &reqwest::Client,
     initial_url: url::Url,
     headers: Option<&HashMap<String, String>>,
     credential: Option<&crate::subtitle_credentials::ResolvedSubtitleCredential>,
@@ -1433,10 +1531,20 @@ async fn fetch_with_redirects(
 ) -> Result<(u16, Vec<u8>), String> {
     let mut current_url = initial_url;
     let empty_hdrs = HashMap::new();
-    let safe_hdrs = url_guard::safe_reqwest_headers(headers.unwrap_or(&empty_hdrs), false);
+    let mut safe_hdrs = url_guard::safe_reqwest_headers(headers.unwrap_or(&empty_hdrs), false);
+    let mut active_credential = credential;
 
     for _hop in 0..=5 {
-        let (req_url, cred_hdr) = match credential {
+        let (host, addrs) =
+            url_guard::resolve_and_validate_http_target(&current_url, allow_local).await?;
+        let client = url_guard::build_pinned_http_client(
+            &host,
+            &addrs,
+            Duration::from_secs(5),
+            Some(SUBTITLE_DOWNLOAD_TIMEOUT),
+        )?;
+
+        let (req_url, cred_hdr) = match active_credential {
             Some(cred) => {
                 crate::subtitle_credentials::apply_to_request(&current_url, cred)
                     .unwrap_or_else(|_| (current_url.clone(), None))
@@ -1464,6 +1572,10 @@ async fn fetch_with_redirects(
             if current_url.scheme() == "https" && next_url.scheme() == "http" {
                 return Err("https downgrade blocked".into());
             }
+            if !crate::http_redirect::same_origin(&current_url, &next_url) {
+                active_credential = None;
+                safe_hdrs.retain(|(k, _)| crate::http_redirect::safe_cross_origin_header(k));
+            }
             current_url = next_url;
             continue;
         }
@@ -1480,7 +1592,14 @@ async fn fetch_with_redirects(
 }
 
 fn is_safe_archive_entry_name(name: &str) -> bool {
-    if name.starts_with('/') || name.starts_with('\\') || name.contains("..") {
+    if name.is_empty()
+        || name.contains('\0')
+        || name.starts_with('/')
+        || name.starts_with('\\')
+    {
+        return false;
+    }
+    if name.split(['/', '\\']).any(|seg| seg == "..") {
         return false;
     }
     let bytes = name.as_bytes();
@@ -1493,7 +1612,6 @@ fn is_safe_archive_entry_name(name: &str) -> bool {
 fn extract_best_subtitle_from_zip(
     zip_bytes: &[u8],
     lang_hint: Option<&str>,
-    format_hint: Option<&str>,
 ) -> Option<LoadedSubtitle> {
     let reader = Cursor::new(zip_bytes);
     let mut archive = zip::ZipArchive::new(reader).ok()?;
@@ -1538,11 +1656,13 @@ fn extract_best_subtitle_from_zip(
             continue;
         }
         let text = decode_subtitle_bytes(&bytes, lang_hint);
-        let (fmt, cues) = parse_subtitles(&text, Some(&name), format_hint);
+        // Infer format from the extracted entry name and content rather than overriding with an
+        // outer candidate hint (e.g. an archive labeled "srt" containing an `.ass` file).
+        let (fmt, cues) = parse_subtitles(&text, Some(&name), None);
         if cues.len() < MIN_SELECTED_CUES {
             continue;
         }
-        let score = format_score * 10 + i32::from(cues.len().min(1000) as i32);
+        let score = format_score * 10 + (cues.len().min(1000) as i32);
         if best.as_ref().is_none_or(|(bs, _)| score > *bs) {
             best = Some((
                 score,
@@ -1556,5 +1676,374 @@ fn extract_best_subtitle_from_zip(
     }
 
     best.map(|(_, loaded)| loaded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::subsync::aligner::build_delay_only_timeline;
+    use crate::subsync::aligner::DelayOnlyAlignment;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+
+    fn sample_delay_timeline(cues: &[SubtitleCue], offset_ms: f64) -> TimelineRetimeResult {
+        build_delay_only_timeline(
+            cues,
+            &DelayOnlyAlignment {
+                offset_ms,
+                score: 1.0,
+                margin: 0.5,
+                segments_passed: 3,
+                stable_segment_margin_override: false,
+            },
+        )
+    }
+
+    fn base_request(tolerance_ms: i64, selected_url: &str) -> AlignSubtitlesRequest {
+        AlignSubtitlesRequest {
+            run_id: format!("test-{}", uuid::Uuid::new_v4()),
+            media_url: "https://media.example/test.mkv".to_string(),
+            media_headers: None,
+            mode: AutoSyncMode::Quick,
+            tolerance_ms,
+            scope: AutoSyncCandidateScope::SelectedOnly,
+            selected_track: SubtitleCandidateInput {
+                url: selected_url.to_string(),
+                local_path: None,
+                inline_text: None,
+                format: None,
+                lang: Some("en".to_string()),
+                title: None,
+                headers: None,
+                local_trusted: Some(false),
+                download_auth: None,
+                sub_id: None,
+            },
+            candidates: Vec::new(),
+        }
+    }
+
+    fn make_reference_track() -> ReferenceTrack {
+        ReferenceTrack {
+            key: "mkv-cues:3".to_string(),
+            language: Some("en".to_string()),
+            label: Some("English".to_string()),
+            cues: Vec::new(),
+            is_forced: false,
+            is_commentary: false,
+            is_descriptive: false,
+            is_sdh: false,
+            sampled: false,
+        }
+    }
+
+    #[test]
+    fn archive_entry_name_check_allows_dots_and_blocks_traversal() {
+        assert!(is_safe_archive_entry_name("Movie..2024.en.srt"));
+        assert!(is_safe_archive_entry_name("subs/Movie..2024.ass"));
+        assert!(!is_safe_archive_entry_name("../evil.srt"));
+        assert!(!is_safe_archive_entry_name("a/../evil.srt"));
+        assert!(!is_safe_archive_entry_name("a\\..\\evil.srt"));
+        assert!(!is_safe_archive_entry_name("/abs/sub.srt"));
+        assert!(!is_safe_archive_entry_name("C:\\abs\\sub.srt"));
+        assert!(!is_safe_archive_entry_name("null\0byte.srt"));
+    }
+
+    #[test]
+    fn zip_extraction_detects_ass_format_even_if_outer_candidate_was_srt() {
+        let ass = "\
+[Script Info]
+ScriptType: v4.00+
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Line 1
+Dialogue: 0,0:00:04.00,0:00:06.00,Default,,0,0,0,,Line 2
+Dialogue: 0,0:00:07.00,0:00:09.00,Default,,0,0,0,,Line 3
+Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,Line 4
+";
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut zw = ZipWriter::new(&mut cursor);
+            zw.start_file("movie.ass", SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(ass.as_bytes()).unwrap();
+            zw.finish().unwrap();
+        }
+        let zip_bytes = cursor.into_inner();
+        let loaded = extract_best_subtitle_from_zip(&zip_bytes, Some("en"))
+            .expect("extract ass from zip");
+        assert_eq!(loaded.format, SubtitleFormat::Ass);
+        assert_eq!(loaded.cues.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn finalize_ttml_outputs_retimed_srt_and_local_backup_in_prepared_dir() {
+        let ttml_body = "<tt><body><div><p begin=\"1.0s\" end=\"3.0s\">Hello TTML</p></div></body></tt>";
+        let (_, cues) = parse_subtitles(ttml_body, Some("sub.ttml"), None);
+        assert_eq!(cues.len(), 1);
+        let tl = sample_delay_timeline(&cues, 1500.0);
+        let req = base_request(0, "https://subs.example/sub.ttml");
+        let eval = PoolEvalResult {
+            winner: Some(PoolWinner {
+                candidate: req.selected_track.clone(),
+                loaded: LoadedSubtitle {
+                    format: SubtitleFormat::Ttml,
+                    cues,
+                    raw_body: ttml_body.to_string(),
+                },
+                reference: make_reference_track(),
+                timeline: tl,
+            }),
+            confirmed_no_fit: false,
+        };
+
+        let resp = finalize_pool_response(&req, eval, &req.selected_track.url)
+            .await
+            .expect("finalize");
+        assert_eq!(resp.outcome, AlignOutcome::Synced);
+        assert_eq!(resp.format, Some(SubtitleFormat::Srt));
+        let text = resp.retimed_text.as_deref().expect("srt text");
+        assert!(text.contains("00:00:02,500 --> 00:00:04,500"));
+        assert!(!text.contains("<tt"));
+        let retimed_path = resp.retimed_path.expect("retimed path");
+        assert!(retimed_path.contains("prepared"));
+        assert!(retimed_path.ends_with(".srt"));
+        let orig_path = resp.selected_original_path.expect("orig backup path");
+        assert!(orig_path.contains("prepared"));
+        assert_eq!(resp.selected_original_format, Some(SubtitleFormat::Srt));
+        assert!(resp
+            .selected_original_text
+            .as_deref()
+            .unwrap()
+            .contains("00:00:01,000 --> 00:00:03,000"));
+        let _ = std::fs::remove_file(retimed_path);
+        let _ = std::fs::remove_file(orig_path);
+    }
+
+    #[tokio::test]
+    async fn tolerance_zero_does_not_skip_and_failed_retime_is_inconclusive() {
+        let srt = "1\n00:00:01,000 --> 00:00:03,000\nLine one\n";
+        let (_, cues) = parse_subtitles(srt, Some("a.srt"), None);
+        let tl_zero = sample_delay_timeline(&cues, 0.0);
+
+        let req_zero = base_request(0, "https://subs.example/a.srt");
+        let res_zero = finalize_pool_response(
+            &req_zero,
+            PoolEvalResult {
+                winner: Some(PoolWinner {
+                    candidate: req_zero.selected_track.clone(),
+                    loaded: LoadedSubtitle {
+                        format: SubtitleFormat::Srt,
+                        cues: cues.clone(),
+                        raw_body: srt.to_string(),
+                    },
+                    reference: make_reference_track(),
+                    timeline: tl_zero.clone(),
+                }),
+                confirmed_no_fit: false,
+            },
+            &req_zero.selected_track.url,
+        )
+        .await
+        .unwrap();
+        assert_eq!(res_zero.outcome, AlignOutcome::Synced);
+        if let Some(p) = res_zero.retimed_path {
+            let _ = std::fs::remove_file(p);
+        }
+        if let Some(p) = res_zero.selected_original_path {
+            let _ = std::fs::remove_file(p);
+        }
+
+        let req_tol = base_request(100, "https://subs.example/a.srt");
+        let res_tol = finalize_pool_response(
+            &req_tol,
+            PoolEvalResult {
+                winner: Some(PoolWinner {
+                    candidate: req_tol.selected_track.clone(),
+                    loaded: LoadedSubtitle {
+                        format: SubtitleFormat::Srt,
+                        cues: cues.clone(),
+                        raw_body: srt.to_string(),
+                    },
+                    reference: make_reference_track(),
+                    timeline: tl_zero,
+                }),
+                confirmed_no_fit: false,
+            },
+            &req_tol.selected_track.url,
+        )
+        .await
+        .unwrap();
+        assert_eq!(res_tol.outcome, AlignOutcome::WithinTolerance);
+
+        // Non-retimeable raw body must return Inconclusive instead of raw XML/text as Synced.
+        let req_bad = base_request(0, "https://subs.example/bad.srt");
+        let res_bad = finalize_pool_response(
+            &req_bad,
+            PoolEvalResult {
+                winner: Some(PoolWinner {
+                    candidate: req_bad.selected_track.clone(),
+                    loaded: LoadedSubtitle {
+                        format: SubtitleFormat::Srt,
+                        cues,
+                        raw_body: "not valid timestamps".to_string(),
+                    },
+                    reference: make_reference_track(),
+                    timeline: sample_delay_timeline(
+                        &[SubtitleCue::new(1000, 3000, "Line one".into())],
+                        2000.0,
+                    ),
+                }),
+                confirmed_no_fit: false,
+            },
+            &req_bad.selected_track.url,
+        )
+        .await
+        .unwrap();
+        assert_eq!(res_bad.outcome, AlignOutcome::Inconclusive);
+    }
+
+    #[tokio::test]
+    async fn fetch_with_redirects_strips_custom_headers_across_origins() {
+        use axum::{http::HeaderMap, routing::get, Router};
+        use std::sync::{Arc, Mutex as StdMutex};
+
+        let captured = Arc::new(StdMutex::new(HashMap::<String, String>::new()));
+        let cap_c = captured.clone();
+        let target_router = Router::new().route(
+            "/sub.srt",
+            get(move |headers: HeaderMap| {
+                let cap = cap_c.clone();
+                async move {
+                    let mut map = cap.lock().unwrap();
+                    for (k, v) in headers.iter() {
+                        if let Ok(s) = v.to_str() {
+                            map.insert(k.to_string(), s.to_string());
+                        }
+                    }
+                    "1\n00:00:01,000 --> 00:00:03,000\nOK\n"
+                }
+            }),
+        );
+        let t_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let t_url = format!("http://{}/sub.srt", t_listener.local_addr().unwrap());
+        let t_task = tokio::spawn(async move { axum::serve(t_listener, target_router).await.unwrap() });
+
+        let t_dest = t_url.clone();
+        let redir_router = Router::new().route(
+            "/start",
+            get(move || {
+                let loc = t_dest.clone();
+                async move { (axum::http::StatusCode::FOUND, [("location", loc)]) }
+            }),
+        );
+        let r_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let r_url = format!("http://{}/start", r_listener.local_addr().unwrap());
+        let r_task = tokio::spawn(async move { axum::serve(r_listener, redir_router).await.unwrap() });
+
+        let mut hdrs = HashMap::new();
+        hdrs.insert("Authorization".to_string(), "Bearer secret".to_string());
+        hdrs.insert("X-Custom-Token".to_string(), "secret-token".to_string());
+        hdrs.insert("Cookie".to_string(), "session=secret".to_string());
+        hdrs.insert("User-Agent".to_string(), "HarborTest/1.0".to_string());
+
+        let (status, body) = fetch_with_redirects(
+            url::Url::parse(&r_url).unwrap(),
+            Some(&hdrs),
+            None,
+            true,
+        )
+        .await
+        .expect("redirect fetch");
+        assert_eq!(status, 200);
+        assert!(!body.is_empty());
+
+        let seen = captured.lock().unwrap();
+        assert!(!seen.contains_key("authorization"));
+        assert!(!seen.contains_key("x-custom-token"));
+        assert!(!seen.contains_key("cookie"));
+        assert_eq!(seen.get("user-agent").map(String::as_str), Some("HarborTest/1.0"));
+
+        t_task.abort();
+        r_task.abort();
+    }
+
+    #[tokio::test]
+    async fn selected_then_search_returns_inconclusive_when_selected_and_alts_fail_to_load() {
+        // Minimal valid MKV with 1 subtitle track and 16 Cues over >= 45s span.
+        let mkv = {
+            fn vint_sz(val: usize) -> Vec<u8> {
+                if val < 0x7f {
+                    vec![0x80 | (val as u8)]
+                } else {
+                    let v = 0x4000 | (val as u16);
+                    v.to_be_bytes().to_vec()
+                }
+            }
+            fn el(id: &[u8], payload: &[u8]) -> Vec<u8> {
+                let mut out = id.to_vec();
+                out.extend_from_slice(&vint_sz(payload.len()));
+                out.extend_from_slice(payload);
+                out
+            }
+            fn u_el(id: &[u8], val: u64) -> Vec<u8> {
+                let b = val.to_be_bytes();
+                let nz = b.iter().position(|&x| x != 0).unwrap_or(7);
+                el(id, &b[nz..])
+            }
+            let ebml = el(&[0x1A, 0x45, 0xDF, 0xA3], &u_el(&[0x42, 0x86], 1));
+            let info = el(&[0x15, 0x49, 0xA9, 0x66], &u_el(&[0x2A, 0xD7, 0xB1], 1_000_000));
+            let mut trk = Vec::new();
+            trk.extend_from_slice(&u_el(&[0xD7], 3));
+            trk.extend_from_slice(&u_el(&[0x83], 17));
+            trk.extend_from_slice(&el(&[0x22, 0xB5, 0x9D], b"en"));
+            trk.extend_from_slice(&el(&[0x86], b"S_TEXT/UTF8"));
+            let tracks = el(&[0x16, 0x54, 0xAE, 0x6B], &el(&[0xAE], &trk));
+            let mut cues_body = Vec::new();
+            for i in 0..16u64 {
+                let mut pos = u_el(&[0xF7], 3);
+                pos.extend_from_slice(&u_el(&[0xB2], 1_500));
+                let mut pt = u_el(&[0xB3], i * 4_000 + 1_000);
+                pt.extend_from_slice(&el(&[0xB7], &pos));
+                cues_body.extend_from_slice(&el(&[0xBB], &pt));
+            }
+            let cues = el(&[0x1C, 0x53, 0xBB, 0x6B], &cues_body);
+            let mut seg = Vec::new();
+            seg.extend_from_slice(&info);
+            seg.extend_from_slice(&tracks);
+            seg.extend_from_slice(&cues);
+            let mut out = ebml;
+            out.extend_from_slice(&el(&[0x18, 0x53, 0x80, 0x67], &seg));
+            out
+        };
+        let dir = std::env::temp_dir().join(format!("harbor-coord-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mkv_path = dir.join("movie.mkv");
+        std::fs::write(&mkv_path, mkv).unwrap();
+
+        let missing = dir.join("missing.srt");
+        let missing_alt = dir.join("missing_alt.srt");
+        let mut req = base_request(0, missing.to_str().unwrap());
+        req.media_url = mkv_path.to_str().unwrap().to_string();
+        req.scope = AutoSyncCandidateScope::SelectedThenSearch;
+        req.candidates = vec![SubtitleCandidateInput {
+            url: missing_alt.to_str().unwrap().to_string(),
+            local_path: None,
+            inline_text: None,
+            format: None,
+            lang: Some("en".to_string()),
+            title: None,
+            headers: None,
+            local_trusted: Some(true),
+            download_auth: None,
+            sub_id: None,
+        }];
+
+        let resp = subsync_align_subtitles(req).await.expect("align cmd");
+        assert_eq!(resp.outcome, AlignOutcome::Inconclusive);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
