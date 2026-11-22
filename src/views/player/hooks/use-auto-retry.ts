@@ -65,6 +65,8 @@ export function useAutoRetry(params: {
   } = params;
   const isLocal = isLocalUrl(src.url);
   const isLive = src.meta.id.startsWith("iptv:");
+  const isManualSelection = src.autoFired === false;
+  const canAutoSwitch = !isManualSelection && (instantPlay || inRoom);
   const ENGINE_FIRST_FRAME_GRACE_MS = 20_000;
   const ENGINE_HARD_CEILING_MS = 75_000;
   const ENGINE_COMPLETE_RELOAD_MS = 8_000;
@@ -173,15 +175,17 @@ export function useAutoRetry(params: {
         return;
       }
       if (startedPlaying || selfFrameReadyRef.current) {
-        console.warn(`[player] playback already started: skipping auto-retry/picker exit (${reason})`);
+        console.warn(
+          `[player] playback already started: skipping auto-retry/picker exit (${reason})`,
+        );
         return;
       }
       // An explicitly selected source must not be killed by a short startup
-      // timer. Signed playback URLs often reject browser probes (CORS) even
-      // though mpv can read them, which previously produced a false
-      // "No response" error. Keep mpv alive and let the longer startup ceiling
-      // or a genuine mpv error own the visible failure state.
-      if (!instantPlay && !inRoom) {
+      // timer or auto-replaced by another addon. Signed/local-resolver playback
+      // URLs can take > 9s to respond or resolve offline downloads. Keep mpv
+      // alive and let the longer startup ceiling or a genuine mpv error own the
+      // visible failure state.
+      if (!canAutoSwitch) {
         console.warn(`[player] manual source failed (${reason})`);
         setSourceError((prev) => prev ?? { status: 0, host: hostOf(src.url) });
         return;
@@ -207,7 +211,7 @@ export function useAutoRetry(params: {
       openPicker(
         src.meta,
         src.episode,
-        instantPlay || inRoom
+        canAutoSwitch
           ? {
               autoPlay: true,
               attempt: nextAttempt,
@@ -228,10 +232,9 @@ export function useAutoRetry(params: {
       src.resume,
       src.startPositionMs,
       openPicker,
-      instantPlay,
+      canAutoSwitch,
       isLocal,
       isLive,
-      inRoom,
       isP2pEngine,
       src.url,
       src.subtitles,
@@ -288,28 +291,30 @@ export function useAutoRetry(params: {
         false,
         {},
         hint,
-      ).then(async (r) => {
-        if (!current()) return;
-        if (r.ok) {
-          let url = r.data.url;
-          if (r.data.headers && Object.keys(r.data.headers).length > 0) {
-            try {
-              url = (await registerStreamProxy(r.data.url, r.data.headers)).url;
-            } catch {
-              /* fall back to the raw debrid url */
-            }
-          }
+      )
+        .then(async (r) => {
           if (!current()) return;
-          console.warn(`[player] debrid failover via ${r.via}`);
-          void recoveryBridge.load({
-            url,
-            subtitles: src.subtitles,
-            notWebReady: r.data.notWebReady ?? src.notWebReady,
-          });
-        } else {
-          retry();
-        }
-      }).catch(retry);
+          if (r.ok) {
+            let url = r.data.url;
+            if (r.data.headers && Object.keys(r.data.headers).length > 0) {
+              try {
+                url = (await registerStreamProxy(r.data.url, r.data.headers)).url;
+              } catch {
+                /* fall back to the raw debrid url */
+              }
+            }
+            if (!current()) return;
+            console.warn(`[player] debrid failover via ${r.via}`);
+            void recoveryBridge.load({
+              url,
+              subtitles: src.subtitles,
+              notWebReady: r.data.notWebReady ?? src.notWebReady,
+            });
+          } else {
+            retry();
+          }
+        })
+        .catch(retry);
       return cancel;
     }
     if (!sameUrlRetriedRef.current) {
@@ -341,7 +346,11 @@ export function useAutoRetry(params: {
         void registerStreamProxy(src.url, src.headers)
           .then((p) => {
             if (current())
-              void recoveryBridge.load({ url: p.url, subtitles: src.subtitles, notWebReady: src.notWebReady });
+              void recoveryBridge.load({
+                url: p.url,
+                subtitles: src.subtitles,
+                notWebReady: src.notWebReady,
+              });
           })
           .catch(retry);
         return cancel;
@@ -375,17 +384,19 @@ export function useAutoRetry(params: {
       transcodedUrl == null
     ) {
       transcodedTriedRef.current = true;
-      void probeStremioServer().then((ok) => {
-        if (!current()) return;
-        if (ok) {
-          console.warn("[player] decode error — retrying via p2p transcoding");
-          recoveryBridge.destroy();
-          bridgeRef.current = null;
-          setTranscodedUrl(buildTranscodedUrl(src.url));
-        } else {
-          retry();
-        }
-      }).catch(retry);
+      void probeStremioServer()
+        .then((ok) => {
+          if (!current()) return;
+          if (ok) {
+            console.warn("[player] decode error — retrying via p2p transcoding");
+            recoveryBridge.destroy();
+            bridgeRef.current = null;
+            setTranscodedUrl(buildTranscodedUrl(src.url));
+          } else {
+            retry();
+          }
+        })
+        .catch(retry);
       return cancel;
     }
     triggerAutoRetry(`playback error "${snap.errorCode}"`);
@@ -534,7 +545,7 @@ export function useAutoRetry(params: {
   useEffect(() => {
     if (snap.status === "ended") return;
     if (isP2pEngine && !engineFailure) return;
-    if (!instantPlay && !inRoom) return;
+    if (!canAutoSwitch) return;
     if (snap.durationSec > 0 || getPlaybackPosition() > 1) return;
     const t = window.setTimeout(() => {
       if (snap.durationSec === 0 && getPlaybackPosition() === 0) {
@@ -549,12 +560,11 @@ export function useAutoRetry(params: {
     triggerAutoRetry,
     isP2pEngine,
     engineFailure,
-    instantPlay,
-    inRoom,
+    canAutoSwitch,
   ]);
 
   useEffect(() => {
-    if (isLive || isLocal || inRoom || isP2pEngine) return;
+    if (isLive || isLocal || canAutoSwitch || isP2pEngine) return;
     const remaining = NEVER_STARTED_CEILING_MS - (Date.now() - urlAtRef.current);
     const t = window.setTimeout(
       () => {
@@ -567,14 +577,14 @@ export function useAutoRetry(params: {
       Math.max(0, remaining),
     );
     return () => window.clearTimeout(t);
-  }, [src.url, isLive, isLocal, inRoom, isP2pEngine]);
+  }, [src.url, isLive, isLocal, canAutoSwitch, isP2pEngine]);
 
   useEffect(() => {
     if (startedPlaying) setSourceError(null);
   }, [startedPlaying]);
 
   useEffect(() => {
-    if (!inRoom || isLocal || isLive) return;
+    if (!inRoom || isManualSelection || isLocal || isLive) return;
     if (selfFrameReadyRef.current) return;
     if (snap.status === "ended") return;
     if (snap.videoWidth > 0 && snap.videoHeight > 0) return;
@@ -588,6 +598,7 @@ export function useAutoRetry(params: {
     return () => window.clearTimeout(t);
   }, [
     inRoom,
+    isManualSelection,
     isLocal,
     isLive,
     snap.status,
@@ -674,5 +685,34 @@ export function useAutoRetry(params: {
     src.headers,
   ]);
 
-  return { slowLoad, transcodedUrl, sourceError, clearSourceError: () => setSourceError(null) };
+  const retryCurrentSource = useCallback(() => {
+    setSourceError(null);
+    autoRetriedRef.current = false;
+    sameUrlRetriedRef.current = false;
+    proxyRetriedRef.current = false;
+    transcodeRescueRef.current = false;
+    debridFailoverTriedRef.current = false;
+    p2pCompleteReloadedRef.current = false;
+    p2pCompleteReloadedAtRef.current = 0;
+    truncatedReloadedRef.current = false;
+    resumedAfterTruncatedRef.current = false;
+    urlAtRef.current = Date.now();
+    const b = bridgeRef.current;
+    if (!b) return;
+    void b.load({
+      url: src.url,
+      subtitles: src.subtitles,
+      notWebReady: src.notWebReady,
+      isLive,
+      headers: src.headers,
+    });
+  }, [bridgeRef, src.url, src.subtitles, src.notWebReady, isLive, src.headers]);
+
+  return {
+    slowLoad,
+    transcodedUrl,
+    sourceError,
+    clearSourceError: () => setSourceError(null),
+    retryCurrentSource,
+  };
 }

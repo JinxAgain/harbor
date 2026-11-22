@@ -1245,11 +1245,76 @@ fn tier_key(t: Tier) -> &'static str {
     }
 }
 
+static UNCACHED_MARKER_RX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\[[^\]]*\x{1F9F2}[^\]]*\]|\b(?:real[\s\-_]?debrid|torbox|all[\s\-_]?debrid|premiumize|debrid[\s\-_]?link|easydebrid|offcloud|pikpak|putio|rd|tb|trb|ad|pm|dl|oc|ed|pkp|pp)\s*\x{1F9F2}|\b(?:rd|ad|pm|dl|tb|trb|oc|ed|pkp|pp|pikpak|putio)[\s\-_]*download\b|\buncached\b|\bnot\s+ready\b|\bneed[\s_-]?(?:to[\s_-]?)?cache\b|\[(?:RD|TB|AD|PM|DL|OC|ED|PKP|PP|PikPak|Putio)\]\s+jackettio\b|[\x{23F3}\x{231B}\x{2B07}\x{23EC}\x{1F53D}\x{1F4E5}\x{2601}\x{1F53B}\x{274C}\x{1F39F}]",
+    )
+    .unwrap()
+});
+
+static CACHED_MARKER_RX: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\x{26A1}\x{2705}]").unwrap());
+
+static DEBRID_TAG_RX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\[(?:realdebrid|real-debrid|torbox|alldebrid|all-debrid|premiumize|debridlink|debrid-link|easydebrid|offcloud|pikpak|stremthru|rd|ad|pm|dl|tb|trb|oc|ed|pkp|pp|st|putio)\s*(?:\+|\x{26A1}|\x{2705}|\x{2B07}|\x{23F3}|\x{1F9F2}|\]|\s)",
+    )
+    .unwrap()
+});
+
+fn strip_invisibles(text: &str) -> String {
+    text.chars()
+        .filter(|&c| {
+            !matches!(
+                c,
+                '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{FE0F}'
+            )
+        })
+        .collect()
+}
+
+fn stream_haystack(parsed: &ParsedStream) -> String {
+    let raw = [
+        parsed.stream.name.as_deref().unwrap_or(""),
+        parsed.stream.title.as_deref().unwrap_or(""),
+        parsed.stream.description.as_deref().unwrap_or(""),
+    ]
+    .join(" ");
+    strip_invisibles(&raw)
+}
+
 fn is_cached_scored(s: &ScoredStream, active: &[String]) -> bool {
-    s.parsed.stream.url.is_some()
-        || active
-            .iter()
-            .any(|slug| s.parsed.cached.get(slug).copied().unwrap_or(false))
+    let parsed = &s.parsed;
+    let haystack = stream_haystack(parsed);
+    let has_cached_debrid = if !active.is_empty() {
+        active.iter().any(|slug| {
+            parsed.cached.get(slug).copied().unwrap_or(false)
+                || parsed.in_library.get(slug).copied().unwrap_or(false)
+        })
+    } else {
+        parsed.cached.values().any(|&v| v) || parsed.in_library.values().any(|&v| v)
+    };
+
+    if !has_cached_debrid
+        && (UNCACHED_MARKER_RX.is_match(&haystack) || parsed.cached.values().any(|&v| !v))
+    {
+        return false;
+    }
+
+    if has_cached_debrid
+        || parsed.cached.values().any(|&v| v)
+        || parsed.in_library.values().any(|&v| v)
+    {
+        return true;
+    }
+
+    if CACHED_MARKER_RX.is_match(&haystack) {
+        return true;
+    }
+
+    let has_debrid_marker = DEBRID_TAG_RX.is_match(&haystack)
+        || UNCACHED_MARKER_RX.is_match(&haystack)
+        || CACHED_MARKER_RX.is_match(&haystack);
+    parsed.stream.url.is_some() && parsed.stream.info_hash.is_none() && !has_debrid_marker
 }
 
 pub fn rank_and_pick(
@@ -1268,6 +1333,8 @@ pub fn rank_and_pick(
                 .then(ra.cmp(&rb))
                 .then(b.score.total_cmp(&a.score))
         });
+    } else {
+        cached_first.sort_by(|a, b| b.score.total_cmp(&a.score));
     }
     cached_first.sort_by(|a, b| {
         let ac = if is_cached_scored(a, active_debrids) { 1 } else { 0 };
@@ -1649,6 +1716,8 @@ mod tests {
     fn rank_and_pick_preserves_addon_order_when_no_cached() {
         let mut p1 = base_parsed();
         p1.resolution = Resolution::P1080;
+        p1.stream.addon_priority = Some(0);
+        p1.stream.addon_return_idx = Some(0);
         let s1 = ScoredStream {
             parsed: p1,
             score: 30.0,
@@ -1657,6 +1726,8 @@ mod tests {
         };
         let mut p2 = base_parsed();
         p2.resolution = Resolution::UHD;
+        p2.stream.addon_priority = Some(0);
+        p2.stream.addon_return_idx = Some(1);
         let s2 = ScoredStream {
             parsed: p2,
             score: 40.0,
@@ -1664,7 +1735,7 @@ mod tests {
             tier: Tier::Uhd,
         };
         let active = vec!["rd".to_string()];
-        let picker = rank_and_pick(vec![s1, s2], &active, false);
+        let picker = rank_and_pick(vec![s1, s2], &active, true);
         let primary = picker.primary.as_ref().unwrap();
         assert_eq!(primary.tier, Tier::P1080);
     }
@@ -1867,5 +1938,77 @@ mod tests {
         let primary = picker.primary.as_ref().unwrap();
         assert_eq!(primary.score, 92.0);
         assert_eq!(primary.parsed.stream.addon_priority, Some(0));
+    }
+
+    #[test]
+    fn rank_and_pick_sorts_by_score_when_respect_addon_order_is_false() {
+        let mut p_lchd = base_parsed();
+        p_lchd.stream.addon_priority = Some(0);
+        p_lchd.stream.addon_return_idx = Some(0);
+        p_lchd.stream.url = Some("http://127.0.0.1:7000/play/27472ca1".to_string());
+        p_lchd.stream.name = Some("[PikPak ⚡] StremList 1080p".to_string());
+        let s_lchd = ScoredStream {
+            parsed: p_lchd,
+            score: 61.0,
+            reasons: vec![],
+            tier: Tier::P1080,
+        };
+
+        let mut p_dream = base_parsed();
+        p_dream.stream.addon_priority = Some(0);
+        p_dream.stream.addon_return_idx = Some(1);
+        p_dream.stream.url = Some("http://127.0.0.1:7000/play/aa7fa862".to_string());
+        p_dream.stream.name = Some("[PikPak ⚡] StremList 1080p".to_string());
+        let s_dream = ScoredStream {
+            parsed: p_dream,
+            score: 62.0,
+            reasons: vec![],
+            tier: Tier::P1080,
+        };
+
+        let picker = rank_and_pick(vec![s_lchd, s_dream], &[], false);
+        assert_eq!(picker.all[0].score, 62.0, "higher scored DreamHD must rank first");
+        assert_eq!(picker.all[1].score, 61.0, "lower scored LCHD must rank second");
+    }
+
+    #[test]
+    fn rank_and_pick_treats_uncached_pikpak_magnet_url_as_uncached() {
+        let mut p_uncached = base_parsed();
+        p_uncached.stream.name = Some("[PikPak 🧲] StremList 1080p".to_string());
+        p_uncached.stream.title = Some("Comet 1080p\nMovie.DreamHD.mkv".to_string());
+        p_uncached.stream.url = Some("http://127.0.0.1:7000/play/aa7fa862".to_string());
+        let s_uncached = ScoredStream {
+            parsed: p_uncached,
+            score: 62.0,
+            reasons: vec![],
+            tier: Tier::P1080,
+        };
+
+        let mut p_cached = base_parsed();
+        p_cached.stream.name = Some("[PikPak ⚡] StremList 1080p".to_string());
+        p_cached.stream.title = Some("Comet 1080p\nMovie.Cached.mkv".to_string());
+        p_cached.stream.url = Some("http://127.0.0.1:7000/play/03338ef3".to_string());
+        let s_cached = ScoredStream {
+            parsed: p_cached,
+            score: 60.0,
+            reasons: vec![],
+            tier: Tier::P1080,
+        };
+
+        let active: Vec<String> = vec![];
+        assert!(!is_cached_scored(&s_uncached, &active));
+        assert!(is_cached_scored(&s_cached, &active));
+
+        let picker = rank_and_pick(vec![s_uncached, s_cached], &active, false);
+        assert_eq!(
+            picker.all[0].parsed.stream.url.as_deref(),
+            Some("http://127.0.0.1:7000/play/03338ef3"),
+            "cached [PikPak ⚡] must sort before uncached [PikPak 🧲]"
+        );
+        assert_eq!(
+            picker.primary.as_ref().and_then(|s| s.parsed.stream.url.as_deref()),
+            Some("http://127.0.0.1:7000/play/03338ef3"),
+            "primary must select cached [PikPak ⚡] over uncached [PikPak 🧲]"
+        );
     }
 }

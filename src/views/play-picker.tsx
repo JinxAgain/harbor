@@ -497,7 +497,8 @@ export function PlayPicker({
     if (!seasonLock) return null;
     const seasonKeyVal = isAnimeMetaId ? null : (episode?.season ?? null);
     const direct =
-      readSeasonLock(meta.id, seasonKeyVal) ?? (imdbId ? readSeasonLock(imdbId, seasonKeyVal) : null);
+      readSeasonLock(meta.id, seasonKeyVal) ??
+      (imdbId ? readSeasonLock(imdbId, seasonKeyVal) : null);
     if (direct) return direct;
     if (seasonLock && wasInvitedTo(inviteKey)) {
       return readLastSeriesPlayback(meta.id, {
@@ -723,7 +724,10 @@ export function PlayPicker({
     !!previousMatch &&
     (isCached(previousMatch) ||
       (!!previousMatch.url &&
-        !isExplicitlyUncached(previousMatch, debrids.map((d) => d.slug))) ||
+        !isExplicitlyUncached(
+          previousMatch,
+          debrids.map((d) => d.slug),
+        )) ||
       p2pAutoConsent);
   const rememberedFiredRef = useRef(false);
   const rememberedEligible =
@@ -735,10 +739,7 @@ export function PlayPicker({
     !roomGuestPick &&
     !inSession &&
     (attempt ?? 0) === 0;
-  const rememberedHandledFirst =
-    !!previousMatch &&
-    rememberedEligible &&
-    rememberedInstant;
+  const rememberedHandledFirst = !!previousMatch && rememberedEligible && rememberedInstant;
   const rememberedWaiting =
     rememberedEligible &&
     !!previousPlayback &&
@@ -754,8 +755,8 @@ export function PlayPicker({
   useEffect(() => {
     if (rememberedFiredRef.current || !rememberedHandledFirst || !previousMatch) return;
     rememberedFiredRef.current = true;
-    onPlay(previousMatch, true, false, true);
-  }, [rememberedHandledFirst, previousMatch, onPlay]);
+    onPlay(previousMatch, true, false, Boolean(autoPlay));
+  }, [rememberedHandledFirst, previousMatch, onPlay, autoPlay]);
 
   const downloadFiredRef = useRef(false);
   useEffect(() => {

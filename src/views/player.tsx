@@ -188,7 +188,10 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     roomGuestControl,
   } = useTogether();
   const stageRef = useRef<HTMLDivElement>(null);
-  const refreshDockGeometry = useCallback(() => window.dispatchEvent(new Event("harbor:mpv-refresh-geom")), []);
+  const refreshDockGeometry = useCallback(
+    () => window.dispatchEvent(new Event("harbor:mpv-refresh-geom")),
+    [],
+  );
   const videoMountRef = useRef<HTMLDivElement>(null);
   const bridgeRef = useRef<PlayerBridge | null>(null);
   const selfFrameReadyRef = useRef(false);
@@ -200,17 +203,25 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     settings,
   });
   const nativeDock = docked && engine === "mpv" && embedActive;
-  const prepareDockMove = useCallback((next: DockSpot, commit: () => void) => {
-    if (!nativeDock) return false;
-    const stage = stageRef.current?.getBoundingClientRect();
-    const rect = readEmbedRect(videoMountRef.current);
-    if (!stage || !rect) return false;
-    return bridgeRef.current?.moveEmbeddedSurface?.({
-      ...rect,
-      cssLeft: rect.cssLeft + next.x - stage.left,
-      cssTop: rect.cssTop + next.y - stage.top,
-    }, commit) ?? false;
-  }, [nativeDock]);
+  const prepareDockMove = useCallback(
+    (next: DockSpot, commit: () => void) => {
+      if (!nativeDock) return false;
+      const stage = stageRef.current?.getBoundingClientRect();
+      const rect = readEmbedRect(videoMountRef.current);
+      if (!stage || !rect) return false;
+      return (
+        bridgeRef.current?.moveEmbeddedSurface?.(
+          {
+            ...rect,
+            cssLeft: rect.cssLeft + next.x - stage.left,
+            cssTop: rect.cssTop + next.y - stage.top,
+          },
+          commit,
+        ) ?? false
+      );
+    },
+    [nativeDock],
+  );
   const dockDrag = useDockDrag(stageRef, docked, refreshDockGeometry, prepareDockMove);
   useSportsDockSurface(nativeDock && !src.pipDocked, videoMountRef);
   const isP2pEngine =
@@ -238,12 +249,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     } else {
       setPlaybackDownloaded(0);
     }
-  }, [
-    engineStats?.streamProgress,
-    engineStats?.streamLen,
-    isP2pEngine,
-    isLocalSrc,
-  ]);
+  }, [engineStats?.streamProgress, engineStats?.streamLen, isP2pEngine, isLocalSrc]);
   const shellSnapRef = useRef(snap);
   const snapRef = useRef(snap);
   snapRef.current = snap;
@@ -260,20 +266,22 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     onDetach: () => setPipDocked(true),
     onReattach: () => setPipDocked(false),
   });
-  const { slowLoad, transcodedUrl, sourceError, clearSourceError } = useAutoRetry({
-    bridgeRef,
-    src,
-    snap,
-    stremioServerTranscode: settings.stremioServerTranscode,
-    instantPlay: settings.instantPlay,
-    inRoom: roomSnapshot.state === "joined",
-    debrids,
-    selfFrameReadyRef,
-    openPicker,
-    engineFailure: genuineFailure,
-    isP2pEngine,
-    engineStats,
-  });
+  const inRoom = roomSnapshot.state === "joined" && roomSnapshot.participants.length >= 2;
+  const { slowLoad, transcodedUrl, sourceError, clearSourceError, retryCurrentSource } =
+    useAutoRetry({
+      bridgeRef,
+      src,
+      snap,
+      stremioServerTranscode: settings.stremioServerTranscode,
+      instantPlay: settings.instantPlay,
+      inRoom,
+      debrids,
+      selfFrameReadyRef,
+      openPicker,
+      engineFailure: genuineFailure,
+      isP2pEngine,
+      engineStats,
+    });
 
   useWakeReconnect({ bridgeRef, src, snap });
 
@@ -285,7 +293,6 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
 
   const season = src.episode?.season;
   const episode = src.episode?.episode;
-  const inRoom = roomSnapshot.state === "joined" && roomSnapshot.participants.length >= 2;
   const isHost = inRoom && roomSnapshot.hostClientId === clientId;
   const inRoomLoadRef = useRef(inRoom);
   inRoomLoadRef.current = inRoom;
@@ -361,10 +368,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     adjacent.next && isNextAired(false, adjacent.next.airDate) ? adjacent.next : null;
   const hasEpisodeTargets =
     src.meta.type === "series" || adjacent.next != null || adjacent.prev != null;
-  const canChangeEpisode =
-    hasEpisodeTargets && (!inRoom || isHost || roomGuestControl);
-  const canAutoAdvanceEpisode =
-    hasEpisodeTargets && (!inRoom || isHost);
+  const canChangeEpisode = hasEpisodeTargets && (!inRoom || isHost || roomGuestControl);
+  const canAutoAdvanceEpisode = hasEpisodeTargets && (!inRoom || isHost);
   const roomGuest = inRoom && !isHost;
   const roomGuestReadOnly = inRoom && !isHost && !roomGuestControl;
   const broadcastEpisode = useCallback(
@@ -630,7 +635,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   useKeyboardNavigation({
     // TV focus navigation intentionally owns arrows and Space while enabled.
     // Keep it opt-in so standard player hotkeys remain the default.
-    enabled: settings.tvNavigation && settings.playerTvNavigation && !screenLocked && !src.pipDocked,
+    enabled:
+      settings.tvNavigation && settings.playerTvNavigation && !screenLocked && !src.pipDocked,
     wrap: true,
     arrows: chromeVisible && !pipMode,
     onBack: () => {
@@ -1110,7 +1116,11 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     const unsub = subscribePlaybackClock(() => {
       const livePos = getPlaybackPosition();
       const currentSnap = snapRef.current;
-      if (currentSnap.status === "idle" || currentSnap.status === "ended" || currentSnap.status === "error") {
+      if (
+        currentSnap.status === "idle" ||
+        currentSnap.status === "ended" ||
+        currentSnap.status === "error"
+      ) {
         clearMediaControls();
         return;
       }
@@ -1164,7 +1174,12 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     onVolumeFeedback: showVolumeFeedback,
   });
 
-  useStubDetection({ src, snap, onStub: onStubEject, instantPlay: settings.instantPlay });
+  useStubDetection({
+    src,
+    snap,
+    onStub: onStubEject,
+    instantPlay: settings.instantPlay && src.autoFired !== false,
+  });
 
   const reloadLive = useCallback(() => {
     bridgeRef.current?.load({
@@ -1225,6 +1240,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     url: playUrl,
     enabled: settings.seekPreviewEnabled,
     isLive: isLiveLike,
+    ready: snap.firstFrameReady || snap.durationSec > 0,
   });
   const adSegments = useAdSegments(
     src.meta.id,
@@ -1536,7 +1552,11 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
       data-audio-only={docked && dockMinimized}
       dir="ltr"
       className={`fixed z-[100] overflow-hidden ${docked ? "sports-player-dock" : "inset-0"} ${stageBg}`}
-      style={{ ...(screenLocked ? { cursor: "default" } : cursorStyle), ...dockDrag.style, ...(src.pipDocked ? { visibility: "hidden", pointerEvents: "none" } : {}) }}
+      style={{
+        ...(screenLocked ? { cursor: "default" } : cursorStyle),
+        ...dockDrag.style,
+        ...(src.pipDocked ? { visibility: "hidden", pointerEvents: "none" } : {}),
+      }}
       onMouseMove={wakeChrome}
       onMouseEnter={wakeChrome}
     >
@@ -1662,6 +1682,10 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
             openPicker(src.meta, src.episode, { autoPlay: false });
           }}
           onRetry={() => {
+            if (src.autoFired === false && !sourceError.exhausted) {
+              retryCurrentSource();
+              return;
+            }
             clearSourceError();
             openPicker(src.meta, src.episode, { autoPlay: true });
           }}
