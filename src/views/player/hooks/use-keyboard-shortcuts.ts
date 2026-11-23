@@ -31,6 +31,7 @@ export function useKeyboardShortcuts(params: {
   fullscreen: boolean;
   cycleSubtitles: () => void;
   setShowStats: (updater: (prev: boolean) => boolean) => void;
+  setShowHotkeys?: (updater: (prev: boolean) => boolean) => void;
   metaId: string;
   svpActive: boolean;
   onNextEp?: () => void;
@@ -72,6 +73,7 @@ export function useKeyboardShortcuts(params: {
     togglePip,
     cycleSubtitles,
     setShowStats,
+    setShowHotkeys,
     metaId,
     svpActive,
     onNextEp,
@@ -408,6 +410,11 @@ export function useKeyboardShortcuts(params: {
         setShowStats((v) => !v);
         return;
       }
+      if (match("playerHotkeysHelp") && setShowHotkeys) {
+        e.preventDefault();
+        if (!e.repeat) setShowHotkeys((v) => !v);
+        return;
+      }
       if (match("playerSpeedDown")) {
         e.preventDefault();
         const r = Math.max(0.25, +(snap.rate - 0.25).toFixed(2));
@@ -586,6 +593,7 @@ export function useKeyboardShortcuts(params: {
     seekTo,
     toggleSwitcher,
     toggleEpisodePanel,
+    setShowHotkeys,
     toggleGuide,
     toggleDvr,
     toggleSleep,

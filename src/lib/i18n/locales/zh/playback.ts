@@ -1096,6 +1096,10 @@ const playback: Record<string, string> = {
   "Font only": "仅替换字体",
   "Use your chosen font on styled (ASS) subs while keeping their original size, colors, effects, and sign placement.":
     "将你选择的字体应用到特效（ASS）字幕，同时保留原有的字号、颜色、特效和招牌位置。",
+  "Keyboard shortcuts": "键盘快捷键",
+  "Show or hide the in-player keyboard shortcuts overlay.": "显示或隐藏播放器内的快捷键浮层。",
+  "Press {key} or Esc to close": "按 {key} 或 Esc 关闭",
+  "Close keyboard shortcuts": "关闭快捷键列表",
 };
 
 export default playback;

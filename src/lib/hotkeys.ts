@@ -48,6 +48,7 @@ export type HotkeyId =
   | "playerTvGuide"
   | "playerDvr"
   | "playerSleep"
+  | "playerHotkeysHelp"
   | "playerScreenLock"
   | "playerReloadSource"
   | "playerRestartServer"
@@ -503,6 +504,14 @@ export const HOTKEYS: HotkeyDef[] = [
     description: "Toggle a sleep timer that pauses when this episode ends.",
     defaultBinding: "l",
   },
+  {
+    id: "playerHotkeysHelp",
+    scope: "Player",
+    group: "Panels",
+    label: "Keyboard shortcuts",
+    description: "Show or hide the in-player keyboard shortcuts overlay.",
+    defaultBinding: "?",
+  },
 
   {
     id: "playerReloadSource",
@@ -541,7 +550,7 @@ export function eventToBinding(e: KeyboardEvent): string {
   let key = e.key;
   const isLetter = key.length === 1 && /[a-zA-Z]/.test(key);
   if (e.ctrlKey) mods.push("ctrl");
-  if (e.shiftKey && !isLetter) mods.push("shift");
+  if (e.shiftKey && !isLetter && key !== "?") mods.push("shift");
   if (e.altKey) mods.push("alt");
   if (e.metaKey) mods.push("meta");
   if (key === " ") key = "Space";
@@ -610,4 +619,18 @@ export function findHotkeyMatch(
     if (effectiveBinding(def.id, overrides) === binding) return def.id;
   }
   return null;
+}
+
+export function groupHotkeysByScope(
+  scope: HotkeyScope,
+): Array<{ group: string; items: HotkeyDef[] }> {
+  const groups = new Map<string, HotkeyDef[]>();
+  for (const def of HOTKEYS) {
+    if (def.scope !== scope) continue;
+    const group = def.group ?? "Other";
+    const list = groups.get(group) ?? [];
+    list.push(def);
+    groups.set(group, list);
+  }
+  return Array.from(groups.entries()).map(([group, items]) => ({ group, items }));
 }

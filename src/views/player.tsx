@@ -1060,58 +1060,65 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     })();
   }, [liveUrl, reloadSource, showSyncToast, src.url, t, transcodedUrl]);
 
-  const { holdSpeedActive, showStats, subtitleOffsetSec } = usePlayerHotkeys({
-    bridgeRef,
-    snap,
-    metaId: src.meta.id,
-    svpActive,
-    drawMode,
-    setDrawMode,
-    closePlayer,
-    returnToPreview: src.sportsDocked === false ? backFromPlayer : undefined,
-    playPauseToggle,
-    seekStep,
-    seekTo,
-    toggleFullscreen,
-    togglePip: togglePipMode,
-    fullscreen,
-    cycleSubtitles,
-    playNext,
-    playPrev,
-    hasNextEpisode: hasNextEpisodeNow,
-    hasPrevEpisode: hasPrevEpisodeNow,
-    toggleSwitcher: () => setSwitcherOpen((v) => !v),
-    toggleEpisodePanel: () => setEpisodePanelOpen((v) => !v),
-    liveOverlay,
-    toggleDvr: () => setDvrOpen((v) => !v),
-    sleep,
-    quickToolsEnabled,
-    frameGrab,
-    onToggleAnime4k: () => {
-      if (!anime4k.available) {
-        showSyncToast("error", t("Anime4K isn't set up yet. Turn it on in Settings under Anime."));
-        return;
-      }
-      anime4k.setMode(anime4k.mode === "off" ? "auto" : "off");
-    },
-    onAnime4kOn: () => {
-      if (!anime4k.available) {
-        showSyncToast("error", t("Anime4K isn't set up yet. Turn it on in Settings under Anime."));
-        return;
-      }
-      anime4k.setMode("auto");
-    },
-    onAnime4kOff: () => {
-      anime4k.setMode("off");
-    },
-    onReloadSource: reloadSource,
-    onRestartServer: restartStreamServer,
-    onSubDelay: handleManualSubDelay,
-    gif,
-    clip,
-    videoFill,
-    onVolumeFeedback: showVolumeFeedback,
-  });
+  const { holdSpeedActive, showStats, showHotkeys, setShowHotkeys, subtitleOffsetSec } =
+    usePlayerHotkeys({
+      bridgeRef,
+      snap,
+      metaId: src.meta.id,
+      svpActive,
+      drawMode,
+      setDrawMode,
+      closePlayer,
+      returnToPreview: src.sportsDocked === false ? backFromPlayer : undefined,
+      playPauseToggle,
+      seekStep,
+      seekTo,
+      toggleFullscreen,
+      togglePip: togglePipMode,
+      fullscreen,
+      cycleSubtitles,
+      playNext,
+      playPrev,
+      hasNextEpisode: hasNextEpisodeNow,
+      hasPrevEpisode: hasPrevEpisodeNow,
+      toggleSwitcher: () => setSwitcherOpen((v) => !v),
+      toggleEpisodePanel: () => setEpisodePanelOpen((v) => !v),
+      liveOverlay,
+      toggleDvr: () => setDvrOpen((v) => !v),
+      sleep,
+      quickToolsEnabled,
+      frameGrab,
+      onToggleAnime4k: () => {
+        if (!anime4k.available) {
+          showSyncToast(
+            "error",
+            t("Anime4K isn't set up yet. Turn it on in Settings under Anime."),
+          );
+          return;
+        }
+        anime4k.setMode(anime4k.mode === "off" ? "auto" : "off");
+      },
+      onAnime4kOn: () => {
+        if (!anime4k.available) {
+          showSyncToast(
+            "error",
+            t("Anime4K isn't set up yet. Turn it on in Settings under Anime."),
+          );
+          return;
+        }
+        anime4k.setMode("auto");
+      },
+      onAnime4kOff: () => {
+        anime4k.setMode("off");
+      },
+      onReloadSource: reloadSource,
+      onRestartServer: restartStreamServer,
+      onSubDelay: handleManualSubDelay,
+      gif,
+      clip,
+      videoFill,
+      onVolumeFeedback: showVolumeFeedback,
+    });
 
   useEffect(() => {
     if (snap.status === "idle" || snap.status === "ended" || snap.status === "error") {
@@ -1389,6 +1396,10 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     frameGrab.trigger();
   }, [frameGrab]);
 
+  const onCloseHotkeys = useCallback(() => {
+    setShowHotkeys(false);
+  }, [setShowHotkeys]);
+
   const overlayProps: PlayerOverlayLayersProps = {
     tenFoot,
     snap,
@@ -1400,6 +1411,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     subShowInPip: settings.subShowInPip,
     subAssNative,
     showStats,
+    showHotkeys,
+    onCloseHotkeys,
     holdSpeedActive: holdSpeedActive || mouseHoldSpeedActive,
     subtitleOffsetSec,
     volumeIndicator,

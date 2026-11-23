@@ -1150,6 +1150,11 @@ const uiFallback: Record<string, string> = {
     "Ten-foot uses large controls built for a remote across the room. Desktop keeps the same player you use in the normal window, which is quicker with a mouse and keyboard.",
   "Ten-foot": "Ten-foot",
   Desktop: "Desktop",
+  "Keyboard shortcuts": "Keyboard shortcuts",
+  "Show or hide the in-player keyboard shortcuts overlay.":
+    "Show or hide the in-player keyboard shortcuts overlay.",
+  "Press {key} or Esc to close": "Press {key} or Esc to close",
+  "Close keyboard shortcuts": "Close keyboard shortcuts",
 };
 
 export default uiFallback;

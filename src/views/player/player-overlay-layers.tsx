@@ -2,6 +2,7 @@ import { memo, useCallback, type ComponentProps, type RefObject } from "react";
 import { DrawCanvas, StrokesLayer, type Stroke } from "@/components/player/draw-canvas";
 import { cropTransform } from "./hooks/use-video-fill";
 import { StreamSwitcher } from "@/components/player/stream-switcher";
+import { PlayerHotkeysOverlay } from "@/components/player/hotkeys-overlay";
 import { StreamCheckPill } from "@/components/player/stream-check-pill";
 import { AdReportButton } from "@/components/player/ad-report-button";
 import { XrayOverlay } from "@/components/player/xray/xray-overlay";
@@ -51,6 +52,8 @@ export type PlayerOverlayLayersProps = {
   subShowInPip: boolean;
   subAssNative: boolean;
   showStats: boolean;
+  showHotkeys: boolean;
+  onCloseHotkeys: () => void;
   holdSpeedActive: boolean;
   subtitleOffsetSec: number | null;
   volumeIndicator: VolumeIndicatorState;
@@ -550,6 +553,8 @@ export const PlayerOverlayLayers = memo(function PlayerOverlayLayers(p: PlayerOv
         onDismissNoAudio={p.onDismissNoAudio}
         onPickAnother={p.pickAnotherOrGuide}
       />
+
+      <PlayerHotkeysOverlay open={p.showHotkeys && !p.pipMode} onClose={p.onCloseHotkeys} />
     </>
   );
 });
