@@ -177,3 +177,25 @@ export function assScaleFromFactor(factor: number, targetFontSize: number): numb
   const target = Number.isFinite(targetFontSize) ? targetFontSize : 32;
   return clamp(factor * target, MIN_SCALE, MAX_SCALE);
 }
+
+/**
+ * Builds the cache key for ASS base-factor normalization, including the resolved
+ * external source path so track replacements that reuse an mpv track ID never
+ * read stale normalization factors.
+ */
+export function assNormalizeCacheKey(
+  enabled: boolean,
+  sourceUrl: string | null,
+  track: {
+    id: string;
+    external?: boolean;
+    externalFilename?: string;
+    url?: string;
+  } | null,
+): string {
+  if (!enabled || !sourceUrl || !track) return "";
+  const externalSource = track.external
+    ? (track.externalFilename ?? track.url ?? "").replace(/\\/g, "/")
+    : "";
+  return `${sourceUrl}|${track.id}|${track.external ? 1 : 0}|${externalSource}`;
+}

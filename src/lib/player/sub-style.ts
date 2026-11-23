@@ -78,9 +78,12 @@ export type SubRenderContext = {
 
 let lastSessionKey: string | number | null = null;
 const lastSentProps = new Map<string, unknown>();
+let subStyleRevision = 0;
+let subStyleQueue: Promise<void> = Promise.resolve();
 
 /** Reset the cached subtitle style map when an mpv session tears down. */
 export function resetSubStyleCache(): void {
+  subStyleRevision += 1;
   lastSessionKey = null;
   lastSentProps.clear();
 }
@@ -93,7 +96,9 @@ export async function applySubStyle(
   const override = s.subAssOverride;
   const forceAssLayout = override === "force" || override === "strip";
   const normScale =
-    typeof context.assScale === "number" && Number.isFinite(context.assScale) ? context.assScale : null;
+    typeof context.assScale === "number" && Number.isFinite(context.assScale)
+      ? context.assScale
+      : null;
   const chosenFont = mpvFontFor(s.subFontFamily, customFontName(s));
   const baseFontSize = clamp(Number(s.subFontSize) || 32, 16, 120);
 
@@ -118,9 +123,7 @@ export async function applySubStyle(
   const isShadow = s.subStyle === "shadow";
   const hideSdh = s.subHideSdh === true && context.sdhFilterAllowed !== false;
   const computedScale =
-    normScale != null
-      ? clamp(normScale, 0.2, 6)
-      : Math.min(4, Math.max(0.4, baseFontSize / 32));
+    normScale != null ? clamp(normScale, 0.2, 6) : Math.min(4, Math.max(0.4, baseFontSize / 32));
 
   // mpv treats sub-shadow-color as an alias for sub-back-color, so emit a single
   // deterministic value instead of racing both concurrently.
@@ -162,27 +165,39 @@ export async function applySubStyle(
     }
   }
 
-  let entries = Array.from(propMap.entries());
-  if (context.sessionKey != null) {
-    if (lastSessionKey !== context.sessionKey) {
-      lastSessionKey = context.sessionKey;
-      lastSentProps.clear();
-    } else {
-      entries = entries.filter(([name, value]) => !Object.is(lastSentProps.get(name), value));
-    }
-  }
-  if (entries.length === 0) return;
+  const revision = ++subStyleRevision;
+  const sessionKey = context.sessionKey;
 
-  await Promise.all(
-    entries.map(async ([name, value]) => {
-      try {
-        await invoke("mpv_set_property", { name, value });
-        if (context.sessionKey != null && lastSessionKey === context.sessionKey) {
-          lastSentProps.set(name, value);
-        }
-      } catch {
-        // Ignore individual property failures when mpv is transitioning state.
+  // Serialize property writes so a transient scale bounce (normalized -> default -> normalized)
+  // never leaves the stale default applied in mpv or drops the final normalized update.
+  const task = subStyleQueue.then(async () => {
+    if (revision !== subStyleRevision) return;
+
+    let entries = Array.from(propMap.entries());
+    if (sessionKey != null) {
+      if (lastSessionKey !== sessionKey) {
+        lastSessionKey = sessionKey;
+        lastSentProps.clear();
+      } else {
+        entries = entries.filter(([name, value]) => !Object.is(lastSentProps.get(name), value));
       }
-    }),
-  );
+    }
+    if (entries.length === 0) return;
+
+    await Promise.all(
+      entries.map(async ([name, value]) => {
+        try {
+          await invoke("mpv_set_property", { name, value });
+          if (sessionKey != null && lastSessionKey === sessionKey) {
+            lastSentProps.set(name, value);
+          }
+        } catch {
+          // Ignore individual property failures when mpv is transitioning state.
+        }
+      }),
+    );
+  });
+
+  subStyleQueue = task.catch(() => {});
+  return task;
 }

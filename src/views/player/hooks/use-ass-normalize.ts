@@ -3,7 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import { safeFetch } from "@/lib/safe-fetch";
 import { decodeSubtitleBytes } from "@/lib/subtitles/encoding";
 import { embeddedSubIndex, resolveReadableUrl } from "@/lib/subtitles/extract";
-import { assScaleFromFactor, computeAssBaseFactor } from "@/lib/player/ass-header";
+import {
+  assNormalizeCacheKey,
+  assScaleFromFactor,
+  computeAssBaseFactor,
+} from "@/lib/player/ass-header";
 import type { TrackInfo } from "@/lib/player/bridge";
 
 function isTauri(): boolean {
@@ -80,39 +84,47 @@ export function useAssNormalize(params: {
   const cacheRef = useRef<Map<string, number | null>>(new Map());
   const liveRef = useRef({ sourceUrl, track, tracks, headers });
   liveRef.current = { sourceUrl, track, tracks, headers };
-  const [factor, setFactor] = useState<number | null>(null);
-  const key = enabled && sourceUrl && track ? `${sourceUrl}|${track.id}|${track.external ? 1 : 0}` : "";
+  const [resolved, setResolved] = useState<{ sourceUrl: string; factor: number | null }>({
+    sourceUrl: "",
+    factor: null,
+  });
+  const key = assNormalizeCacheKey(enabled, sourceUrl, track);
 
   useEffect(() => {
-    if (!key) {
-      setFactor(null);
+    if (!key || !sourceUrl) {
+      setResolved({ sourceUrl: "", factor: null });
       return;
     }
     const cached = cacheRef.current.get(key);
     if (cached !== undefined) {
-      setFactor(cached);
+      setResolved({ sourceUrl, factor: cached });
       return;
     }
-    setFactor(null);
     let cancelled = false;
     void (async () => {
       const live = liveRef.current;
       let result: number | null = null;
+      let loadedCleanly = false;
       try {
         if (live.sourceUrl && live.track) {
           const text = await loadAssText(live.sourceUrl, live.track, live.tracks, live.headers);
           result = text ? computeAssBaseFactor(text) : null;
+          loadedCleanly = true;
         }
       } catch {
         result = null;
       }
-      cacheRef.current.set(key, result);
-      if (!cancelled) setFactor(result);
+      if (loadedCleanly) {
+        cacheRef.current.set(key, result);
+      }
+      if (!cancelled) setResolved({ sourceUrl, factor: result });
     })();
     return () => {
       cancelled = true;
     };
-  }, [key]);
+  }, [key, sourceUrl]);
 
-  return factor == null ? undefined : assScaleFromFactor(factor, targetFontSize);
+  const activeFactor =
+    key && sourceUrl && resolved.sourceUrl === sourceUrl ? resolved.factor : null;
+  return activeFactor == null ? undefined : assScaleFromFactor(activeFactor, targetFontSize);
 }

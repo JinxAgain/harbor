@@ -5,6 +5,7 @@ import test from "node:test";
 import type { Settings } from "../src/lib/settings/types.ts";
 import { applySubStyle, resetSubStyleCache } from "../src/lib/player/sub-style.ts";
 import {
+  assNormalizeCacheKey,
   computeAssBaseFactor,
   assScaleFromFactor,
   parseAssStyles,
@@ -149,7 +150,11 @@ Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Large external dialogue line
 `;
 
   const smallFactor = computeAssBaseFactor(smallEmbeddedAss);
-  assert.notEqual(smallFactor, null, "small embedded ASS (frac < 0.02, leading asterisk) must not be rejected");
+  assert.notEqual(
+    smallFactor,
+    null,
+    "small embedded ASS (frac < 0.02, leading asterisk) must not be rejected",
+  );
 
   const largeFactor = computeAssBaseFactor(largeExternalAss);
   assert.notEqual(largeFactor, null, "large external ASS must be parsed");
@@ -263,4 +268,180 @@ test("applySubStyle resolves sub-back-color without sub-shadow-color race and de
     sessionKey: "s2",
   });
   assert.ok(calls.length > 10, "new sessionKey must flush full property set");
+});
+
+test("applySubStyle serializes concurrent calls so a rapid undefined->normalized assScale bounce never drops the normalized scale", async () => {
+  resetSubStyleCache();
+  const settings = createMockSettings({
+    subAssOverride: "scale",
+    subAssNormalizeSize: true,
+    subFontSize: 32,
+  });
+
+  const finalProps = new Map<string, unknown>();
+  const scaleWrites: number[] = [];
+  let pendingScaleGate: { target: number; release: () => void; reached: Promise<void> } | null =
+    null;
+
+  (globalThis as unknown as { window: unknown }).window = {
+    __TAURI_INTERNALS__: {
+      invoke: async (command: string, args: { name: string; value: unknown }) => {
+        if (command !== "mpv_set_property") return undefined;
+        if (
+          args.name === "sub-scale" &&
+          pendingScaleGate &&
+          args.value === pendingScaleGate.target
+        ) {
+          const gate = pendingScaleGate;
+          pendingScaleGate = null;
+          let resolveGate!: () => void;
+          const waitForRelease = new Promise<void>((resolve) => {
+            resolveGate = resolve;
+          });
+          gate.release = resolveGate;
+          gate.signalReached();
+          await waitForRelease;
+        }
+        finalProps.set(args.name, args.value);
+        if (args.name === "sub-scale" && typeof args.value === "number") {
+          scaleWrites.push(args.value);
+        }
+        return undefined;
+      },
+    },
+  };
+
+  function armScaleGate(target: number) {
+    let signalReached!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      signalReached = resolve;
+    });
+    const gate = {
+      target,
+      reached,
+      signalReached,
+      release: () => {},
+    };
+    pendingScaleGate = gate;
+    return gate;
+  }
+
+  // 1. Initial normalized ASS track applies sub-scale=0.48
+  await applySubStyle(settings, {
+    assNativeActive: true,
+    imageNativeActive: false,
+    assScale: 0.48,
+    sessionKey: "s1",
+  });
+  assert.equal(finalProps.get("sub-scale"), 0.48);
+  assert.equal(finalProps.get("sub-ass-override"), "scale");
+
+  // 2. Rapid track replacement: Call A writes un-normalized 1.0 in-flight while Call B arrives with 0.48
+  const gate1 = armScaleGate(1);
+  const callA = applySubStyle(settings, {
+    assNativeActive: true,
+    imageNativeActive: false,
+    assScale: undefined,
+    sessionKey: "s1",
+  });
+  await Promise.resolve();
+  await gate1.reached;
+
+  const callB = applySubStyle(settings, {
+    assNativeActive: true,
+    imageNativeActive: false,
+    assScale: 0.48,
+    sessionKey: "s1",
+  });
+  gate1.release();
+  await Promise.all([callA, callB]);
+
+  assert.equal(
+    finalProps.get("sub-scale"),
+    0.48,
+    "sub-scale must settle on normalized 0.48 after Call A -> Call B bounce",
+  );
+
+  // 3. Same-tick coalescing skips superseded Call A IPC completely
+  scaleWrites.length = 0;
+  const p1 = applySubStyle(settings, {
+    assNativeActive: true,
+    imageNativeActive: false,
+    assScale: undefined,
+    sessionKey: "s1",
+  });
+  const p2 = applySubStyle(settings, {
+    assNativeActive: true,
+    imageNativeActive: false,
+    assScale: 0.62,
+    sessionKey: "s1",
+  });
+  await Promise.all([p1, p2]);
+  assert.deepEqual(scaleWrites, [0.62]);
+  assert.equal(finalProps.get("sub-scale"), 0.62);
+
+  // 4. resetSubStyleCache() prevents an in-flight call from poisoning a subsequent session
+  const gateReset = armScaleGate(0.75);
+  const inFlight = applySubStyle(settings, {
+    assNativeActive: true,
+    imageNativeActive: false,
+    assScale: 0.75,
+    sessionKey: "s1",
+  });
+  await Promise.resolve();
+  await gateReset.reached;
+
+  resetSubStyleCache();
+  const nextSessionCall = applySubStyle(settings, {
+    assNativeActive: true,
+    imageNativeActive: false,
+    assScale: 0.75,
+    sessionKey: "s1",
+  });
+  gateReset.release();
+  await Promise.all([inFlight, nextSessionCall]);
+  assert.equal(finalProps.get("sub-scale"), 0.75);
+  assert.ok(scaleWrites.filter((v) => v === 0.75).length >= 2);
+});
+
+test("assNormalizeCacheKey distinguishes replaced external tracks even when mpv reuses track id", () => {
+  assert.equal(
+    assNormalizeCacheKey(false, "file:///movie.mkv", {
+      id: "2",
+      external: true,
+      externalFilename: "a.ass",
+    }),
+    "",
+  );
+  assert.equal(
+    assNormalizeCacheKey(true, null, { id: "2", external: true, externalFilename: "a.ass" }),
+    "",
+  );
+  assert.equal(assNormalizeCacheKey(true, "file:///movie.mkv", null), "");
+
+  const origKey = assNormalizeCacheKey(true, "file:///movie.mkv", {
+    id: "2",
+    external: true,
+    externalFilename: "C:\\temp\\orig.ass",
+  });
+  const replacedKey = assNormalizeCacheKey(true, "file:///movie.mkv", {
+    id: "2",
+    external: true,
+    externalFilename: "C:/temp/autosync_abc.ass",
+  });
+  const samePathDifferentSlashes = assNormalizeCacheKey(true, "file:///movie.mkv", {
+    id: "2",
+    external: true,
+    externalFilename: "C:/temp/orig.ass",
+  });
+
+  assert.notEqual(origKey, "");
+  assert.notEqual(origKey, replacedKey);
+  assert.equal(origKey, samePathDifferentSlashes);
+
+  const embeddedKey = assNormalizeCacheKey(true, "file:///movie.mkv", {
+    id: "1",
+    external: false,
+  });
+  assert.equal(embeddedKey, "file:///movie.mkv|1|0|");
 });
