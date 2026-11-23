@@ -280,8 +280,12 @@ const useTrickplaySource = readFileSync(
   new URL("../src/views/player/hooks/use-trickplay.ts", import.meta.url),
   "utf8",
 );
+const useAutoSyncSource = readFileSync(
+  new URL("../src/views/player/hooks/use-auto-sync.ts", import.meta.url),
+  "utf8",
+);
 
-test("5. Watch Together inRoom, stub detection, SourceErrorCard retry, trickplay, and rememberedHandledFirst respect manual selection", () => {
+test("5. Watch Together inRoom, stub detection, SourceErrorCard retry, trickplay, auto-sync prefetch, and rememberedHandledFirst respect manual selection", () => {
   // Player computes inRoom with >= 2 participants before passing it to useAutoRetry.
   const inRoomDecl = playerViewSource.indexOf(
     'const inRoom = roomSnapshot.state === "joined" && roomSnapshot.participants.length >= 2;',
@@ -314,6 +318,13 @@ test("5. Watch Together inRoom, stub detection, SourceErrorCard retry, trickplay
   );
   assert.match(useTrickplaySource, /ready\s*=\s*true/);
   assert.match(useTrickplaySource, /if\s*\(!isLocal\s*&&\s*!ready\)\s*return;/);
+
+  // Embedded subtitle auto-sync prefetch must wait for playback readiness on non-local URLs
+  // so its 7s container probe timeout cannot abort StremList's in-flight offline resolution.
+  assert.match(
+    useAutoSyncSource,
+    /const mediaReady = isLocalUrl\(src\.url\) \|\| snap\.firstFrameReady \|\| snap\.durationSec > 0;\s*if \(!mediaReady\) return;/,
+  );
 
   // Remembered playback in PlayPicker must reflect Boolean(autoPlay) instead of hardcoding autoFired: true.
   assert.match(playPickerSource, /onPlay\(previousMatch,\s*true,\s*false,\s*Boolean\(autoPlay\)\)/);

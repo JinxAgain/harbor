@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { PlayerBridge, PlayerSnapshot } from "@/lib/player/bridge";
+import { isLocalUrl } from "@/lib/player/local-url";
 import { resetMpvSubtitleFpsForTransition } from "@/lib/player/mpv-properties";
 import {
   buildSubtitleTimingMediaKey,
@@ -91,15 +92,8 @@ export function useAutoSync(params: {
   subtitlePreflightSettled: boolean;
   availableSubtitles: readonly SubResult[];
 }): AutoSyncHandle & { suspendForManualTiming: () => void } {
-  const {
-    bridgeRef,
-    src,
-    snap,
-    engine,
-    settings,
-    subtitlePreflightSettled,
-    availableSubtitles,
-  } = params;
+  const { bridgeRef, src, snap, engine, settings, subtitlePreflightSettled, availableSubtitles } =
+    params;
 
   const [status, setStatus] = useState<AutoSyncStatus>("idle");
   const [trigger, setTrigger] = useState<AutoSyncTrigger>("automatic");
@@ -155,8 +149,7 @@ export function useAutoSync(params: {
     selected?.external === true &&
     !selectedSynced;
 
-  const runKey =
-    ready && selectedTrackKey ? autoSyncRunKey(mediaKey, selectedTrackKey) : null;
+  const runKey = ready && selectedTrackKey ? autoSyncRunKey(mediaKey, selectedTrackKey) : null;
 
   const runWithSubtitleFpsReset = useCallback(
     (
@@ -166,9 +159,7 @@ export function useAutoSync(params: {
     ) =>
       runAfterSubtitleFpsReset(
         () =>
-          engineRef.current === "mpv"
-            ? resetMpvSubtitleFpsForTransition()
-            : Promise.resolve(),
+          engineRef.current === "mpv" ? resetMpvSubtitleFpsForTransition() : Promise.resolve(),
         action,
         (error) => {
           dwarn("[auto-sync] subtitle FPS reset failed", error);
@@ -245,16 +236,27 @@ export function useAutoSync(params: {
     }
   }, [settings.subtitleAutoSync]);
 
-  // Prefetch embedded MKV/MP4 subtitle timeline index as soon as VOD media loads with auto-sync on.
+  // Prefetch embedded MKV/MP4 subtitle timeline index once VOD media is ready with auto-sync on.
+  // Wait for first frame or known duration on non-local URLs so eager range probes do not race
+  // mpv against on-demand addon resolvers (e.g. StremList offline download polling).
   useEffect(() => {
     if (settings.subtitleAutoSync !== true || !isDesktopTauri()) return;
     if (!canPrefetchEmbeddedMedia(src.url, src.isLive)) return;
+    const mediaReady = isLocalUrl(src.url) || snap.firstFrameReady || snap.durationSec > 0;
+    if (!mediaReady) return;
     if (prefetchedUrlRef.current === src.url) return;
     prefetchedUrlRef.current = src.url;
     void prefetchEmbeddedSubtitles(src.url, src.headers).catch((err) => {
       dwarn("[auto-sync] embedded index prefetch failed", err);
     });
-  }, [settings.subtitleAutoSync, src.url, src.headers, src.isLive]);
+  }, [
+    settings.subtitleAutoSync,
+    src.url,
+    src.headers,
+    src.isLive,
+    snap.firstFrameReady,
+    snap.durationSec,
+  ]);
 
   const beginRun = useCallback(
     (manual: boolean): (() => void) | null => {
@@ -291,8 +293,12 @@ export function useAutoSync(params: {
         }
         return null;
       }
-      const { sourceTrack, selectedInput, replaceTrackId: resyncReplaceTrackId, preservedApplied } =
-        runTarget;
+      const {
+        sourceTrack,
+        selectedInput,
+        replaceTrackId: resyncReplaceTrackId,
+        preservedApplied,
+      } = runTarget;
 
       if (
         !selectedInput.localPath &&
@@ -368,9 +374,7 @@ export function useAutoSync(params: {
       setStatus("analyzing");
 
       const isCurrent = () =>
-        !cancelled.current &&
-        isCurrentAutoSyncScope(scope) &&
-        statusScopeRef.current === scope;
+        !cancelled.current && isCurrentAutoSyncScope(scope) && statusScopeRef.current === scope;
 
       void alignSubtitlesAgainstEmbedded({
         runId,
@@ -433,23 +437,20 @@ export function useAutoSync(params: {
 
               const chosenUrl = res.chosenUrl || selectedSourceUrl;
               const chosenNorm = normalizeUrlKey(chosenUrl);
-              const matchedSelected =
-                chosenNorm !== "" && chosenNorm === selectedSourceNorm;
+              const matchedSelected = chosenNorm !== "" && chosenNorm === selectedSourceNorm;
               const matchedExistingTrack = matchedSelected
                 ? curSelected
-                : liveSnapRef.current.subtitleTracks.find(
+                : (liveSnapRef.current.subtitleTracks.find(
                     (t) =>
                       t.external &&
                       ((t.originalUrl && normalizeUrlKey(t.originalUrl) === chosenNorm) ||
                         (t.url && normalizeUrlKey(t.url) === chosenNorm) ||
-                        (t.externalFilename &&
-                          normalizeUrlKey(t.externalFilename) === chosenNorm)),
-                  ) ?? null;
+                        (t.externalFilename && normalizeUrlKey(t.externalFilename) === chosenNorm)),
+                  ) ?? null);
               const matchedResult =
                 matchedExistingTrack == null
-                  ? availableSubsRef.current.find(
-                      (r) => normalizeUrlKey(r.url) === chosenNorm,
-                    ) ?? null
+                  ? (availableSubsRef.current.find((r) => normalizeUrlKey(r.url) === chosenNorm) ??
+                    null)
                   : null;
 
               const targetLang =
@@ -495,10 +496,9 @@ export function useAutoSync(params: {
               const replaceTrackId =
                 preservedApplied != null ? resyncReplaceTrackId : matchedExistingTrack?.id;
               const commitOrigin = b.getSubtitleSelectionOrigin?.() ?? "automatic";
-              const subDelayBefore =
-                preservedApplied?.changed
-                  ? preservedApplied.subDelayBefore
-                  : liveSnapRef.current.subDelaySec;
+              const subDelayBefore = preservedApplied?.changed
+                ? preservedApplied.subDelayBefore
+                : liveSnapRef.current.subDelaySec;
 
               void runWithSubtitleFpsReset(
                 async () => {
@@ -521,7 +521,9 @@ export function useAutoSync(params: {
                       title: targetTitle,
                       baseMetadata,
                       rawFilename:
-                        (!curSelected.autoSynced ? matchedExistingTrack?.externalFilename : undefined) ??
+                        (!curSelected.autoSynced
+                          ? matchedExistingTrack?.externalFilename
+                          : undefined) ??
                         sourceTrack.externalFilename ??
                         `synced.${fmt}`,
                       replaceExisting,
@@ -710,8 +712,7 @@ export function useAutoSync(params: {
     awaitingCommitRef.current = null;
     const b = bridgeRef.current;
     const a = appliedRef.current;
-    const currentSelected =
-      liveSnapRef.current.subtitleTracks.find((t) => t.selected) ?? null;
+    const currentSelected = liveSnapRef.current.subtitleTracks.find((t) => t.selected) ?? null;
     const canRevertCurrent =
       a.changed &&
       isCurrentAutoSyncScope(a.scope) &&
