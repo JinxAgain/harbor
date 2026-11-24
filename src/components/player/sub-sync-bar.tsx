@@ -18,9 +18,10 @@ type Props = {
   onDelay: (sec: number) => void;
   onEnterSync?: () => void;
   syncAvailable?: boolean;
+  tenFoot?: boolean;
 };
 
-export function SubSyncBar({ delaySec, onDelay, onEnterSync, syncAvailable }: Props) {
+export function SubSyncBar({ delaySec, onDelay, onEnterSync, syncAvailable, tenFoot }: Props) {
   const t = useT();
   const { open, initialDelaySec } = useSyncBarState();
   const autoSyncHandle = useAutoSyncHandle();
@@ -75,7 +76,9 @@ export function SubSyncBar({ delaySec, onDelay, onEnterSync, syncAvailable }: Pr
   const isDirty = round(delaySec) !== round(initialDelaySec);
   const isNonZero = delaySec !== 0;
 
-  const popover = autoSyncHandle ? <AutosyncPopover handle={autoSyncHandle} /> : null;
+  const popover = autoSyncHandle ? (
+    <AutosyncPopover handle={autoSyncHandle} tenFoot={tenFoot} />
+  ) : null;
 
   if (!open) return popover;
 

@@ -100,9 +100,62 @@ fn decode_without_bom(bytes: &[u8], enc: &'static Encoding) -> String {
     enc.decode_without_bom_handling(bytes).0.into_owned()
 }
 
+fn decode_cjk_sample_strict(bytes: &[u8], enc: &'static Encoding) -> Option<String> {
+    let mut dec = enc.new_decoder_without_bom_handling();
+    let mut out = String::with_capacity(bytes.len() * 3 + 16);
+    let mut offset = 0usize;
+    loop {
+        out.reserve(bytes.len().saturating_sub(offset) * 3 + 16);
+        // `last = false` prevents a multi-byte character split at the 4 KB sample cap from counting as an error.
+        let (res, read, had_errors) = dec.decode_to_string(&bytes[offset..], &mut out, false);
+        if had_errors {
+            return None;
+        }
+        offset += read;
+        match res {
+            encoding_rs::CoderResult::InputEmpty => return Some(out),
+            encoding_rs::CoderResult::OutputFull => continue,
+        }
+    }
+}
+
 fn is_cjk_clean(bytes: &[u8], enc: &'static Encoding) -> bool {
-    enc.decode_without_bom_handling_and_without_replacement(bytes)
-        .is_some()
+    decode_cjk_sample_strict(bytes, enc).is_some()
+}
+
+fn is_strict_thai_win874(sample: &[u8], non_ascii: usize, big5_trail_count: usize) -> bool {
+    if big5_trail_count > 0 || non_ascii < 4 {
+        return false;
+    }
+    let mut thai_consonants = 0usize;
+    let mut thai_low_consonants = 0usize;
+    let mut thai_valid_combining = 0usize;
+    for (idx, &b) in sample.iter().enumerate() {
+        if (0x80..=0xA0).contains(&b) || (0xDB..=0xDE).contains(&b) || b >= 0xED {
+            return false;
+        }
+        if b == 0xC7 && sample.get(idx + 1).copied() == Some(0xE1) {
+            return false;
+        }
+        if (0xA1..=0xBF).contains(&b) {
+            thai_low_consonants += 1;
+        }
+        if (0xA1..=0xCE).contains(&b) {
+            thai_consonants += 1;
+        }
+        if b == 0xD1 || (0xD4..=0xDA).contains(&b) || (0xE7..=0xEC).contains(&b) {
+            let prev = idx.checked_sub(1).and_then(|p| sample.get(p).copied());
+            if matches!(prev, Some(p) if (0xA1..=0xCE).contains(&p) || p == 0xD1 || (0xD4..=0xDA).contains(&p))
+            {
+                thai_valid_combining += 1;
+            }
+        }
+    }
+    thai_low_consonants >= 2
+        && thai_consonants >= 4
+        && thai_consonants * 2 >= non_ascii
+        && thai_valid_combining >= 3
+        && thai_valid_combining * 6 >= non_ascii
 }
 
 fn count_block_matches(
@@ -111,7 +164,7 @@ fn count_block_matches(
     start_lo: char,
     end_hi: char,
 ) -> usize {
-    let Some(decoded) = enc.decode_without_bom_handling_and_without_replacement(bytes) else {
+    let Some(decoded) = decode_cjk_sample_strict(bytes, enc) else {
         return 0;
     };
     decoded
@@ -353,10 +406,24 @@ fn resolve_charset_from_language_hint(
 }
 
 fn detect_universal_charset(bytes: &[u8]) -> &'static Encoding {
-    let Some(first_non_ascii) = bytes.iter().position(|&b| b >= 0x80) else {
+    let Some(mut sample_anchor) = bytes.iter().position(|&b| b >= 0x80) else {
         return encoding_rs::UTF_8;
     };
-    let sample_start = first_non_ascii.saturating_sub(100);
+    if let Some(events_pos) = bytes
+        .windows(8)
+        .position(|w| w.eq_ignore_ascii_case(b"[events]"))
+    {
+        if sample_anchor < events_pos {
+            if let Some(rel) = bytes[events_pos..].iter().position(|&b| b >= 0x80) {
+                sample_anchor = events_pos + rel;
+            }
+        }
+    }
+    let min_start = sample_anchor.saturating_sub(100);
+    let mut sample_start = sample_anchor;
+    while sample_start > min_start && bytes[sample_start - 1] < 0x80 {
+        sample_start -= 1;
+    }
     let sample_end = (sample_start + CHARSET_SAMPLE_BYTES).min(bytes.len());
     let sample = &bytes[sample_start..sample_end];
 
@@ -384,6 +451,19 @@ fn detect_universal_charset(bytes: &[u8]) -> &'static Encoding {
         return encoding_rs::UTF_8;
     }
 
+    let mut big5_trail_count = 0usize;
+    let mut i = 0usize;
+    while i + 1 < sample.len() {
+        let b1 = sample[i];
+        let b2 = sample[i + 1];
+        if (0xA1..=0xF9).contains(&b1) && (0x40..=0x7E).contains(&b2) {
+            big5_trail_count += 1;
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+
     // Japanese Shift_JIS check (Hiragana in 0x82 0x9F..0xF1).
     let mut hiragana_count = 0usize;
     let mut sjis_idx = 0usize;
@@ -409,28 +489,13 @@ fn detect_universal_charset(bytes: &[u8]) -> &'static Encoding {
         return EUC_KR;
     }
 
-    // Thai single-byte consonants check (0xA1..0xBF).
-    let thai_consonants_early = sample
-        .iter()
-        .filter(|&&b| (0xA1..=0xBF).contains(&b))
-        .count();
-    if thai_consonants_early * 4 >= non_ascii && thai_consonants_early >= 4 {
+    if max_consecutive_non_ascii >= 4
+        && is_strict_thai_win874(sample, non_ascii, big5_trail_count)
+    {
         return WINDOWS_874;
     }
 
     if gb_hanzi_score >= 4 && max_consecutive_non_ascii >= 6 {
-        let mut big5_trail_count = 0usize;
-        let mut i = 0usize;
-        while i + 1 < sample.len() {
-            let b1 = sample[i];
-            let b2 = sample[i + 1];
-            if (0xA1..=0xF9).contains(&b1) && (0x40..=0x7E).contains(&b2) {
-                big5_trail_count += 1;
-                i += 2;
-            } else {
-                i += 1;
-            }
-        }
         if big5_trail_count >= 2 && is_cjk_clean(sample, BIG5) {
             return BIG5;
         }
@@ -471,7 +536,8 @@ fn detect_universal_charset(bytes: &[u8]) -> &'static Encoding {
         (turkish_score, ce_score, vietnamese_score)
     };
 
-    // Predominantly Latin text: avoid false-positive non-Latin triggers.
+    // Predominantly Latin text: evaluate before non-Latin single-byte scripts so Polish/Spanish/French
+    // diacritics and punctuation (0xA1..=0xBF) cannot fall into Thai WINDOWS-874.
     if ascii_letters >= non_ascii || max_consecutive_non_ascii <= 2 {
         let (turkish_score, ce_score, vietnamese_score) = score_latin_scripts(sample);
         if turkish_score >= 2 && turkish_score > ce_score {
@@ -488,6 +554,9 @@ fn detect_universal_charset(bytes: &[u8]) -> &'static Encoding {
 
     // Statistical evaluation for non-Latin single-byte alphabets (Hebrew, Arabic, Thai, Cyrillic, Greek).
     let mut thai_consonants = 0usize;
+    let mut thai_low_consonants = 0usize;
+    let mut thai_vowels_and_tones = 0usize;
+    let mut bytes_80_to_9f = 0usize;
     let mut hebrew_letters = 0usize;
     let mut arabic_al_count = 0usize;
     let mut russian_vowels = 0usize;
@@ -496,8 +565,17 @@ fn detect_universal_charset(bytes: &[u8]) -> &'static Encoding {
     let mut bytes_c0_to_df = 0usize;
 
     for (idx, &b) in sample.iter().enumerate() {
+        if (0x80..=0x9F).contains(&b) {
+            bytes_80_to_9f += 1;
+        }
         if (0xA1..=0xBF).contains(&b) {
+            thai_low_consonants += 1;
+        }
+        if (0xA1..=0xCE).contains(&b) {
             thai_consonants += 1;
+        }
+        if (0xD0..=0xDA).contains(&b) || (0xE0..=0xEC).contains(&b) {
+            thai_vowels_and_tones += 1;
         }
         if (0xE0..=0xFA).contains(&b) {
             hebrew_letters += 1;
@@ -542,11 +620,17 @@ fn detect_universal_charset(bytes: &[u8]) -> &'static Encoding {
     if hebrew_letters == non_ascii && hebrew_letters >= 4 && bytes_c0_to_df == 0 {
         return WINDOWS_1255;
     }
-    if thai_consonants * 4 >= non_ascii && thai_consonants >= 4 {
-        return WINDOWS_874;
-    }
     if arabic_al_count > 0 {
         return WINDOWS_1256;
+    }
+    if thai_consonants >= 4
+        && thai_low_consonants >= 2
+        && thai_vowels_and_tones >= 2
+        && thai_consonants * 4 >= non_ascii
+        && bytes_80_to_9f * 20 <= non_ascii
+        && (big5_trail_count == 0 || !is_cjk_clean(sample, BIG5))
+    {
+        return WINDOWS_874;
     }
     if koi8_vowels > russian_vowels && koi8_vowels >= 3 {
         return KOI8_R;
@@ -572,6 +656,19 @@ fn detect_universal_charset(bytes: &[u8]) -> &'static Encoding {
     WINDOWS_1252
 }
 
+fn decode_utf32(bytes: &[u8], little_endian: bool) -> String {
+    let mut out = String::with_capacity(bytes.len() / 2);
+    for chunk in bytes.chunks_exact(4) {
+        let code = if little_endian {
+            u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+        } else {
+            u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+        };
+        out.push(char::from_u32(code).unwrap_or('\u{FFFD}'));
+    }
+    out
+}
+
 /// Decodes raw subtitle bytes into UTF-8 text with BOM detection, strict UTF-8 validation,
 /// NuvioMobile-equivalent language-hint + script heuristics, and double-encoded Hebrew repair.
 pub fn decode_subtitle_bytes(bytes: &[u8], language_hint: Option<&str>) -> String {
@@ -581,6 +678,12 @@ pub fn decode_subtitle_bytes(bytes: &[u8], language_hint: Option<&str>) -> Strin
     if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
         let utf8 = String::from_utf8_lossy(&bytes[3..]).into_owned();
         return repair_double_encoded_utf8_if_needed(utf8, language_hint);
+    }
+    if bytes.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
+        return decode_utf32(&bytes[4..], true);
+    }
+    if bytes.starts_with(&[0x00, 0x00, 0xfe, 0xff]) {
+        return decode_utf32(&bytes[4..], false);
     }
     if bytes.starts_with(&[0xff, 0xfe]) {
         return decode_without_bom(&bytes[2..], UTF_16LE);
@@ -598,47 +701,74 @@ pub fn decode_subtitle_bytes(bytes: &[u8], language_hint: Option<&str>) -> Strin
     repair_double_encoded_utf8_if_needed(decoded, language_hint)
 }
 
+#[allow(dead_code)]
 pub fn detect_format(source_url: Option<&str>, text: &str, format_hint: Option<&str>) -> SubtitleFormat {
-    if let Some(hint) = format_hint {
-        match hint.trim().to_ascii_lowercase().as_str() {
-            "vtt" | "webvtt" => return SubtitleFormat::Vtt,
-            "ass" => return SubtitleFormat::Ass,
-            "ssa" => return SubtitleFormat::Ssa,
-            "ttml" | "dfxp" | "xml" => return SubtitleFormat::Ttml,
-            "srt" => return SubtitleFormat::Srt,
-            _ => {}
-        }
-    }
     let clean = strip_bom_and_crlf(text);
+    detect_format_cleaned(source_url, &clean, format_hint)
+}
+
+fn detect_format_cleaned(
+    source_url: Option<&str>,
+    clean: &str,
+    format_hint: Option<&str>,
+) -> SubtitleFormat {
     let path = source_url
         .unwrap_or("")
         .split(['?', '#'])
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
+    let hint_lower = format_hint
+        .map(|h| h.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+
+    // Unambiguous content signatures always win over caller/provider format hints
+    // (providers frequently label `.ass` / `.vtt` / `.ttml` downloads as `"srt"`).
     let trimmed_start = clean.trim_start();
-    if path.ends_with(".vtt") || path.ends_with(".webvtt") || trimmed_start.starts_with("WEBVTT") {
+    if trimmed_start.starts_with("WEBVTT") {
         return SubtitleFormat::Vtt;
     }
-    if path.ends_with(".ssa") {
-        return SubtitleFormat::Ssa;
-    }
-    if path.ends_with(".ass") || has_ass_events_header(&clean) {
-        if has_ssa_styles_header(&clean) && !clean.contains("[V4+ Styles]") {
+    if has_ass_events_header(clean)
+        || has_ssa_styles_header(clean)
+        || clean.contains("[V4+ Styles]")
+    {
+        if (has_ssa_styles_header(clean) || hint_lower == "ssa" || path.ends_with(".ssa"))
+            && !clean.contains("[V4+ Styles]")
+        {
             return SubtitleFormat::Ssa;
         }
         return SubtitleFormat::Ass;
     }
     let head: String = clean.chars().take(512).collect();
-    if path.ends_with(".ttml")
-        || path.ends_with(".dfxp")
-        || path.ends_with(".xml")
-        || ttml_root_regex().is_match(&head)
-    {
+    if ttml_root_regex().is_match(&head) {
+        return SubtitleFormat::Ttml;
+    }
+
+    match hint_lower.as_str() {
+        "vtt" | "webvtt" => return SubtitleFormat::Vtt,
+        "ass" => return SubtitleFormat::Ass,
+        "ssa" => return SubtitleFormat::Ssa,
+        "ttml" | "dfxp" | "xml" => return SubtitleFormat::Ttml,
+        "srt" => return SubtitleFormat::Srt,
+        _ => {}
+    }
+
+    if path.ends_with(".vtt") || path.ends_with(".webvtt") {
+        return SubtitleFormat::Vtt;
+    }
+    if path.ends_with(".ssa") {
+        return SubtitleFormat::Ssa;
+    }
+    if path.ends_with(".ass") {
+        return SubtitleFormat::Ass;
+    }
+    if path.ends_with(".ttml") || path.ends_with(".dfxp") || path.ends_with(".xml") {
         return SubtitleFormat::Ttml;
     }
     SubtitleFormat::Srt
 }
+
+const MAX_PARSED_CUES: usize = 25_000;
 
 pub fn parse_subtitles(
     raw_text: &str,
@@ -646,14 +776,18 @@ pub fn parse_subtitles(
     format_hint: Option<&str>,
 ) -> (SubtitleFormat, Vec<SubtitleCue>) {
     let cleaned = strip_bom_and_crlf(raw_text);
-    let format = detect_format(source_url, &cleaned, format_hint);
+    let format = detect_format_cleaned(source_url, &cleaned, format_hint);
     let cues = match format {
         SubtitleFormat::Vtt => parse_vtt(&cleaned),
         SubtitleFormat::Ass | SubtitleFormat::Ssa => parse_ass(&cleaned),
         SubtitleFormat::Ttml => parse_ttml(&cleaned),
         SubtitleFormat::Srt => parse_srt(&cleaned),
     };
-    (format, normalize_external_timeline(cues))
+    let mut normalized = normalize_external_timeline(cues);
+    if normalized.len() > MAX_PARSED_CUES {
+        normalized.truncate(MAX_PARSED_CUES);
+    }
+    (format, normalized)
 }
 
 pub fn normalize_external_timeline(mut cues: Vec<SubtitleCue>) -> Vec<SubtitleCue> {
@@ -690,7 +824,7 @@ pub fn filter_indexed_ass_dialogue_cues(mut cues: Vec<SubtitleCue>) -> Vec<Subti
             {
                 return false;
             }
-            starts_within(&starts, *idx, BURST_WINDOW_MS) < BURST_MIN_STARTS
+            starts_within(&starts, *idx, BURST_WINDOW_MS, BURST_MIN_STARTS) < BURST_MIN_STARTS
         })
         .map(|(_, cue)| cue.clone())
         .collect();
@@ -701,17 +835,23 @@ pub fn filter_indexed_ass_dialogue_cues(mut cues: Vec<SubtitleCue>) -> Vec<Subti
     }
 }
 
-fn starts_within(starts: &[i64], index: usize, radius_ms: i64) -> usize {
+fn starts_within(starts: &[i64], index: usize, radius_ms: i64, cap: usize) -> usize {
     let center = starts[index];
-    let mut first = index;
-    while first > 0 && center - starts[first - 1] <= radius_ms {
-        first -= 1;
+    let mut count = 1usize;
+    let mut left = index;
+    while left > 0 && count < cap && center.saturating_sub(starts[left - 1]) <= radius_ms {
+        left -= 1;
+        count += 1;
     }
-    let mut last = index;
-    while last + 1 < starts.len() && starts[last + 1] - center <= radius_ms {
-        last += 1;
+    let mut right = index;
+    while right + 1 < starts.len()
+        && count < cap
+        && starts[right + 1].saturating_sub(center) <= radius_ms
+    {
+        right += 1;
+        count += 1;
     }
-    last - first + 1
+    count
 }
 
 fn strip_bom_and_crlf(raw: &str) -> String {
@@ -747,7 +887,7 @@ fn has_ssa_styles_header(text: &str) -> bool {
 
 fn ttml_root_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?i)<tt[\s>]").unwrap())
+    RE.get_or_init(|| Regex::new(r"(?i)<(?:[a-zA-Z0-9_-]+:)?tt(?:\s|>|/>)").unwrap())
 }
 
 fn non_dialogue_name_regex() -> &'static Regex {
@@ -781,39 +921,49 @@ fn typeset_tag_regex() -> &'static Regex {
 }
 
 fn parse_srt(text: &str) -> Vec<SubtitleCue> {
-    static SEP: OnceLock<Regex> = OnceLock::new();
-    let sep = SEP.get_or_init(|| Regex::new(r"\n\s*\n").unwrap());
+    let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
     let mut cues = Vec::new();
-    for block in sep.split(text) {
-        let lines: Vec<&str> = block
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .collect();
-        if lines.is_empty() {
+    let mut cursor = 0usize;
+
+    while cursor < lines.len() {
+        let trimmed = lines[cursor].trim();
+        if !trimmed.contains("-->") {
+            cursor += 1;
             continue;
         }
-        let mut idx = 0;
-        if lines[idx].chars().all(|c| c.is_ascii_digit()) && idx + 1 < lines.len() {
-            idx += 1;
-        }
-        let Some(&timing) = lines.get(idx) else {
+        let Some((start_ms, end_ms)) = parse_start_end_time_ms(trimmed) else {
+            cursor += 1;
             continue;
         };
-        if !timing.contains("-->") {
-            continue;
-        }
-        let Some((start_ms, end_ms)) = parse_start_end_time_ms(timing) else {
-            continue;
-        };
+        cursor += 1;
         if end_ms <= start_ms {
             continue;
         }
-        let body = normalize_cue_text(&lines[idx + 1..].join("\n"));
-        if body.is_empty() {
-            continue;
+
+        let mut text_parts = Vec::new();
+        while cursor < lines.len() {
+            let line = lines[cursor].trim();
+            if line.is_empty() {
+                break;
+            }
+            if line.contains("-->") && parse_start_end_time_ms(line).is_some() {
+                break;
+            }
+            if line.chars().all(|c| c.is_ascii_digit()) {
+                if let Some(next_line) = lines.get(cursor + 1).map(|l| l.trim()) {
+                    if next_line.contains("-->") && parse_start_end_time_ms(next_line).is_some() {
+                        break;
+                    }
+                }
+            }
+            text_parts.push(line);
+            cursor += 1;
         }
-        cues.push(SubtitleCue::new(start_ms, end_ms, body));
+
+        let body = normalize_cue_text(&text_parts.join("\n"));
+        if !body.is_empty() {
+            cues.push(SubtitleCue::new(start_ms, end_ms, body));
+        }
     }
     cues
 }
@@ -837,17 +987,14 @@ fn parse_vtt(text: &str) -> Vec<SubtitleCue> {
             continue;
         }
         if is_webvtt_metadata_header(line) {
-            let next_line = lines.get(cursor + 1).map(|l| l.trim()).unwrap_or("");
-            if next_line.is_empty() || !next_line.contains("-->") {
+            cursor += 1;
+            while cursor < lines.len() && !lines[cursor].trim().is_empty() {
                 cursor += 1;
-                while cursor < lines.len() && !lines[cursor].trim().is_empty() {
-                    cursor += 1;
-                }
-                if cursor < lines.len() {
-                    cursor += 1;
-                }
-                continue;
             }
+            if cursor < lines.len() {
+                cursor += 1;
+            }
+            continue;
         }
         let mut timing_line = line;
         let mut text_start = cursor + 1;
@@ -988,37 +1135,50 @@ fn parse_ass_style(
 
 fn parse_ass_dialogue(payload: &str, format_fields: Option<&[String]>) -> Option<AssEvent> {
     const DEFAULT_FIELDS: usize = 10;
-    let fields = format_fields.unwrap_or(&[]);
-    let limit = if fields.is_empty() {
-        DEFAULT_FIELDS
-    } else {
-        fields.len()
-    };
+    let fields = format_fields.filter(|f| !f.is_empty());
+    let limit = fields.map(|f| f.len()).unwrap_or(DEFAULT_FIELDS);
     let parts: Vec<&str> = payload.splitn(limit, ',').map(str::trim).collect();
-    let start_idx = index_of_field(fields, "Start").unwrap_or(1);
-    let end_idx = index_of_field(fields, "End").unwrap_or(2);
-    let style_idx = index_of_field(fields, "Style").unwrap_or(3);
-    let name_idx = index_of_field(fields, "Name").unwrap_or(4);
-    let effect_idx = index_of_field(fields, "Effect").unwrap_or(8);
-    let text_idx = index_of_field(fields, "Text").unwrap_or(9);
+    let (start_idx, end_idx, style_idx, name_idx, effect_idx, text_idx) = match fields {
+        Some(f) => (
+            index_of_field(f, "Start")?,
+            index_of_field(f, "End"),
+            index_of_field(f, "Style"),
+            index_of_field(f, "Name"),
+            index_of_field(f, "Effect"),
+            index_of_field(f, "Text")?,
+        ),
+        None => (1, Some(2), Some(3), Some(4), Some(8), 9),
+    };
 
     if parts.len() <= start_idx || parts.len() <= text_idx {
         return None;
     }
     let start_ms = parse_timestamp_ms(parts[start_idx])?;
-    let end_ms = parts
-        .get(end_idx)
+    let end_ms = end_idx
+        .and_then(|idx| parts.get(idx))
         .and_then(|s| parse_timestamp_ms(s))
-        .unwrap_or(start_ms + 3_000);
+        .unwrap_or_else(|| start_ms.saturating_add(3_000));
     if end_ms <= start_ms {
         return None;
     }
     Some(AssEvent {
         start_ms,
         end_ms,
-        style: parts.get(style_idx).copied().unwrap_or("").to_string(),
-        name: parts.get(name_idx).copied().unwrap_or("").to_string(),
-        effect: parts.get(effect_idx).copied().unwrap_or("").to_string(),
+        style: style_idx
+            .and_then(|idx| parts.get(idx))
+            .copied()
+            .unwrap_or("")
+            .to_string(),
+        name: name_idx
+            .and_then(|idx| parts.get(idx))
+            .copied()
+            .unwrap_or("")
+            .to_string(),
+        effect: effect_idx
+            .and_then(|idx| parts.get(idx))
+            .copied()
+            .unwrap_or("")
+            .to_string(),
         raw_text: parts[text_idx].to_string(),
     })
 }
@@ -1097,107 +1257,255 @@ fn is_dialogue_event(event: &AssEvent) -> bool {
     !typeset_tag_regex().is_match(&event.raw_text)
 }
 
+const MAX_TTML_TIMESTAMP_MS: i64 = 999 * 3_600_000 + 3_600_000;
+
+struct TtmlTimingRates {
+    frame_rate: f64,
+    tick_rate: f64,
+}
+
+fn normalize_cue_whitespace(text: &str) -> String {
+    static WS_RE: OnceLock<Regex> = OnceLock::new();
+    let ws = WS_RE.get_or_init(|| Regex::new(r"[ \t]+").unwrap());
+    text.lines()
+        .map(|l| ws.replace_all(l, " ").trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn push_unescaped_xml_ref(out: &mut String, name: &str) {
+    if name == "nbsp" {
+        out.push(' ');
+        return;
+    }
+    let entity = format!("&{name};");
+    if let Ok(decoded) = quick_xml::escape::unescape(&entity) {
+        out.push_str(&decoded);
+    }
+}
+
 fn parse_ttml(text: &str) -> Vec<SubtitleCue> {
-    static P_RE: OnceLock<Regex> = OnceLock::new();
-    static BR_RE: OnceLock<Regex> = OnceLock::new();
-    let frame_rate = parse_ttml_frame_rate(text);
-    let p_re = P_RE.get_or_init(|| Regex::new(r"(?is)<p\b([^>]*)>(.*?)</p>").unwrap());
-    let br_re = BR_RE.get_or_init(|| Regex::new(r"(?i)<br\s*/?>").unwrap());
+    use quick_xml::events::Event;
+
+    let mut reader = quick_xml::Reader::from_str(text);
+    reader.config_mut().trim_text(false);
+
+    let mut rates = TtmlTimingRates {
+        frame_rate: 30.0,
+        tick_rate: 1.0,
+    };
     let mut cues = Vec::new();
-    for cap in p_re.captures_iter(text) {
-        let attrs = &cap[1];
-        let Some(start_raw) =
-            attribute_value(attrs, "begin").or_else(|| attribute_value(attrs, "start"))
-        else {
-            continue;
+
+    struct ActiveParagraph {
+        start_raw: Option<String>,
+        end_raw: Option<String>,
+        dur_raw: Option<String>,
+        body: String,
+    }
+    let mut active_p: Option<ActiveParagraph> = None;
+    let mut span_depth = 0usize;
+
+    let finalize_p = |p: ActiveParagraph, rates: &TtmlTimingRates, cues: &mut Vec<SubtitleCue>| {
+        let Some(start_raw) = p.start_raw.as_deref() else {
+            return;
         };
-        let end_raw = attribute_value(attrs, "end");
-        let Some(start_ms) = parse_ttml_timestamp(&start_raw, frame_rate) else {
-            continue;
+        let Some(start_ms) = parse_ttml_timestamp(start_raw, rates) else {
+            return;
         };
-        let end_ms = end_raw
+        let end_ms = p
+            .end_raw
             .as_deref()
-            .and_then(|raw| parse_ttml_timestamp(raw, frame_rate))
+            .and_then(|raw| parse_ttml_timestamp(raw, rates))
             .or_else(|| {
-                attribute_value(attrs, "dur")
+                p.dur_raw
                     .as_deref()
-                    .and_then(|raw| parse_ttml_timestamp(raw, frame_rate))
+                    .and_then(|raw| parse_ttml_timestamp(raw, rates))
                     .map(|dur| start_ms.saturating_add(dur))
             })
-            .unwrap_or(start_ms + 3_000);
+            .unwrap_or_else(|| start_ms.saturating_add(3_000));
         if end_ms <= start_ms {
-            continue;
+            return;
         }
-        let body = normalize_cue_text(&br_re.replace_all(&cap[2], "\n"));
+        let body = normalize_cue_whitespace(&p.body);
         if !body.is_empty() {
             cues.push(SubtitleCue::new(start_ms, end_ms, body));
         }
+    };
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) => {
+                let local = e.local_name();
+                if local.as_ref().eq_ignore_ascii_case(b"tt") {
+                    let mut base_fr: Option<f64> = None;
+                    let mut fr_mult = 1.0f64;
+                    let mut tick_rate: Option<f64> = None;
+                    for attr in e.attributes().flatten() {
+                        let attr_local = attr.key.local_name();
+                        let Ok(val) = attr.decode_and_unescape_value(reader.decoder()) else {
+                            continue;
+                        };
+                        let trimmed = val.trim();
+                        if attr_local.as_ref().eq_ignore_ascii_case(b"frameRate") {
+                            base_fr = trimmed.parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0);
+                        } else if attr_local.as_ref().eq_ignore_ascii_case(b"frameRateMultiplier") {
+                            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                            if parts.len() == 2 {
+                                if let (Ok(n), Ok(d)) =
+                                    (parts[0].parse::<f64>(), parts[1].parse::<f64>())
+                                {
+                                    if n.is_finite() && d.is_finite() && n > 0.0 && d > 0.0 {
+                                        fr_mult = n / d;
+                                    }
+                                }
+                            }
+                        } else if attr_local.as_ref().eq_ignore_ascii_case(b"tickRate") {
+                            tick_rate = trimmed
+                                .parse::<f64>()
+                                .ok()
+                                .filter(|v| v.is_finite() && *v > 0.0);
+                        }
+                    }
+                    let effective_fr = base_fr
+                        .map(|fr| fr * fr_mult)
+                        .filter(|v| v.is_finite() && *v > 0.0);
+                    rates.frame_rate = effective_fr.unwrap_or(30.0);
+                    rates.tick_rate = tick_rate.or(effective_fr).unwrap_or(1.0);
+                } else if local.as_ref().eq_ignore_ascii_case(b"p") {
+                    let mut start_raw = None;
+                    let mut end_raw = None;
+                    let mut dur_raw = None;
+                    for attr in e.attributes().flatten() {
+                        let attr_local = attr.key.local_name();
+                        let Ok(val) = attr.decode_and_unescape_value(reader.decoder()) else {
+                            continue;
+                        };
+                        let trimmed = val.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        if attr_local.as_ref().eq_ignore_ascii_case(b"begin")
+                            || (start_raw.is_none()
+                                && attr_local.as_ref().eq_ignore_ascii_case(b"start"))
+                        {
+                            start_raw = Some(trimmed.to_string());
+                        } else if attr_local.as_ref().eq_ignore_ascii_case(b"end") {
+                            end_raw = Some(trimmed.to_string());
+                        } else if attr_local.as_ref().eq_ignore_ascii_case(b"dur") {
+                            dur_raw = Some(trimmed.to_string());
+                        }
+                    }
+                    active_p = Some(ActiveParagraph {
+                        start_raw,
+                        end_raw,
+                        dur_raw,
+                        body: String::new(),
+                    });
+                    span_depth = 0;
+                } else if active_p.is_some() {
+                    if local.as_ref().eq_ignore_ascii_case(b"br") {
+                        if let Some(ref mut p) = active_p {
+                            p.body.push('\n');
+                        }
+                    } else {
+                        span_depth += 1;
+                    }
+                }
+            }
+            Ok(Event::Empty(ref e)) => {
+                let local = e.local_name();
+                if active_p.is_some() && local.as_ref().eq_ignore_ascii_case(b"br") {
+                    if let Some(ref mut p) = active_p {
+                        p.body.push('\n');
+                    }
+                }
+            }
+            Ok(Event::Text(ref e)) => {
+                if let Some(ref mut p) = active_p {
+                    if let Ok(decoded) = e.decode() {
+                        let unescaped = quick_xml::escape::unescape(&decoded)
+                            .unwrap_or(std::borrow::Cow::Borrowed(decoded.as_ref()));
+                        p.body.push_str(&unescaped);
+                    }
+                }
+            }
+            Ok(Event::CData(ref e)) => {
+                if let Some(ref mut p) = active_p {
+                    if let Ok(decoded) = reader.decoder().decode(e.as_ref()) {
+                        p.body.push_str(&decoded);
+                    }
+                }
+            }
+            Ok(Event::GeneralRef(ref e)) => {
+                if let Some(ref mut p) = active_p {
+                    if let Ok(decoded) = reader.decoder().decode(e.as_ref()) {
+                        push_unescaped_xml_ref(&mut p.body, &decoded);
+                    }
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let local = e.local_name();
+                if local.as_ref().eq_ignore_ascii_case(b"p") {
+                    if let Some(p) = active_p.take() {
+                        finalize_p(p, &rates, &mut cues);
+                    }
+                    span_depth = 0;
+                } else if active_p.is_some() && !local.as_ref().eq_ignore_ascii_case(b"br") {
+                    span_depth = span_depth.saturating_sub(1);
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
     }
+
     cues.sort_by_key(|c| c.start_ms);
     cues
 }
 
-fn parse_ttml_frame_rate(text: &str) -> f64 {
-    static TT_RE: OnceLock<Regex> = OnceLock::new();
-    let tt_re = TT_RE.get_or_init(|| Regex::new(r"(?is)<tt\b([^>]*)>").unwrap());
-    let attrs = tt_re
-        .captures(text)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str())
-        .unwrap_or("");
-    let base = attribute_value(attrs, "ttp:frameRate")
-        .or_else(|| attribute_value(attrs, "frameRate"))
-        .and_then(|s| s.parse::<f64>().ok())
-        .unwrap_or(30.0);
-    let mult = attribute_value(attrs, "ttp:frameRateMultiplier")
-        .or_else(|| attribute_value(attrs, "frameRateMultiplier"))
-        .and_then(|raw| {
-            let parts: Vec<&str> = raw.split_whitespace().collect();
-            if parts.len() == 2 {
-                let n = parts[0].parse::<f64>().ok()?;
-                let d = parts[1].parse::<f64>().ok()?;
-                if d > 0.0 {
-                    Some(n / d)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .unwrap_or(1.0);
-    let effective = base * mult;
-    if effective.is_finite() && effective > 0.0 {
-        effective
-    } else {
-        30.0
-    }
-}
-
-fn parse_ttml_timestamp(raw: &str, frame_rate: f64) -> Option<i64> {
+fn parse_ttml_timestamp(raw: &str, rates: &TtmlTimingRates) -> Option<i64> {
     static UNIT_RE: OnceLock<Regex> = OnceLock::new();
     let cleaned = raw.trim().split_whitespace().next()?;
     if cleaned.is_empty() {
         return None;
     }
-    if let Some(ms) = parse_clock_with_frames(cleaned, frame_rate) {
+    if let Some(ms) = parse_clock_with_frames(cleaned, rates.frame_rate) {
         return Some(ms);
     }
     if let Some(ms) = parse_timestamp_ms(cleaned) {
         return Some(ms);
     }
     let unit_re =
-        UNIT_RE.get_or_init(|| Regex::new(r"(?i)^([0-9]+(?:\.[0-9]+)?)(ms|h|m|s)$").unwrap());
+        UNIT_RE.get_or_init(|| Regex::new(r"(?i)^([0-9]+(?:\.[0-9]+)?)(ms|h|m|s|t|f)$").unwrap());
     let cap = unit_re.captures(cleaned)?;
     let val = cap[1].parse::<f64>().ok()?;
-    let mult = match cap[2].to_ascii_lowercase().as_str() {
-        "h" => 3_600_000.0,
-        "m" => 60_000.0,
-        "s" => 1_000.0,
-        "ms" => 1.0,
+    if !val.is_finite() || val < 0.0 {
+        return None;
+    }
+    let ms_f64 = match cap[2].to_ascii_lowercase().as_str() {
+        "h" => val * 3_600_000.0,
+        "m" => val * 60_000.0,
+        "s" => val * 1_000.0,
+        "ms" => val,
+        "t" => {
+            if !rates.tick_rate.is_finite() || rates.tick_rate <= 0.0 {
+                return None;
+            }
+            val * 1_000.0 / rates.tick_rate
+        }
+        "f" => {
+            if !rates.frame_rate.is_finite() || rates.frame_rate <= 0.0 {
+                return None;
+            }
+            val * 1_000.0 / rates.frame_rate
+        }
         _ => return None,
     };
-    Some(((val * mult) as i64).max(0))
+    if !ms_f64.is_finite() || ms_f64 < 0.0 || ms_f64 > MAX_TTML_TIMESTAMP_MS as f64 {
+        return None;
+    }
+    Some(ms_f64.round() as i64)
 }
 
 fn parse_clock_with_frames(raw: &str, frame_rate: f64) -> Option<i64> {
@@ -1208,37 +1516,28 @@ fn parse_clock_with_frames(raw: &str, frame_rate: f64) -> Option<i64> {
     if parts.len() != 4 {
         return None;
     }
-    let hours: f64 = parts[0].parse().ok()?;
-    let minutes: f64 = parts[1].parse().ok()?;
-    let seconds: f64 = parts[2].parse().ok()?;
-    let frames: f64 = parts[3].parse().ok()?;
-    let ms = hours * 3_600_000.0 + minutes * 60_000.0 + seconds * 1_000.0 + frames * 1_000.0 / frame_rate;
-    Some((ms as i64).max(0))
-}
-
-fn attribute_value(attrs: &str, name: &str) -> Option<String> {
-    static ATTR_RE: OnceLock<Regex> = OnceLock::new();
-    let re = ATTR_RE.get_or_init(|| {
-        Regex::new(r#"(?:^|\s)([a-zA-Z0-9_:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap()
-    });
-    for cap in re.captures_iter(attrs) {
-        let Some(attr_name) = cap.get(1).map(|m| m.as_str()) else {
-            continue;
-        };
-        if attr_name.eq_ignore_ascii_case(name) {
-            let raw_val = cap
-                .get(2)
-                .or_else(|| cap.get(3))
-                .map(|m| m.as_str().trim())
-                .unwrap_or("");
-            return if raw_val.is_empty() {
-                None
-            } else {
-                Some(raw_val.to_string())
-            };
-        }
+    let hours: u64 = parts[0].parse().ok()?;
+    let minutes: u64 = parts[1].parse().ok()?;
+    let seconds: u64 = parts[2].parse().ok()?;
+    let frames: u64 = parts[3].parse().ok()?;
+    if hours > 999 || minutes >= 60 || seconds >= 60 || frames >= 10_000 {
+        return None;
     }
-    None
+    let frame_ms = ((frames as f64) * 1_000.0 / frame_rate).round();
+    if !frame_ms.is_finite() || frame_ms < 0.0 {
+        return None;
+    }
+    let base_ms = hours
+        .checked_mul(3_600)?
+        .checked_add(minutes.checked_mul(60)?)?
+        .checked_add(seconds)?
+        .checked_mul(1_000)?;
+    let total_ms = i64::try_from(base_ms).ok()?.checked_add(frame_ms as i64)?;
+    if !(0..=MAX_TTML_TIMESTAMP_MS).contains(&total_ms) {
+        None
+    } else {
+        Some(total_ms)
+    }
 }
 
 fn parse_start_end_time_ms(timing_line: &str) -> Option<(i64, i64)> {
@@ -1250,47 +1549,70 @@ fn parse_start_end_time_ms(timing_line: &str) -> Option<(i64, i64)> {
 
 pub(crate) fn parse_timestamp_ms(raw: &str) -> Option<i64> {
     let cap = timestamp_regex().captures(raw.trim())?;
-    let hours: i64 = cap.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+    let hours: i64 = match cap.get(1) {
+        Some(m) => m.as_str().parse().ok()?,
+        None => 0,
+    };
     let minutes: i64 = cap[2].parse().ok()?;
     let seconds: i64 = cap[3].parse().ok()?;
-    let millis = match cap.get(4).map(|m| m.as_str()) {
+    if !(0..=999).contains(&hours) || minutes < 0 || seconds < 0 {
+        return None;
+    }
+    let millis: i64 = match cap.get(4).map(|m| m.as_str()) {
         None | Some("") => 0,
         Some(frac) => {
             let mut digits: String = frac.chars().take(3).collect();
             while digits.len() < 3 {
                 digits.push('0');
             }
-            digits.parse().unwrap_or(0)
+            digits.parse().ok()?
         }
     };
-    Some(((hours * 3600 + minutes * 60 + seconds) * 1000) + millis)
+    let total_sec = hours
+        .checked_mul(3_600)?
+        .checked_add(minutes.checked_mul(60)?)?
+        .checked_add(seconds)?;
+    total_sec.checked_mul(1_000)?.checked_add(millis)
+}
+
+fn decode_numeric_entities(input: &str) -> String {
+    static NUM_ENT: OnceLock<Regex> = OnceLock::new();
+    let re = NUM_ENT.get_or_init(|| Regex::new(r"&#(?:x([0-9a-fA-F]+)|([0-9]+));").unwrap());
+    re.replace_all(input, |caps: &regex::Captures<'_>| {
+        let code = if let Some(hex) = caps.get(1) {
+            u32::from_str_radix(hex.as_str(), 16).ok()
+        } else if let Some(dec) = caps.get(2) {
+            dec.as_str().parse::<u32>().ok()
+        } else {
+            None
+        };
+        code.and_then(char::from_u32)
+            .map(|ch| ch.to_string())
+            .unwrap_or_else(|| caps[0].to_string())
+    })
+    .into_owned()
 }
 
 fn normalize_cue_text(text: &str) -> String {
     static VTT_TIME_TAG: OnceLock<Regex> = OnceLock::new();
     static HTML_TAG: OnceLock<Regex> = OnceLock::new();
-    static WS_RE: OnceLock<Regex> = OnceLock::new();
     let vtt_tag = VTT_TIME_TAG
         .get_or_init(|| Regex::new(r"<(?:[0-9]+:)?[0-9]{1,2}:[0-9]{2}(?:[.,][0-9]+)?>").unwrap());
     let html_tag =
-        HTML_TAG.get_or_init(|| Regex::new(r"</?[a-zA-Z0-9._-]+(?: [^>]*)?>").unwrap());
-    let ws = WS_RE.get_or_init(|| Regex::new(r"[ \t]+").unwrap());
+        HTML_TAG.get_or_init(|| Regex::new(r"</?[a-zA-Z0-9._:-]+(?:\s[^>]*)?/?>").unwrap());
 
     let no_vtt = vtt_tag.replace_all(text, "");
     let no_html = html_tag.replace_all(&no_vtt, "");
-    let unescaped = no_html
+    let decoded_num = decode_numeric_entities(&no_html);
+    let unescaped = decoded_num
         .replace("&nbsp;", " ")
-        .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
-        .replace("&quot;", "\"");
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&");
 
-    unescaped
-        .lines()
-        .map(|l| ws.replace_all(l, " ").trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
+    normalize_cue_whitespace(&unescaped)
 }
 
 #[cfg(test)]
@@ -1365,6 +1687,20 @@ mod tests {
             "مرحبا بكم في عالم السينما"
         );
 
+        // Windows-874 Thai without hint
+        let th_874 = WINDOWS_874.encode("สวัสดีครับ ยินดีต้อนรับ").0;
+        assert_eq!(
+            decode_subtitle_bytes(&th_874, None),
+            "สวัสดีครับ ยินดีต้อนรับ"
+        );
+
+        // GB18030 Simplified Chinese without hint
+        let zh_gb = GB18030.encode("你好世界，今天天气真好，我们去看电影吧").0;
+        assert_eq!(
+            decode_subtitle_bytes(&zh_gb, None),
+            "你好世界，今天天气真好，我们去看电影吧"
+        );
+
         // Windows-1250 Polish with distinctive letters ("Zażółć gęślą jaźń")
         let pl_1250 = WINDOWS_1250.encode("Zażółć gęślą jaźń").0;
         assert_eq!(decode_subtitle_bytes(&pl_1250, None), "Zażółć gęślą jaźń");
@@ -1401,5 +1737,75 @@ mod tests {
         assert_eq!(tcues.len(), 1);
         assert_eq!(tcues[0].start_ms, 1500);
         assert_eq!(tcues[0].end_ms, 3750);
+    }
+
+    #[test]
+    fn content_signatures_override_wrong_format_hint_and_overflow_timestamps_are_rejected() {
+        let ass = "[Script Info]\nScriptType: v4.00+\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Line 1\n";
+        let (fmt, cues) = parse_subtitles(ass, Some("https://cdn.example/sub.srt"), Some("srt"));
+        assert_eq!(fmt, SubtitleFormat::Ass);
+        assert_eq!(cues.len(), 1);
+
+        let vtt = "WEBVTT\n\n00:01.000 --> 00:03.000\nHello VTT\n";
+        let (vfmt, vcues) = parse_subtitles(vtt, Some("https://cdn.example/sub.srt"), Some("srt"));
+        assert_eq!(vfmt, SubtitleFormat::Vtt);
+        assert_eq!(vcues.len(), 1);
+
+        let ttml = "<tt><body><div><p begin='1s' end='2s'>Hello TTML</p></div></body></tt>";
+        let (tfmt, tcues) = parse_subtitles(ttml, Some("https://cdn.example/sub.srt"), Some("srt"));
+        assert_eq!(tfmt, SubtitleFormat::Ttml);
+        assert_eq!(tcues.len(), 1);
+
+        assert!(parse_timestamp_ms("9999999999999999:00:00,000").is_none());
+        assert!(parse_timestamp_ms("01:02:03,456").is_some());
+
+        // Cue count cap protects downstream DP alignment tables from huge crafted inputs.
+        let mut huge_srt = String::new();
+        for i in 0..25_500usize {
+            let s = i * 2;
+            huge_srt.push_str(&format!(
+                "{}\n{:02}:{:02}:{:02},000 --> {:02}:{:02}:{:02},500\nLine {}\n\n",
+                i + 1,
+                s / 3600,
+                (s / 60) % 60,
+                s % 60,
+                s / 3600,
+                (s / 60) % 60,
+                s % 60,
+                i
+            ));
+        }
+        let (_, capped) = parse_subtitles(&huge_srt, Some("huge.srt"), None);
+        assert_eq!(capped.len(), MAX_PARSED_CUES);
+    }
+
+    #[test]
+    fn parses_utf32_bom_adjacent_srt_vtt_metadata_arrows_and_ttml_entities_and_frames() {
+        let mut utf32le = vec![0xffu8, 0xfe, 0x00, 0x00];
+        for ch in "Hello UTF32".encode_utf16() {
+            utf32le.extend_from_slice(&(ch as u32).to_le_bytes());
+        }
+        assert_eq!(decode_subtitle_bytes(&utf32le, None), "Hello UTF32");
+
+        let adjacent_srt = "1\n00:00:01,000 --> 00:00:02,000\nFirst line\n2\n00:00:03,000 --> 00:00:04,000\nSecond line\n";
+        let (_, scues) = parse_subtitles(adjacent_srt, Some("adj.srt"), None);
+        assert_eq!(scues.len(), 2);
+        assert_eq!(scues[0].text, "First line");
+        assert_eq!(scues[1].text, "Second line");
+
+        let vtt = "WEBVTT\n\nSTYLE\n00:00:01.000 --> 00:00:02.000\n::cue { color: red; }\n\nNOTE comment with arrow\n00:00:03.000 --> 00:00:04.000\n\n00:00:10.000 --> 00:00:12.000\nReal cue\n";
+        let (vfmt, vcues) = parse_subtitles(vtt, Some("meta.vtt"), None);
+        assert_eq!(vfmt, SubtitleFormat::Vtt);
+        assert_eq!(vcues.len(), 1);
+        assert_eq!(vcues[0].text, "Real cue");
+
+        let ttml = r#"<tt ttp:frameRate="25"><body><div><p begin="25f" end="50f">It&apos;s&#39;s<br/><![CDATA[World]]></p></div></body></tt>"#;
+        let (tfmt, tcues) = parse_subtitles(ttml, Some("sub.ttml"), None);
+        assert_eq!(tfmt, SubtitleFormat::Ttml);
+        assert_eq!(tcues.len(), 1);
+        assert_eq!(tcues[0].start_ms, 1000);
+        assert_eq!(tcues[0].end_ms, 2000);
+        assert!(tcues[0].text.contains("It's's"));
+        assert!(tcues[0].text.contains("World"));
     }
 }

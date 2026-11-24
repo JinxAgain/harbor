@@ -1,15 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { TrackInfo } from "@/lib/player/bridge";
+import { isDesktopTauri } from "@/lib/platform";
 import type { AutoSyncMode } from "@/lib/settings/types";
 import { normalizeLang } from "@/lib/subtitles/language";
-import { subtitleTrackDownloadHeaders, type SubtitleDownloadAuth } from "@/lib/subtitles/provider-auth";
+import {
+  subtitleTrackDownloadHeaders,
+  type SubtitleDownloadAuth,
+} from "@/lib/subtitles/provider-auth";
 import type { SubtitleSelectionOrigin } from "@/lib/player/subtitle-selection";
 import type { SubResult } from "@/lib/subtitles/types";
 
-export type AutoSyncCandidateScope =
-  | "startup_search"
-  | "selected_then_search"
-  | "selected_only";
+export type AutoSyncCandidateScope = "startup_search" | "selected_then_search" | "selected_only";
 
 export type AutoSyncTrigger = "automatic" | "manual";
 
@@ -116,7 +117,9 @@ export function resolveAutoSyncScope(
  * Uniquely identifies an external subtitle track by source identity rather than language,
  * ensuring switching between two subtitles of the same language re-triggers auto-sync.
  */
-export function trackAutoSyncKey(track: Pick<TrackInfo, "id" | "url" | "originalUrl" | "externalFilename">): string {
+export function trackAutoSyncKey(
+  track: Pick<TrackInfo, "id" | "url" | "originalUrl" | "externalFilename">,
+): string {
   const source = track.originalUrl || track.url || track.externalFilename;
   if (source) return source.replace(/\\/g, "/");
   return `id:${track.id}`;
@@ -130,6 +133,7 @@ export function collectSameLanguageCandidates(
   context?: { season?: number; episode?: number },
 ): SubtitleCandidateInput[] {
   const targetLang = normalizeLang(selected.lang ?? "");
+  if (!targetLang) return [];
   const selectedUrls = new Set(
     [selected.originalUrl, selected.url, selected.externalFilename]
       .filter((v): v is string => typeof v === "string" && v.length > 0)
@@ -137,6 +141,7 @@ export function collectSameLanguageCandidates(
   );
   const out: SubtitleCandidateInput[] = [];
   const seenUrls = new Set<string>(selectedUrls);
+  const nativeTauri = isDesktopTauri();
 
   const pushCandidate = (cand: SubtitleCandidateInput) => {
     const normUrl = cand.url.replace(/\\/g, "/");
@@ -149,10 +154,11 @@ export function collectSameLanguageCandidates(
     if (out.length >= limit) break;
     if (!track.external) continue;
     const trackLang = normalizeLang(track.lang ?? "");
-    if (targetLang && trackLang !== targetLang) continue;
+    if (trackLang !== targetLang) continue;
     const url = track.originalUrl || track.url;
     if (!url || !/^https?:/i.test(url)) continue;
-    const providerDerived = track.providerDerived ?? Boolean(track.provider);
+    const providerDerived =
+      track.providerDerived ?? (Boolean(track.provider) && track.localTrusted !== true);
     pushCandidate({
       url,
       localPath: track.prepared && track.externalFilename ? track.externalFilename : undefined,
@@ -163,7 +169,11 @@ export function collectSameLanguageCandidates(
       filename: track.externalFilename,
       season: context?.season,
       episode: context?.episode,
-      headers: subtitleTrackDownloadHeaders(track.downloadAuth, url, providerDerived),
+      // On desktop Tauri, Rust resolves downloadAuth/localTrusted from typed fields so we do not
+      // pass internal X-Harbor-* policy markers over IPC.
+      headers: nativeTauri
+        ? undefined
+        : subtitleTrackDownloadHeaders(track.downloadAuth, url, providerDerived),
       localTrusted: track.localTrusted === true,
       downloadAuth: track.downloadAuth,
       subId: track.subId,
@@ -173,8 +183,9 @@ export function collectSameLanguageCandidates(
   for (const res of availableSubs) {
     if (out.length >= limit) break;
     const resLang = normalizeLang(res.lang ?? "");
-    if (targetLang && resLang !== targetLang) continue;
+    if (resLang !== targetLang) continue;
     if (!res.url || !/^https?:/i.test(res.url)) continue;
+    const providerDerived = res.localTrusted !== true;
     pushCandidate({
       url: res.url,
       format: res.format,
@@ -183,7 +194,9 @@ export function collectSameLanguageCandidates(
       release: res.release,
       season: context?.season,
       episode: context?.episode,
-      headers: subtitleTrackDownloadHeaders(res.downloadAuth, res.url, true),
+      headers: nativeTauri
+        ? undefined
+        : subtitleTrackDownloadHeaders(res.downloadAuth, res.url, providerDerived),
       localTrusted: res.localTrusted === true,
       downloadAuth: res.downloadAuth,
       subId: res.id,
@@ -202,4 +215,3 @@ export function formatSyncShift(offsetMs: number): string {
   const sec = absMs / 1000;
   return `${sign}${sec >= 10 ? sec.toFixed(0) : sec.toFixed(1)}s`;
 }
-

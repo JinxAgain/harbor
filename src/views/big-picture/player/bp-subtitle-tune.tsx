@@ -43,7 +43,7 @@ export function BpSubtitleSync({
       case "no-fit":
         return t("Could not auto-sync subtitles");
       case "error":
-        return autoSync.errorMessage || t("Auto-sync failed");
+        return autoSync.errorMessage ? t(autoSync.errorMessage) : t("Auto-sync failed");
       default:
         return null;
     }
@@ -57,7 +57,9 @@ export function BpSubtitleSync({
           label={busy ? t("Cancel sync") : synced ? t("Re-sync") : t("Auto sync")}
           on={busy || synced}
           seed
-          icon={busy ? <Loader2 size={19} className={SPIN} /> : <Wand2 size={19} strokeWidth={2.2} />}
+          icon={
+            busy ? <Loader2 size={19} className={SPIN} /> : <Wand2 size={19} strokeWidth={2.2} />
+          }
           onPress={() => {
             if (!canSync || !autoSync) return;
             if (busy) autoSync.stop();

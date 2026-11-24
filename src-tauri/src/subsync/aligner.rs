@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::subsync::cue_parser::SubtitleCue;
 
 const MIN_CUES: usize = 4;
+const MAX_ALIGNMENT_CUES: usize = 25_000;
 const BAND_RADIUS_CUES: usize = 28;
 
 const SKIP_REFERENCE_COST: f64 = 1.35;
@@ -48,7 +49,7 @@ const ACTIVITY_MIN_SCALE: f64 = 0.94;
 const ACTIVITY_MAX_SCALE: f64 = 1.06;
 const ACTIVITY_SCALE_DEDUP: f64 = 0.00035;
 
-const DELAY_ONLY_SCALE_TOLERANCE: f64 = 0.0015;
+const DELAY_ONLY_SCALE_TOLERANCE: f64 = 0.0005;
 const DELAY_ONLY_MIN_SCORE: f64 = 0.78;
 const DELAY_ONLY_MIN_MARGIN: f64 = 0.02;
 const DELAY_ONLY_MIN_SEGMENT_SCORE: f64 = 0.68;
@@ -336,7 +337,7 @@ pub fn retime_with_discovery(
     }
 
     let delay_only = if (alignment.scale - 1.0).abs() <= DELAY_ONLY_SCALE_TOLERANCE {
-        if let Some(pre) = precomputed_delay_only {
+        let candidate = if let Some(pre) = precomputed_delay_only {
             Some(pre.clone())
         } else {
             find_delay_only_alignment_prepared(
@@ -348,7 +349,8 @@ pub fn retime_with_discovery(
                 !allow_ambiguous_delay_margin,
                 cancel,
             )
-        }
+        };
+        candidate.filter(|d| (alignment.scale - 1.0).abs() <= 1e-6 || d.score >= alignment.score - 0.01)
     } else {
         None
     };
@@ -371,13 +373,48 @@ pub fn retime_with_discovery(
         .map(|d| d.margin)
         .unwrap_or(alignment.margin);
 
-    let seeded = retime_with_seed(
+    let Some(seeded) = retime_with_seed(
         reference,
         target,
         candidate_scale,
         candidate_intercept_ms,
         cancel,
-    )?;
+    ) else {
+        if is_cancelled(cancel) {
+            return None;
+        }
+        return Some(TimelineRetimeResult {
+            cues: Vec::new(),
+            groups: Vec::new(),
+            target_coverage: 0.0,
+            reference_coverage: 0.0,
+            skipped_target_cues: target.len(),
+            skipped_reference_cues: reference.len(),
+            longest_target_skip_run: target.len(),
+            average_group_cost: 0.0,
+            one_to_one_groups: 0,
+            one_to_two_groups: 0,
+            two_to_one_groups: 0,
+            one_to_three_groups: 0,
+            three_to_one_groups: 0,
+            two_to_two_groups: 0,
+            confident: false,
+            alignment_source: if delay_only.is_some() {
+                "delay-only-validated"
+            } else {
+                "activity-correlation"
+            },
+            alignment_scale: candidate_scale,
+            alignment_intercept_ms: candidate_intercept_ms,
+            activity_score: candidate_score,
+            activity_margin: candidate_margin,
+            coverage_segments_passed: 0,
+            simple_group_ratio: 0.0,
+            localized_mismatch_ignored: false,
+            median_group_residual_ms: 0.0,
+            reject_reason: Some("dp-no-path".into()),
+        });
+    };
 
     let allow_ambiguous_final = allow_ambiguous_delay_margin
         || delay_only
@@ -530,7 +567,7 @@ fn build_uniform_delay_cues(target: &[SubtitleCue], offset_ms: i64) -> Vec<Retim
         .iter()
         .map(|cue| {
             let start = cue.start_ms.saturating_add(offset_ms).max(0);
-            let end = cue.end_ms.saturating_add(offset_ms).max(start + 1);
+            let end = cue.end_ms.saturating_add(offset_ms).max(start.saturating_add(1));
             RetimedCue {
                 original_start_ms: cue.start_ms,
                 original_end_ms: cue.end_ms,
@@ -842,12 +879,17 @@ pub fn find_outlier_references(
             if is_cancelled(cancel) {
                 return HashSet::new();
             }
-            let r = &sources[first][0];
-            let t = &sources[second][0];
+            let first_item = &sources[first][0];
+            let second_item = &sources[second][0];
+            let (dense, sparse) = if first_item.2 >= second_item.2 {
+                (first_item, second_item)
+            } else {
+                (second_item, first_item)
+            };
             let agree = find_delay_only_alignment_prepared(
-                r.1,
-                t.1,
-                t.2,
+                dense.1,
+                sparse.1,
+                sparse.2,
                 false,
                 None,
                 false,
@@ -922,18 +964,23 @@ pub fn find_sampled_delay_alignment(
 
     let mut histogram: HashMap<i64, usize> = HashMap::new();
     for &ref_ms in &ref_starts {
-        let min_t = ref_ms - MAX_OFFSET_MS;
-        let max_t = ref_ms + MAX_OFFSET_MS;
+        let min_t = ref_ms.saturating_sub(MAX_OFFSET_MS);
+        let max_t = ref_ms.saturating_add(MAX_OFFSET_MS);
         let mut idx = tgt_starts.partition_point(|&v| v < min_t);
         while idx < tgt_starts.len() && tgt_starts[idx] <= max_t {
-            let bin = (((ref_ms - tgt_starts[idx]) as f64) / (HIST_BIN_MS as f64)).round() as i64;
+            let bin = (((ref_ms.saturating_sub(tgt_starts[idx])) as f64) / (HIST_BIN_MS as f64))
+                .round() as i64;
             *histogram.entry(bin).or_insert(0) += 1;
             idx += 1;
         }
     }
 
     let mut hist_entries: Vec<(i64, usize)> = histogram.into_iter().collect();
-    hist_entries.sort_by(|a, b| b.1.cmp(&a.1));
+    hist_entries.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| a.0.abs().cmp(&b.0.abs()))
+            .then_with(|| a.0.cmp(&b.0))
+    });
 
     let mut seeds: Vec<i64> = Vec::new();
     for (bin, _) in hist_entries {
@@ -953,14 +1000,14 @@ pub fn find_sampled_delay_alignment(
         let mut matches = Vec::new();
         let mut min_tgt_idx = 0usize;
         for &r_ms in &ref_starts {
-            let expected = r_ms - offset_ms;
+            let expected = r_ms.saturating_sub(offset_ms);
             let mut idx = tgt_starts
-                .partition_point(|&v| v < expected - MATCH_TOL_MS)
+                .partition_point(|&v| v < expected.saturating_sub(MATCH_TOL_MS))
                 .max(min_tgt_idx);
             let mut best_idx = None;
             let mut best_res = i64::MAX;
-            while idx < tgt_starts.len() && tgt_starts[idx] <= expected + MATCH_TOL_MS {
-                let res = ((tgt_starts[idx] + offset_ms) - r_ms).abs();
+            while idx < tgt_starts.len() && tgt_starts[idx] <= expected.saturating_add(MATCH_TOL_MS) {
+                let res = tgt_starts[idx].saturating_add(offset_ms).abs_diff(r_ms) as i64;
                 if res < best_res {
                     best_res = res;
                     best_idx = Some(idx);
@@ -1048,7 +1095,11 @@ fn discover_activity_alignment(
     precomputed_unit_evidence: Option<&DelayOnlySearchEvidence>,
     cancel: &AtomicBool,
 ) -> Option<ActivityAlignment> {
-    if reference.len() < MIN_CUES || target.len() < MIN_CUES {
+    if reference.len() < MIN_CUES
+        || target.len() < MIN_CUES
+        || reference.len() > MAX_ALIGNMENT_CUES
+        || target.len() > MAX_ALIGNMENT_CUES
+    {
         return None;
     }
 
@@ -1116,21 +1167,28 @@ fn discover_activity_alignment(
     let best_idx = coarse_candidates
         .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.score.total_cmp(&b.score))
+        .max_by(|(_, a), (_, b)| {
+            a.score
+                .total_cmp(&b.score)
+                .then_with(|| (b.scale - 1.0).abs().total_cmp(&(a.scale - 1.0).abs()))
+                .then_with(|| b.intercept_ms.abs().cmp(&a.intercept_ms.abs()))
+        })
         .map(|(idx, _)| idx)?;
     let coarse_best = coarse_candidates[best_idx];
 
+    let target_start_ms = target.iter().map(|c| c.start_ms).min().unwrap_or(0) as f64;
     let target_end_ms = target.iter().map(|c| c.end_ms).max().unwrap_or(0) as f64;
     let second_score = coarse_candidates
         .iter()
         .enumerate()
         .filter(|&(idx, cand)| {
-            idx != best_idx && is_distinct_activity_transform(coarse_best, *cand, target_end_ms)
+            idx != best_idx
+                && is_distinct_activity_transform(coarse_best, *cand, target_start_ms, target_end_ms)
         })
         .map(|(_, cand)| cand.score)
         .max_by(|a, b| a.total_cmp(b))
         .unwrap_or(0.0);
-    let margin = coarse_best.score - second_score;
+    let mut margin = coarse_best.score - second_score;
 
     let owned_fine;
     let tgt_fine = if (coarse_best.scale - 1.0).abs() == 0.0 {
@@ -1151,22 +1209,69 @@ fn discover_activity_alignment(
         plateau_end,
         cancel,
     );
-    let best = fine_best.unwrap_or(coarse_best);
+    let mut best = fine_best.unwrap_or(coarse_best);
 
-    let unit_seed = if let Some(ev) = precomputed_unit_evidence {
+    let mut unit_seed = if let Some(ev) = precomputed_unit_evidence {
         let mut s = ev.seed;
         if (coarse_best.scale - 1.0).abs() != 0.0 {
             s.fine = None;
         }
         Some(s)
     } else {
-        build_delay_only_search_seed(&unit_scale_candidates).map(|mut s| {
-            if (coarse_best.scale - 1.0).abs() == 0.0 {
-                s.fine = fine_best;
-            }
-            s
-        })
+        build_delay_only_search_seed(&unit_scale_candidates)
     };
+
+    if let Some(ref mut s) = unit_seed {
+        if (coarse_best.scale - 1.0).abs() > 0.0 && (coarse_best.scale - 1.0).abs() <= 0.002 {
+            let unit_fine = fine_activity_best(
+                &reference_activity.fine,
+                &target_activity.fine,
+                &reference_activity.starts,
+                &target_activity.starts,
+                1.0,
+                s.plateau_start_ms,
+                s.plateau_end_ms,
+                cancel,
+            );
+            if let Some(uf) = unit_fine {
+                let unit_onsets = onset_agreement(
+                    &reference_activity.starts,
+                    &target_activity.starts,
+                    uf.scale,
+                    uf.intercept_ms,
+                );
+                let best_onsets = onset_agreement(
+                    &reference_activity.starts,
+                    &target_activity.starts,
+                    best.scale,
+                    best.intercept_ms,
+                );
+                if uf.score > best.score + ACTIVITY_FINE_TIE_SCORE_EPSILON
+                    || ((best.score - uf.score).abs() <= ACTIVITY_FINE_TIE_SCORE_EPSILON
+                        && unit_onsets >= best_onsets)
+                {
+                    best = uf;
+                    s.fine = Some(uf);
+                    let second_unit_score = coarse_candidates
+                        .iter()
+                        .filter(|&&cand| {
+                            is_distinct_activity_transform(
+                                s.coarse,
+                                cand,
+                                target_start_ms,
+                                target_end_ms,
+                            )
+                        })
+                        .map(|cand| cand.score)
+                        .max_by(|a, b| a.total_cmp(b))
+                        .unwrap_or(0.0);
+                    margin = s.coarse.score - second_unit_score;
+                }
+            }
+        } else if (best.scale - 1.0).abs() == 0.0 {
+            s.fine = s.fine.or(fine_best);
+        }
+    }
 
     Some(ActivityAlignment {
         scale: best.scale,
@@ -1265,17 +1370,15 @@ fn onset_agreement(
     let mut cursor = 0usize;
     for &start in target_starts {
         let mapped = ((start as f64) * scale).round() as i64 + intercept_ms;
-        while cursor < reference_starts.len() && reference_starts[cursor] < mapped - tol {
+        while cursor < reference_starts.len() && reference_starts[cursor] < mapped {
             cursor += 1;
         }
-        if cursor == reference_starts.len() {
-            break;
-        }
         let mut nearest = i64::MAX;
-        let mut idx = cursor;
-        while idx < reference_starts.len() && reference_starts[idx] <= mapped + tol {
-            nearest = nearest.min((reference_starts[idx] - mapped).abs());
-            idx += 1;
+        if let Some(&right) = reference_starts.get(cursor) {
+            nearest = nearest.min(right.saturating_sub(mapped));
+        }
+        if let Some(&left) = cursor.checked_sub(1).and_then(|p| reference_starts.get(p)) {
+            nearest = nearest.min(mapped.saturating_sub(left));
         }
         if nearest <= tol {
             agreement += ((tol - nearest) as f64) / (tol as f64);
@@ -1325,16 +1428,19 @@ fn build_activity_timeline(
         let safe_start = cue.start_ms.max(0);
         let safe_end = cue
             .end_ms
-            .max(safe_start + 1)
-            .min(safe_start + ACTIVITY_MAX_CUE_DURATION_MS);
+            .max(safe_start.saturating_add(1))
+            .min(safe_start.saturating_add(ACTIVITY_MAX_CUE_DURATION_MS));
         let start = ((safe_start as f64) * scale).round() as i64;
         let start = start.max(0);
-        let end = (((safe_end as f64) * scale).round() as i64).max(start + 1);
+        let end = (((safe_end as f64) * scale).round() as i64).max(start.saturating_add(1));
         if end > ACTIVITY_MAX_TIMELINE_MS {
-            return None;
+            continue;
         }
         scaled.push((start, end));
         max_end_ms = max_end_ms.max(end);
+    }
+    if scaled.len() < MIN_CUES {
+        return None;
     }
 
     let bin_count = (((max_end_ms + 1) as f64) / (bin_ms as f64)).ceil() as usize;
@@ -1500,7 +1606,11 @@ fn target_activity_coverage_at_offset_segment(
     let seg_end = if segment == 2 {
         target.last_active
     } else {
-        target.first_active + active_span * (segment + 1) / 3 - 1
+        let seg_end_excl = target.first_active + active_span * (segment + 1) / 3;
+        if seg_end_excl <= seg_start {
+            return None;
+        }
+        seg_end_excl - 1
     };
     if seg_end < seg_start {
         return None;
@@ -1529,7 +1639,11 @@ fn score_activity_offset_segment(
     let seg_end = if segment == 2 {
         target.last_active
     } else {
-        target.first_active + active_span * (segment + 1) / 3 - 1
+        let seg_end_excl = target.first_active + active_span * (segment + 1) / 3;
+        if seg_end_excl <= seg_start {
+            return None;
+        }
+        seg_end_excl - 1
     };
     if seg_end < seg_start {
         return None;
@@ -1572,19 +1686,15 @@ fn activity_scale_candidates(reference: &[SubtitleCue], target: &[SubtitleCue]) 
         - target.first().map(|c| c.start_ms).unwrap_or(0);
     if ref_span > 0 && tgt_span > 0 {
         let ratio = (ref_span as f64) / (tgt_span as f64);
-        if (ACTIVITY_MIN_SCALE..=ACTIVITY_MAX_SCALE).contains(&ratio) {
+        if ratio.is_finite()
+            && (ACTIVITY_MIN_SCALE..=ACTIVITY_MAX_SCALE).contains(&ratio)
+            && candidates.iter().all(|&u| (u - ratio).abs() >= ACTIVITY_SCALE_DEDUP)
+        {
             candidates.push(ratio);
         }
     }
-    candidates.retain(|s| s.is_finite() && (ACTIVITY_MIN_SCALE..=ACTIVITY_MAX_SCALE).contains(s));
     candidates.sort_by(|a, b| a.total_cmp(b));
-    let mut unique: Vec<f64> = Vec::with_capacity(candidates.len());
-    for c in candidates {
-        if unique.iter().all(|&u| (u - c).abs() >= ACTIVITY_SCALE_DEDUP) {
-            unique.push(c);
-        }
-    }
-    unique
+    candidates
 }
 
 fn coarse_offset_range(reference: &ActivityTimeline, target: &ActivityTimeline) -> (i32, i32) {
@@ -1602,9 +1712,12 @@ fn coarse_offset_range(reference: &ActivityTimeline, target: &ActivityTimeline) 
 fn is_distinct_activity_transform(
     first: ActivityCandidate,
     second: ActivityCandidate,
+    target_start_ms: f64,
     target_end_ms: f64,
 ) -> bool {
-    let start_diff = (first.intercept_ms - second.intercept_ms).abs() as f64;
+    let start_diff = (target_start_ms * first.scale + first.intercept_ms as f64
+        - (target_start_ms * second.scale + second.intercept_ms as f64))
+        .abs();
     let end_diff = (target_end_ms * first.scale + first.intercept_ms as f64
         - (target_end_ms * second.scale + second.intercept_ms as f64))
         .abs();
@@ -1651,7 +1764,15 @@ impl BandedDpRows {
             } else {
                 centers[tgt_idx].saturating_sub(BAND_RADIUS_CUES)
             };
-            let end = (centers[tgt_idx] + BAND_RADIUS_CUES).min(reference_size);
+            // Extend each row at least up to the next row's center so SkipReference bridges >58-cue gaps.
+            let next_center = if tgt_idx < target_size {
+                centers[tgt_idx + 1]
+            } else {
+                centers[tgt_idx]
+            };
+            let end = (centers[tgt_idx] + BAND_RADIUS_CUES)
+                .max(next_center)
+                .min(reference_size);
             row_starts[tgt_idx] = start;
             row_ends[tgt_idx] = end;
             row_offsets[tgt_idx] = total_cells;
@@ -1743,7 +1864,11 @@ fn retime_with_seed(
     coarse_intercept_ms: f64,
     cancel: &AtomicBool,
 ) -> Option<TimelineRetimeResult> {
-    if reference.len() < MIN_CUES || target.len() < MIN_CUES {
+    if reference.len() < MIN_CUES
+        || target.len() < MIN_CUES
+        || reference.len() > MAX_ALIGNMENT_CUES
+        || target.len() > MAX_ALIGNMENT_CUES
+    {
         return None;
     }
     if !coarse_scale.is_finite() || !(0.85..=1.15).contains(&coarse_scale) {
@@ -1799,7 +1924,7 @@ fn retime_with_seed(
         if min_r == usize::MAX {
             continue;
         }
-        let row_max = ref_len.min(centers[tgt_idx] + BAND_RADIUS_CUES);
+        let row_max = rows.row_ends[tgt_idx];
         let mut ref_idx = min_r;
         while ref_idx <= row_max {
             let Some(cell_idx) = rows.index_of(tgt_idx, ref_idx) else {
@@ -1828,7 +1953,7 @@ fn retime_with_seed(
                     0.0,
                 );
             }
-            if tgt_idx < tgt_len && is_within_band(ref_idx, tgt_idx + 1, &centers, ref_len) {
+            if tgt_idx < tgt_len && rows.index_of(tgt_idx + 1, ref_idx).is_some() {
                 relax(
                     &mut rows,
                     &mut final_row_costs,
@@ -1851,7 +1976,7 @@ fn retime_with_seed(
                 if next_ref > ref_len || next_tgt > tgt_len {
                     continue;
                 }
-                if !is_within_band(next_ref, next_tgt, &centers, ref_len) {
+                if rows.index_of(next_tgt, next_ref).is_none() {
                     continue;
                 }
                 let g_cost = group_cost(
@@ -2134,23 +2259,6 @@ fn backtrack(
 }
 
 #[inline]
-fn is_within_band(
-    ref_idx: usize,
-    tgt_idx: usize,
-    centers: &[usize],
-    ref_size: usize,
-) -> bool {
-    if ref_idx > ref_size {
-        return false;
-    }
-    if tgt_idx == 0 {
-        return true;
-    }
-    let center = centers[tgt_idx.min(centers.len() - 1)];
-    ref_idx.abs_diff(center) <= BAND_RADIUS_CUES
-}
-
-#[inline]
 fn lower_bound_reference(reference: &[SubtitleCue], time_ms: i64) -> usize {
     reference.partition_point(|c| c.start_ms < time_ms)
 }
@@ -2265,7 +2373,7 @@ fn coverage_segments_passed(result: &TimelineRetimeResult, target_size: usize) -
         } else {
             costs[seg].iter().sum::<f64>() / (costs[seg].len() as f64)
         };
-        let required_groups = COVERAGE_SEGMENT_MIN_GROUPS.min(len);
+        let required_groups = ((len * 2) / 3).max(2).min(COVERAGE_SEGMENT_MIN_GROUPS).min(len);
         if coverage >= COVERAGE_SEGMENT_MIN_COVERAGE
             && avg_cost <= COVERAGE_SEGMENT_MAX_AVERAGE_COST
             && costs[seg].len() >= required_groups
@@ -2711,6 +2819,39 @@ mod tests {
             &cancel,
         )
         .is_none());
+    }
+
+    #[test]
+    fn skips_stray_eight_hour_cue_and_detects_first_position_outlier_symmetrically() {
+        let cancel = AtomicBool::new(false);
+        let mut reference = make_dialogue_cues(65, 0, 1.0);
+        let target = make_dialogue_cues(65, 1_500, 1.0);
+        reference.push(SubtitleCue::new(
+            9 * 3_600_000,
+            9 * 3_600_000 + 2_000,
+            "Corrupt outro watermark".into(),
+        ));
+        let res = retime_with_discovery(
+            &reference, &target, false, None, None, None, None, true, &cancel,
+        )
+        .expect("result with >8h outlier skipped");
+        assert!(res.confident, "stray >8h cue must not abort valid track");
+
+        let ref_a = make_dialogue_cues(70, 0, 1.0);
+        let ref_b = make_dialogue_cues(70, 300, 1.0);
+        let ref_bad = make_dialogue_cues(70, 8_500, 1.0);
+        let act_a = prepare_unit_activity(&ref_a).unwrap();
+        let act_b = prepare_unit_activity(&ref_b).unwrap();
+        let act_bad = prepare_unit_activity(&ref_bad).unwrap();
+        let refs = vec![
+            ("bad".to_string(), &act_bad, ref_bad.len()),
+            ("a".to_string(), &act_a, ref_a.len()),
+            ("b".to_string(), &act_b, ref_b.len()),
+        ];
+        let outliers = find_outlier_references(&refs, &cancel);
+        assert!(outliers.contains("bad"));
+        assert!(!outliers.contains("a"));
+        assert!(!outliers.contains("b"));
     }
 }
 

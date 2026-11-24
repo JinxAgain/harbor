@@ -139,8 +139,6 @@ const settingsFill: Record<string, string> = {
   "For donating to a charity.": "Pour un don à une association caritative.",
   "For giving more than $100 to charity.":
     "Pour un don de plus de 100 $ à une association caritative.",
-  "For the hardest files and the Try again button, Harbor transcribes a little speech on your device and lines the subtitle up to the actual words. Needs a build with the asr-whisper feature and downloads a small model the first time you use it.":
-    "Pour les fichiers les plus difficiles et le bouton Réessayer, Harbor transcrit un court extrait de dialogue sur votre appareil et synchronise les sous-titres avec les mots réellement prononcés. Nécessite une version compilée avec la fonctionnalité asr-whisper et télécharge un petit modèle lors de la première utilisation.",
   "Frost the top bar on scroll": "Flouter la barre supérieure lors du défilement",
   "Fullscreen clock": "Horloge en plein écran",
   "Funds research into less toxic, more targeted treatments for childhood cancer.":

@@ -31,8 +31,6 @@ const settingsFill: Record<string, string> = {
   "Keeps watching through playback and gently re-nudges the timing if the subtitle slips out of sync partway through.":
     "再生中も監視を続け、途中で字幕の同期がずれた場合はタイミングを少しずつ再調整します。",
   "Smart resync with speech recognition": "音声認識によるスマート再同期",
-  "For the hardest files and the Try again button, Harbor transcribes a little speech on your device and lines the subtitle up to the actual words. Needs a build with the asr-whisper feature and downloads a small model the first time you use it.":
-    "特に難しいファイルや「もう一度試す」ボタンでは、Harborがデバイス上で短い音声を文字起こしし、実際の発話に字幕を合わせます。asr-whisper機能を含むビルドが必要で、初回使用時に小さなモデルをダウンロードします。",
   "Community sync": "コミュニティ同期",
   "A good correction only has to be found once. Harbor can share verified fixes so the next person with the same file and subtitle gets an instant result. Records are keyed by salted fingerprints, never your files or anything personal.":
     "適切な補正は一度見つけるだけで十分です。Harborは検証済みの補正を共有できるため、次に同じファイルと字幕を使う人はすぐに結果を得られます。記録にはソルト付きフィンガープリントが使われ、ファイルや個人情報は一切使われません。",

@@ -6,10 +6,9 @@ import type { Settings } from "../src/lib/settings/types.ts";
 import { applySubStyle, resetSubStyleCache } from "../src/lib/player/sub-style.ts";
 import {
   assNormalizeCacheKey,
+  assNormalizeTrackOrigin,
   computeAssBaseFactor,
   assScaleFromFactor,
-  parseAssStyles,
-  dominantDialogueStyle,
 } from "../src/lib/player/ass-header.ts";
 import { isAssTrack } from "../src/lib/player/sub-format.ts";
 import type { TrackInfo } from "../src/lib/player/bridge.ts";
@@ -444,4 +443,60 @@ test("assNormalizeCacheKey distinguishes replaced external tracks even when mpv 
     external: false,
   });
   assert.equal(embeddedKey, "file:///movie.mkv|1|0|");
+});
+
+test("assNormalizeTrackOrigin groups in-place auto-sync replacements while isolating distinct ASS tracks", async () => {
+  const { readFileSync } = await import("node:fs");
+  assert.equal(assNormalizeTrackOrigin(null), "");
+
+  const beforeSyncOrigin = assNormalizeTrackOrigin({
+    id: "3",
+    external: true,
+    url: "https://subs.example/sub.ass",
+    originalUrl: "https://subs.example/sub.ass",
+    externalFilename: "C:\\temp\\prepared_1.ass",
+  });
+  const afterSyncOrigin = assNormalizeTrackOrigin({
+    id: "4",
+    external: true,
+    url: "https://subs.example/sub.ass",
+    originalUrl: "https://subs.example/sub.ass",
+    externalFilename: "C:/temp/harbor-subs/prepared/autosync_1234.ass",
+  });
+  const differentAltOrigin = assNormalizeTrackOrigin({
+    id: "5",
+    external: true,
+    url: "https://subs.example/other-release.ass",
+    originalUrl: "https://subs.example/other-release.ass",
+    externalFilename: "C:/temp/harbor-subs/prepared/autosync_5678.ass",
+  });
+  const embeddedA = assNormalizeTrackOrigin({ id: "1", external: false });
+  const embeddedB = assNormalizeTrackOrigin({ id: "2", external: false });
+
+  assert.equal(beforeSyncOrigin, afterSyncOrigin);
+  assert.notEqual(beforeSyncOrigin, differentAltOrigin);
+  assert.notEqual(embeddedA, embeddedB);
+  assert.notEqual(beforeSyncOrigin, embeddedA);
+
+  const hookSrc = readFileSync(
+    new URL("../src/views/player/hooks/use-ass-normalize.ts", import.meta.url),
+    "utf8",
+  );
+  // External ASS fetch must use safeFetchBytes with subtitleTrackDownloadHeaders, never raw stream headers.
+  assert.ok(hookSrc.includes("safeFetchBytes("));
+  assert.ok(hookSrc.includes("subtitleTrackDownloadHeaders("));
+  assert.ok(hookSrc.includes("if (text != null) {"));
+  assert.ok(!hookSrc.includes('safeFetch(readable, { method: "GET", headers })'));
+
+  const playerMediaSrc = readFileSync(
+    new URL("../src/views/player/hooks/use-player-media.ts", import.meta.url),
+    "utf8",
+  );
+  assert.ok(
+    playerMediaSrc
+      .replace(/\s+/g, " ")
+      .includes(
+        'enabled: engine === "mpv" && settings.subAssNormalizeSize && assNativeActive && !subAssOverridden,',
+      ),
+  );
 });

@@ -503,7 +503,6 @@ export type Settings = {
    */
   bigPictureOverscan: number | null;
   playerHdrStage: "auto" | "off" | "always";
-  opensubtitlesApiKey: string;
   theIntroDbKey: string;
   jimakuToken: string;
   subdlApiKey: string;

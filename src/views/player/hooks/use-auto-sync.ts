@@ -55,10 +55,12 @@ export type AutoSyncHandle = {
   withinTolerance: boolean;
   canRevert: boolean;
   errorMessage: string | null;
+  errorAction?: "run" | "revert";
   run: () => void;
   stop: () => void;
   revert: () => void;
   dismiss: () => void;
+  suspendForManualTiming?: () => void;
 };
 
 function isSyncedTrack(t: { autoSynced?: boolean } | null | undefined): boolean {
@@ -102,6 +104,7 @@ export function useAutoSync(params: {
   const [withinTolerance, setWithinTolerance] = useState(false);
   const [canRevert, setCanRevert] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorAction, setErrorAction] = useState<"run" | "revert">("run");
 
   const prefetchedUrlRef = useRef<string | null>(null);
   const attemptedRef = useRef<{ mediaKey: string; keys: Set<string> }>({
@@ -115,6 +118,7 @@ export function useAutoSync(params: {
   const appliedRef = useRef<AppliedAutoSyncState>({ ...EMPTY_APPLIED_STATE });
   const activeRunIdRef = useRef<string | null>(null);
   const activeDisposeRef = useRef<(() => void) | null>(null);
+  const revertTokenRef = useRef(0);
   const statusScopeRef = useRef<AutoSyncScope | null>(null);
   const committingScopeRef = useRef<AutoSyncScope | null>(null);
   const awaitingCommitRef = useRef<{
@@ -164,6 +168,7 @@ export function useAutoSync(params: {
         (error) => {
           dwarn("[auto-sync] subtitle FPS reset failed", error);
           if (!cancelled?.current) {
+            setErrorAction("run");
             setErrorMessage(error instanceof Error ? error.message : String(error));
             setStatus("error");
           }
@@ -195,6 +200,7 @@ export function useAutoSync(params: {
   // Unmount cleanup cancels any active backend auto-sync task.
   useEffect(
     () => () => {
+      revertTokenRef.current += 1;
       activeDisposeRef.current?.();
       activeDisposeRef.current = null;
       committingScopeRef.current = null;
@@ -205,6 +211,7 @@ export function useAutoSync(params: {
 
   // Reset per-media caches & state whenever mediaKey changes.
   useEffect(() => {
+    revertTokenRef.current += 1;
     activeDisposeRef.current?.();
     activeDisposeRef.current = null;
     committingScopeRef.current = null;
@@ -219,6 +226,7 @@ export function useAutoSync(params: {
     setWithinTolerance(false);
     setCanRevert(false);
     setErrorMessage(null);
+    setErrorAction("run");
   }, [mediaKey]);
 
   // Cancel in-flight automatic analysis if the user turns off the setting before commit begins.
@@ -270,6 +278,7 @@ export function useAutoSync(params: {
         if (manual) {
           triggerRef.current = "manual";
           setTrigger("manual");
+          setErrorAction("run");
           setErrorMessage("Embedded subtitle auto-sync requires desktop runtime.");
           setStatus("error");
         }
@@ -288,6 +297,7 @@ export function useAutoSync(params: {
         if (manual) {
           triggerRef.current = "manual";
           setTrigger("manual");
+          setErrorAction("run");
           setErrorMessage("Original subtitle source is unavailable for re-sync.");
           setStatus("error");
         }
@@ -323,6 +333,7 @@ export function useAutoSync(params: {
         }
       }
 
+      revertTokenRef.current += 1;
       activeDisposeRef.current?.();
       activeDisposeRef.current = null;
       committingScopeRef.current = null;
@@ -370,6 +381,7 @@ export function useAutoSync(params: {
 
       setTrigger(runTrigger);
       setErrorMessage(null);
+      setErrorAction("run");
       setWithinTolerance(false);
       setStatus("analyzing");
 
@@ -406,6 +418,7 @@ export function useAutoSync(params: {
               setOffsetMs(null);
               setScale(null);
               setWithinTolerance(false);
+              setErrorAction("run");
               setErrorMessage("Could not reach video stream for subtitle alignment.");
               setStatus(manual ? "error" : "idle");
               return;
@@ -473,7 +486,7 @@ export function useAutoSync(params: {
                       format: matchedResult.format,
                       release: matchedResult.release,
                       provider: matchedResult.upstreamProvider ?? matchedResult.source,
-                      providerDerived: true,
+                      providerDerived: matchedResult.localTrusted !== true,
                       localTrusted: matchedResult.localTrusted,
                       fps: matchedResult.fps,
                       downloads: matchedResult.downloads,
@@ -508,6 +521,7 @@ export function useAutoSync(params: {
                     ok: boolean;
                     committedTrackId: string | null;
                     committedTrackKey: string | null;
+                    staleCommit?: boolean;
                   };
                   try {
                     commitRes = await commitSyncedSubtitleTrack({
@@ -534,6 +548,7 @@ export function useAutoSync(params: {
                     });
                     if (!commitRes.ok) {
                       if (isCurrent()) {
+                        setErrorAction("run");
                         setErrorMessage("Could not load synced subtitle track.");
                         setStatus("error");
                       }
@@ -547,6 +562,43 @@ export function useAutoSync(params: {
 
                   const curSelAfter =
                     liveSnapRef.current.subtitleTracks.find((t) => t.selected) ?? null;
+                  const backupFmt = res.selectedOriginalFormat
+                    ? normalizeTextSubFormat(res.selectedOriginalFormat)
+                    : null;
+                  const nextApplied: AppliedAutoSyncState = {
+                    originalTrack: preservedApplied?.originalTrack ?? sourceTrack,
+                    replacedSelected: preservedApplied?.replacedSelected ?? matchedSelected,
+                    originalTrackId: preservedApplied?.originalTrackId ?? sourceTrack.id,
+                    originalTrackKey: preservedApplied?.originalTrackKey ?? trackKey,
+                    committedTrackId: commitRes.committedTrackId,
+                    committedTrackKey: commitRes.committedTrackKey,
+                    originalBackupPath:
+                      preservedApplied?.originalBackupPath ?? res.selectedOriginalPath ?? null,
+                    originalBackupText:
+                      preservedApplied?.originalBackupText ?? res.selectedOriginalText ?? null,
+                    originalBackupFormat: preservedApplied?.originalBackupFormat ?? backupFmt,
+                    subDelayBefore,
+                    scope,
+                    changed: true,
+                  };
+
+                  if (commitRes.staleCommit) {
+                    const stillSameTrackOrSynced = !(
+                      curSelAfter &&
+                      !isSyncedTrack(curSelAfter) &&
+                      curSelAfter.id !== scope.trackId
+                    );
+                    if (
+                      stillSameTrackOrSynced &&
+                      autoSyncMediaKey(srcRef.current) === scope.mediaKey &&
+                      manualTimingMediaRef.current !== scope.mediaKey
+                    ) {
+                      appliedRef.current = nextApplied;
+                      setCanRevert(true);
+                    }
+                    return;
+                  }
+
                   if (
                     curSelAfter &&
                     !isSyncedTrack(curSelAfter) &&
@@ -573,30 +625,13 @@ export function useAutoSync(params: {
                     awaitingCommitRef.current = null;
                   }
 
-                  const backupFmt = res.selectedOriginalFormat
-                    ? normalizeTextSubFormat(res.selectedOriginalFormat)
-                    : null;
-                  appliedRef.current = {
-                    originalTrack: preservedApplied?.originalTrack ?? sourceTrack,
-                    replacedSelected: preservedApplied?.replacedSelected ?? matchedSelected,
-                    originalTrackId: preservedApplied?.originalTrackId ?? sourceTrack.id,
-                    originalTrackKey: preservedApplied?.originalTrackKey ?? trackKey,
-                    committedTrackId: commitRes.committedTrackId,
-                    committedTrackKey: commitRes.committedTrackKey,
-                    originalBackupPath:
-                      preservedApplied?.originalBackupPath ?? res.selectedOriginalPath ?? null,
-                    originalBackupText:
-                      preservedApplied?.originalBackupText ?? res.selectedOriginalText ?? null,
-                    originalBackupFormat: preservedApplied?.originalBackupFormat ?? backupFmt,
-                    subDelayBefore,
-                    scope,
-                    changed: true,
-                  };
+                  appliedRef.current = nextApplied;
 
                   setOffsetMs(res.medianOffsetMs);
                   setScale(res.scale);
                   setWithinTolerance(false);
                   setCanRevert(true);
+                  setErrorAction("run");
                   setStatus("synced");
                 },
                 cancelled,
@@ -612,6 +647,7 @@ export function useAutoSync(params: {
           }
           if (!isCurrent()) return;
           dwarn("[auto-sync] alignment failed", err);
+          setErrorAction("run");
           setErrorMessage(err instanceof Error ? err.message : String(err));
           setStatus("error");
         });
@@ -672,6 +708,7 @@ export function useAutoSync(params: {
         applied: appliedRef.current,
       })
     ) {
+      revertTokenRef.current += 1;
       activeDisposeRef.current?.();
       activeDisposeRef.current = null;
       committingScopeRef.current = null;
@@ -683,6 +720,7 @@ export function useAutoSync(params: {
       setScale(null);
       setWithinTolerance(false);
       setErrorMessage(null);
+      setErrorAction("run");
       setStatus("idle");
     }
   }, [mediaKey, selected, selectedSynced]);
@@ -710,6 +748,8 @@ export function useAutoSync(params: {
     activeDisposeRef.current = null;
     committingScopeRef.current = null;
     awaitingCommitRef.current = null;
+    const token = ++revertTokenRef.current;
+    const revertCancelled = { current: false };
     const b = bridgeRef.current;
     const a = appliedRef.current;
     const currentSelected = liveSnapRef.current.subtitleTracks.find((t) => t.selected) ?? null;
@@ -722,20 +762,83 @@ export function useAutoSync(params: {
 
     if (b && canRevertCurrent) {
       const curMediaKey = autoSyncMediaKey(srcRef.current);
+      const revertScope = a.scope;
+      committingScopeRef.current = revertScope;
+      activeDisposeRef.current = () => {
+        revertCancelled.current = true;
+        if (revertTokenRef.current === token) {
+          revertTokenRef.current += 1;
+        }
+        if (committingScopeRef.current === revertScope) {
+          committingScopeRef.current = null;
+        }
+      };
       if (a.originalTrackKey) {
         if (revertedRef.current.mediaKey !== curMediaKey) {
           revertedRef.current = { mediaKey: curMediaKey, keys: new Set() };
         }
         revertedRef.current.keys.add(a.originalTrackKey);
       }
+      const isRevertCancelled = () =>
+        revertCancelled.current ||
+        revertTokenRef.current !== token ||
+        autoSyncMediaKey(srcRef.current) !== curMediaKey;
       const commitOrigin = b.getSubtitleSelectionOrigin?.() ?? "automatic";
       void restoreRevertedSubtitleTrack({
         bridge: b,
         applied: a,
         currentSelected,
+        availableTracks: liveSnapRef.current.subtitleTracks,
         engine: engineRef.current,
         commitOrigin,
-      });
+        isCancelled: isRevertCancelled,
+      }).then(
+        (ok) => {
+          if (committingScopeRef.current === revertScope) {
+            committingScopeRef.current = null;
+          }
+          if (isRevertCancelled()) return;
+          activeDisposeRef.current = null;
+          if (!ok) {
+            if (a.originalTrackKey && revertedRef.current.mediaKey === curMediaKey) {
+              revertedRef.current.keys.delete(a.originalTrackKey);
+            }
+            triggerRef.current = "manual";
+            setTrigger("manual");
+            setCanRevert(true);
+            setErrorAction("revert");
+            setErrorMessage("Could not restore original subtitle track.");
+            setStatus("error");
+            return;
+          }
+          appliedRef.current = { ...EMPTY_APPLIED_STATE };
+          statusScopeRef.current = null;
+          setOffsetMs(null);
+          setScale(null);
+          setWithinTolerance(false);
+          setCanRevert(false);
+          setErrorMessage(null);
+          setErrorAction("run");
+          setStatus("idle");
+        },
+        () => {
+          if (committingScopeRef.current === revertScope) {
+            committingScopeRef.current = null;
+          }
+          if (isRevertCancelled()) return;
+          activeDisposeRef.current = null;
+          if (a.originalTrackKey && revertedRef.current.mediaKey === curMediaKey) {
+            revertedRef.current.keys.delete(a.originalTrackKey);
+          }
+          triggerRef.current = "manual";
+          setTrigger("manual");
+          setCanRevert(true);
+          setErrorAction("revert");
+          setErrorMessage("Could not restore original subtitle track.");
+          setStatus("error");
+        },
+      );
+      return;
     }
     appliedRef.current = { ...EMPTY_APPLIED_STATE };
     statusScopeRef.current = null;
@@ -744,6 +847,7 @@ export function useAutoSync(params: {
     setWithinTolerance(false);
     setCanRevert(false);
     setErrorMessage(null);
+    setErrorAction("run");
     setStatus("idle");
   }, [bridgeRef, isCurrentAutoSyncScope]);
 
@@ -752,6 +856,7 @@ export function useAutoSync(params: {
   }, [beginRun]);
 
   const stop = useCallback(() => {
+    revertTokenRef.current += 1;
     activeDisposeRef.current?.();
     activeDisposeRef.current = null;
     if (appliedRef.current.changed) {
@@ -760,13 +865,18 @@ export function useAutoSync(params: {
       committingScopeRef.current = null;
       awaitingCommitRef.current = null;
       statusScopeRef.current = null;
+      setErrorMessage(null);
+      setErrorAction("run");
       setStatus("idle");
     }
   }, [revert]);
 
   const dismiss = useCallback(() => {
     setErrorMessage(null);
-    if (!appliedRef.current.changed && status !== "analyzing") {
+    setErrorAction("run");
+    if (appliedRef.current.changed && status === "error") {
+      setStatus("synced");
+    } else if (!appliedRef.current.changed && status !== "analyzing") {
       setStatus("idle");
     }
   }, [status]);
@@ -774,6 +884,7 @@ export function useAutoSync(params: {
   const suspendForManualTiming = useCallback(() => {
     // Unlike Stop/Revert, taking manual control must preserve the current offset.
     manualTimingMediaRef.current = autoSyncMediaKey(srcRef.current);
+    revertTokenRef.current += 1;
     activeDisposeRef.current?.();
     activeDisposeRef.current = null;
     committingScopeRef.current = null;
@@ -782,6 +893,7 @@ export function useAutoSync(params: {
     statusScopeRef.current = null;
     setCanRevert(false);
     setErrorMessage(null);
+    setErrorAction("run");
     setStatus("idle");
   }, []);
 
@@ -793,6 +905,7 @@ export function useAutoSync(params: {
     withinTolerance,
     canRevert,
     errorMessage,
+    errorAction,
     run,
     stop,
     revert,

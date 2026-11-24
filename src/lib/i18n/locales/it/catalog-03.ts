@@ -964,8 +964,6 @@ const catalog03: Record<string, string> = {
     "Per un HDR affidabile su questo schermo, passa a True HDR, finestra separata nelle Impostazioni.",
   "For series and anime, keep playing the rest of the season from the release you first picked. Applies whether Play is instant or manual.":
     "Per serie e anime, continua a riprodurre il resto della stagione dalla versione scelta inizialmente. Vale sia con la riproduzione immediata sia con quella manuale.",
-  "For the hardest files and the Try again button, Harbor transcribes a little speech on your device and lines the subtitle up to the actual words. Needs a build with the asr-whisper feature and downloads a small model the first time you use it.":
-    "Per i file più difficili e il pulsante Riprova, Harbor trascrive sul dispositivo un breve segmento parlato e sincronizza i sottotitoli con le parole effettive. Richiede una build con la funzionalità asr-whisper e scarica un piccolo modello al primo utilizzo.",
   "For the manual path:": "Per la procedura manuale:",
   "For the manual path: {code} 20+ and {code} CLI.":
     "Per la procedura manuale: {code} 20+ e la CLI di {code}.",

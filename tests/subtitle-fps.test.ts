@@ -476,7 +476,10 @@ test("the panel refreshes after Auto Sync or secondary subtitles reset the nativ
   const panel = read("src/components/player/subtitle-menu/subtitle-fps-panel.tsx");
   assert.match(panel, /\[autoSyncActive, hasSecondary, track\?\.id\]/);
   assert.match(panel, /resetByPlayer[\s\S]*autoSyncActive[\s\S]*hasSecondary/);
-  assert.match(controls, /onBeforeApply=\{autoSync\?\.stop\}/);
+  assert.match(
+    controls,
+    /onBeforeApply=\{autoSync\?\.suspendForManualTiming \?\? autoSync\?\.stop\}/,
+  );
   assert.match(panel, /onBeforeApply\?\.\(\)[\s\S]*writeMpvSubtitleFps/);
   assert.match(panel, /value: "auto",\s*label:/);
   assert.match(panel, /applySourceFps\(videoFps, "auto"\)/);
@@ -556,7 +559,10 @@ test("mpv lifecycle and Auto Sync boundaries reset only subtitle FPS", () => {
   assert.match(autoSync, /runAfterSubtitleFpsReset/);
   assert.match(autoSync, /subtitle FPS reset failed[\s\S]*setStatus\("error"\)/);
   assert.match(autoSync, /runWithSubtitleFpsReset/);
-  assert.match(autoSyncHelpers, /type AppliedAutoSyncState = \{[\s\S]*scope: AutoSyncScope \| null/);
+  assert.match(
+    autoSyncHelpers,
+    /type AppliedAutoSyncState = \{[\s\S]*scope: AutoSyncScope \| null/,
+  );
   assert.match(
     autoSync,
     /const canRevertCurrent =[\s\S]*a\.changed &&[\s\S]*isCurrentAutoSyncScope\(a\.scope\)[\s\S]*if \(b && canRevertCurrent\)/,

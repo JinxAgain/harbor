@@ -397,8 +397,6 @@ const catalog05: Record<string, string> = {
     "Aby niezawodnie korzystać z HDR na tym ekranie, w Ustawieniach wybierz opcję True HDR, osobne okno.",
   "For series and anime, keep playing the rest of the season from the release you first picked. Applies whether Play is instant or manual.":
     "W przypadku seriali i anime odtwarzaj pozostałe odcinki sezonu z wydania wybranego na początku. Dotyczy to zarówno natychmiastowego, jak i ręcznego odtwarzania.",
-  "For the hardest files and the Try again button, Harbor transcribes a little speech on your device and lines the subtitle up to the actual words. Needs a build with the asr-whisper feature and downloads a small model the first time you use it.":
-    "W przypadku najtrudniejszych plików i po użyciu przycisku „Spróbuj ponownie” Harbor transkrybuje na urządzeniu krótki fragment mowy i dopasowuje napisy do rzeczywistych słów. Wymaga kompilacji z funkcją asr-whisper i przy pierwszym użyciu pobiera mały model.",
   "For the manual path:": "W przypadku konfiguracji ręcznej:",
   "For the manual path: {code} 20+ and {code} CLI.":
     "Metoda ręczna wymaga {code} 20+ oraz interfejsu CLI {code}.",

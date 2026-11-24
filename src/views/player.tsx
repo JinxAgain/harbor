@@ -471,7 +471,13 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     () =>
       liveUrl === src.url && liveStreamRef === src.streamRef
         ? src
-        : { ...src, url: liveUrl, historyUrl: liveHistoryUrl, streamRef: liveStreamRef },
+        : {
+            ...src,
+            url: liveUrl,
+            historyUrl: liveHistoryUrl,
+            streamRef: liveStreamRef,
+            headers: liveUrl === src.url ? src.headers : undefined,
+          },
     [src, liveUrl, liveHistoryUrl, liveStreamRef],
   );
   const castSource = useMemo(
@@ -860,8 +866,8 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   }, [showSyncToast, t]);
   const handleEnterSync = useCallback(() => {
     suspendAutoSyncForManualTiming();
-    void textSync.enter(src.url, src.headers);
-  }, [textSync.enter, src.url, src.headers, suspendAutoSyncForManualTiming]);
+    void textSync.enter(activeMediaSrc.url, activeMediaSrc.headers);
+  }, [textSync.enter, activeMediaSrc.url, activeMediaSrc.headers, suspendAutoSyncForManualTiming]);
 
   const handleManualSubDelay = useCallback(
     (sec: number) => {
@@ -1723,7 +1729,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
         active={hdrStageRequested}
         payload={{
           snap,
-          src,
+          src: activeMediaSrc,
           shellId: settings.playerShellId,
           engine,
           visible: showChrome,
@@ -1756,6 +1762,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
           autoSyncStop: hdrAutoSyncActions.stop,
           autoSyncRevert: hdrAutoSyncActions.revert,
           autoSyncDismiss: hdrAutoSyncActions.dismiss,
+          autoSyncSuspend: hdrAutoSyncActions.suspendForManualTiming,
           pip: togglePipMode,
           cast: () => cast.openCastMenu(null),
           back: backFromPlayer,

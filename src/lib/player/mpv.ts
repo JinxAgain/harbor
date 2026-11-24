@@ -487,7 +487,10 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
     };
     const tick = async () => {
       if (!active) return;
-      if (inFlight) { queued = true; return; }
+      if (inFlight) {
+        queued = true;
+        return;
+      }
       inFlight = true;
       queued = false;
       const forced = force;
@@ -495,7 +498,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       const move = pendingMove;
       pendingMove = null;
       try {
-        const r = move?.rect ?? await opts.getEmbedRect!();
+        const r = move?.rect ?? (await opts.getEmbedRect!());
         if (!active || !r) return;
         if (
           !forced &&
@@ -527,7 +530,9 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
     // with one native write in flight and the latest bounds queued behind it.
     // Dock movement is already batched by useDockDrag. Send its new bounds in
     // that same frame instead of making native video trail the chrome by a frame.
-    geomKickHandler = () => { void tick(); };
+    geomKickHandler = () => {
+      void tick();
+    };
     moveEmbeddedSurface = (rect, commit) => {
       if (!active) return false;
       pendingMove = { rect, commit };
@@ -562,7 +567,11 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
       const win = getCurrentWindow();
       const unResized = await win.onResized(() => geomForceHandler?.());
       const unMoved = await win.onMoved(() => geomForceHandler?.());
-      if (!active) { unResized(); unMoved(); return; }
+      if (!active) {
+        unResized();
+        unMoved();
+        return;
+      }
       geomTauriUnlisten.push(makeSafeTauriUnlisten(unResized), makeSafeTauriUnlisten(unMoved));
     } catch {
       /* noop */
@@ -1433,6 +1442,9 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
             await resetSubtitleFpsBeforeMpvTransition();
             if (requestMediaRevision !== mediaRevision) return false;
             selectAtCommit = mainSubtitleSelection.isCurrent(selectionRequest, mediaRevision);
+          }
+          if (metadata?.replaceExisting === true && selectionRequest && !selectAtCommit) {
+            return false;
           }
           await invoke("mpv_sub_add", {
             url: mpvUrl,

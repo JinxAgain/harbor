@@ -1012,8 +1012,6 @@ const catalogDF: Record<string, string> = {
     'इस डिस्प्ले पर भरोसेमंद HDR के लिए, सेटिंग्स में "True HDR, अलग विंडो" चुनें।',
   "For series and anime, keep playing the rest of the season from the release you first picked. Applies whether Play is instant or manual.":
     "सीरीज़ और ऐनिमे के लिए, सीज़न के बाकी एपिसोड उसी रिलीज़ से चलाते रहें जिसे आपने पहले चुना था। यह प्ले के तुरंत या मैन्युअल होने, दोनों पर लागू होता है।",
-  "For the hardest files and the Try again button, Harbor transcribes a little speech on your device and lines the subtitle up to the actual words. Needs a build with the asr-whisper feature and downloads a small model the first time you use it.":
-    "सबसे मुश्किल फ़ाइलों और फिर से कोशिश करें बटन के लिए, Harbor आपके डिवाइस पर बोले गए एक छोटे-से अंश को ट्रांसक्राइब करता है और सबटाइटल को असल शब्दों के साथ मिलाता है। इसके लिए asr-whisper फ़ीचर वाला बिल्ड चाहिए और पहली बार इस्तेमाल करने पर यह एक छोटा मॉडल डाउनलोड करता है।",
   "For the manual path:": "मैन्युअल पथ के लिए:",
   "For the manual path: {code} 20+ and {code} CLI.": "मैन्युअल तरीके के लिए: {code} 20+ और {code} CLI।",
   "For users who want to deploy themselves or already have a wrangler workflow.":

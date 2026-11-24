@@ -121,8 +121,7 @@ export function SubtitleFpsControl({
 
   if (engine !== "mpv" || !supported) return null;
 
-  const autoSyncActive =
-    autoSync?.status === "analyzing" || autoSync?.status === "synced";
+  const autoSyncActive = autoSync?.status === "analyzing" || autoSync?.status === "synced";
 
   return (
     <div ref={wrapRef} className="relative">
@@ -152,7 +151,7 @@ export function SubtitleFpsControl({
             engine={engine}
             hasSecondary={hasSecondary}
             autoSyncActive={autoSyncActive}
-            onBeforeApply={autoSync?.stop}
+            onBeforeApply={autoSync?.suspendForManualTiming ?? autoSync?.stop}
             onBack={closeAndRestoreFocus}
           />
         </div>

@@ -33,8 +33,6 @@ const settingsFill: Record<string, string> = {
   "Keeps watching through playback and gently re-nudges the timing if the subtitle slips out of sync partway through.":
     "يواصل المراقبة طوال التشغيل ويعيد ضبط التوقيت بلطف إذا فقدت الترجمة تزامنها في منتصف الطريق.",
   "Smart resync with speech recognition": "إعادة مزامنة ذكية مع التعرّف على الكلام",
-  "For the hardest files and the Try again button, Harbor transcribes a little speech on your device and lines the subtitle up to the actual words. Needs a build with the asr-whisper feature and downloads a small model the first time you use it.":
-    "بالنسبة إلى أصعب الملفات وزر إعادة المحاولة، يفرّغ Harbor القليل من الكلام على جهازك ويحاذي الترجمة مع الكلمات الفعلية. يتطلّب ذلك نسخة مبنيّة تتضمّن ميزة asr-whisper، ويُنزّل نموذجًا صغيرًا عند أول استخدام.",
   "Match subtitles across languages (experimental)": "مطابقة الترجمات بين اللغات (تجريبي)",
   "When the audio and subtitle use different languages, Harbor compares a release-matched subtitle in the audio language. It only offers a fix unless every safety check is measured.":
     "عندما يكون الصوت والترجمة بلغتين مختلفتين، يقارن Harbor ترجمة مطابقة للإصدار بلغة الصوت. ولا يقترح سوى إصلاح، ما لم تُقَس جميع فحوص السلامة.",

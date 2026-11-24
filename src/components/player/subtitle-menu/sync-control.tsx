@@ -1,4 +1,4 @@
-import { AudioLines, ChevronDown, Loader2 } from "lucide-react";
+import { AudioLines, ChevronDown, Loader2, RotateCcw } from "lucide-react";
 import { UiIcon } from "@/components/ui-icon";
 import { useEffect, useRef, useState } from "react";
 import { useAutoSyncHandle } from "@/components/player/autosync/autosync-store";
@@ -78,7 +78,11 @@ export function SyncControl({
         }`}
       >
         {busy && (
-          <Loader2 size={13} strokeWidth={2.4} className="animate-spin motion-reduce:animate-none" />
+          <Loader2
+            size={13}
+            strokeWidth={2.4}
+            className="animate-spin motion-reduce:animate-none"
+          />
         )}
         <span>{label}</span>
         <ChevronDown
@@ -86,9 +90,7 @@ export function SyncControl({
           strokeWidth={2.4}
           className={`-me-0.5 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
         />
-        {delayNonZero && !autoSyncOn && (
-          <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-        )}
+        {delayNonZero && !autoSyncOn && <span className="h-1.5 w-1.5 rounded-full bg-accent" />}
       </button>
 
       {open && (
@@ -122,6 +124,21 @@ export function SyncControl({
             <UiIcon name="auto-sync" className="h-3.5 w-3.5" />
             {autoSyncOn ? tr("Turn off auto-sync") : tr("Auto sync")}
           </button>
+          {applied && !busy && (
+            <button
+              type="button"
+              disabled={!canAutoSync}
+              onClick={() => {
+                setOpen(false);
+                autoSync?.run();
+                onClose();
+              }}
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-start text-[13px] text-ink transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:text-ink-subtle/50"
+            >
+              <RotateCcw size={14} strokeWidth={2.2} />
+              {tr("Re-sync")}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {

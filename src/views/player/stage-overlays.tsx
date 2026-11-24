@@ -40,6 +40,7 @@ export const StageOverlays = memo(function StageOverlays({
   onSubDelay,
   onEnterSync,
   chromeVisible,
+  tenFoot,
 }: {
   snap: PlayerSnapshot;
   engine: "html5" | "mpv";
@@ -63,6 +64,7 @@ export const StageOverlays = memo(function StageOverlays({
   onSubDelay: (sec: number) => void;
   onEnterSync?: () => void;
   chromeVisible: boolean;
+  tenFoot?: boolean;
 }) {
   const t = useT();
   const captionsPopout = useCaptionsPopoutOpen();
@@ -154,6 +156,7 @@ export const StageOverlays = memo(function StageOverlays({
           onDelay={onSubDelay}
           onEnterSync={onEnterSync}
           syncAvailable={snap.subtitleTracks.some((t) => t.selected)}
+          tenFoot={tenFoot}
         />
       )}
     </>

@@ -199,3 +199,24 @@ export function assNormalizeCacheKey(
     : "";
   return `${sourceUrl}|${track.id}|${track.external ? 1 : 0}|${externalSource}`;
 }
+
+/**
+ * Identifies the logical source track for ASS normalization so in-place replacements
+ * (auto-sync/re-sync on the same source) keep steady scaling without leaking scale
+ * across genuinely different ASS tracks.
+ */
+export function assNormalizeTrackOrigin(
+  track: {
+    id: string;
+    external?: boolean;
+    originalUrl?: string;
+    url?: string;
+    externalFilename?: string;
+  } | null,
+): string {
+  if (!track) return "";
+  if (track.external) {
+    return `ext:${(track.originalUrl ?? track.url ?? track.externalFilename ?? track.id).replace(/\\/g, "/")}`;
+  }
+  return `emb:${track.id}`;
+}

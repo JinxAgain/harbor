@@ -290,8 +290,6 @@ const catalog04: Record<string, string> = {
     "이 디스플레이에서 HDR을 안정적으로 사용하려면 설정에서 True HDR, 별도 창으로 전환하세요.",
   "For series and anime, keep playing the rest of the season from the release you first picked. Applies whether Play is instant or manual.":
     "시리즈와 애니메이션은 처음 선택한 릴리스로 남은 시즌을 계속 재생합니다. 재생 방식이 즉시 또는 수동인지와 관계없이 적용됩니다.",
-  "For the hardest files and the Try again button, Harbor transcribes a little speech on your device and lines the subtitle up to the actual words. Needs a build with the asr-whisper feature and downloads a small model the first time you use it.":
-    "가장 까다로운 파일과 다시 시도 버튼을 위해 Harbor가 기기에서 짧은 음성을 텍스트로 변환하고 자막을 실제 단어에 맞춥니다. asr-whisper 기능이 포함된 빌드가 필요하며 처음 사용할 때 소형 모델을 다운로드합니다.",
   "For the manual path:": "수동 방식:",
   "For the manual path: {code} 20+ and {code} CLI.": "수동 방식: {code} 20 이상 및 {code} CLI.",
   "For users who want to deploy themselves or already have a wrangler workflow.":

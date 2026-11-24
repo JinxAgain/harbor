@@ -12,10 +12,12 @@ import {
   HDR_STAGE_AUTOSYNC_REVERT,
   HDR_STAGE_AUTOSYNC_RUN,
   HDR_STAGE_AUTOSYNC_STOP,
+  HDR_STAGE_AUTOSYNC_SUSPEND,
   HDR_STAGE_SET_SUB_DELAY,
   hdrOverlayEmitAction,
   onHdrStageProps,
   type HdrNavigationRequest,
+  type HdrStageAutoSyncActionRequest,
   type HdrStageAutoSyncState,
   type HdrStageSubDelayRequest,
 } from "@/lib/hdr-overlay";
@@ -117,23 +119,6 @@ function HdrOverlayChrome() {
     [],
   );
 
-  const autoSyncState = payload?.autoSync;
-  const forwardedAutoSync = useMemo<AutoSyncHandle | null>(() => {
-    if (!autoSyncState) return null;
-    return {
-      ...autoSyncState,
-      run: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_RUN, {}),
-      stop: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_STOP, {}),
-      revert: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_REVERT, {}),
-      dismiss: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_DISMISS, {}),
-    };
-  }, [autoSyncState]);
-
-  useEffect(() => {
-    publishAutoSync(forwardedAutoSync);
-    return () => publishAutoSync(null);
-  }, [forwardedAutoSync]);
-
   const currentMediaKey = payload
     ? buildSubtitleTimingMediaKey({
         sourceUrl: payload.src.url,
@@ -142,6 +127,55 @@ function HdrOverlayChrome() {
         episode: payload.src.episode?.episode,
       })
     : "";
+
+  const autoSyncState = payload?.autoSync;
+  const hasAutoSync = autoSyncState != null;
+  const asStatus = autoSyncState?.status ?? "idle";
+  const asTrigger = autoSyncState?.trigger ?? "automatic";
+  const asOffsetMs = autoSyncState?.offsetMs ?? null;
+  const asScale = autoSyncState?.scale ?? null;
+  const asWithinTolerance = autoSyncState?.withinTolerance ?? false;
+  const asCanRevert = autoSyncState?.canRevert ?? false;
+  const asErrorMessage = autoSyncState?.errorMessage ?? null;
+  const asErrorAction = autoSyncState?.errorAction;
+
+  const forwardedAutoSync = useMemo<AutoSyncHandle | null>(() => {
+    if (!hasAutoSync) return null;
+    const actionPayload = (): HdrStageAutoSyncActionRequest => ({ mediaKey: currentMediaKey });
+    return {
+      status: asStatus,
+      trigger: asTrigger,
+      offsetMs: asOffsetMs,
+      scale: asScale,
+      withinTolerance: asWithinTolerance,
+      canRevert: asCanRevert,
+      errorMessage: asErrorMessage,
+      errorAction: asErrorAction,
+      run: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_RUN, actionPayload()),
+      stop: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_STOP, actionPayload()),
+      revert: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_REVERT, actionPayload()),
+      dismiss: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_DISMISS, actionPayload()),
+      suspendForManualTiming: () =>
+        void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_SUSPEND, actionPayload()),
+    };
+  }, [
+    hasAutoSync,
+    asStatus,
+    asTrigger,
+    asOffsetMs,
+    asScale,
+    asWithinTolerance,
+    asCanRevert,
+    asErrorMessage,
+    asErrorAction,
+    currentMediaKey,
+  ]);
+
+  useEffect(() => {
+    publishAutoSync(forwardedAutoSync);
+  }, [forwardedAutoSync]);
+
+  useEffect(() => () => publishAutoSync(null), []);
 
   const handleSubDelay = useCallback(
     (sec: number) => {

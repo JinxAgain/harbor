@@ -207,7 +207,7 @@ pub fn parse_moov_subtitles(moov: &[u8]) -> Option<Mp4SubtitleIndex> {
         };
         has_text_tracks = true;
         let mvhd_box = mvhd?;
-        if let Some(table) = parse_text_track(moov, trak, mdia, mvhd_box)? {
+        if let Some(Some(table)) = parse_text_track(moov, trak, mdia, mvhd_box) {
             tables.push(table);
         }
     }
@@ -415,7 +415,7 @@ fn parse_elst(bytes: &[u8], elst: Mp4Box) -> Option<EditList> {
             i64::from(r.read_i32()?)
         };
         let media_rate_integer = r.read_i16()?;
-        if media_rate_integer != 1 {
+        if media_time != -1 && media_rate_integer != 1 {
             return None;
         }
         r.skip(2)?;
@@ -656,9 +656,9 @@ fn parse_stbl(
     if stts_entries == 0 {
         return None;
     }
-    let mut remaining_delta_changes = stts_entries - 1;
-    let mut remaining_samples_at_delta = stts.read_u32_to_usize()?;
-    let mut timestamp_delta_units = i64::from(stts.read_i32()?);
+    let mut remaining_delta_changes = stts_entries;
+    let mut remaining_samples_at_delta = 0usize;
+    let mut timestamp_delta_units = 0i64;
 
     let mut remaining_offset_changes = 0usize;
     let mut remaining_samples_at_offset = 0usize;
@@ -710,6 +710,12 @@ fn parse_stbl(
             remaining_samples_at_offset = remaining_samples_at_offset.saturating_sub(1);
         }
 
+        while remaining_samples_at_delta == 0 && remaining_delta_changes > 0 {
+            remaining_samples_at_delta = stts.read_u32_to_usize()?;
+            timestamp_delta_units = i64::from(stts.read_u32()?);
+            remaining_delta_changes -= 1;
+        }
+
         sizes.push(sample_sizes.read_next_size()?);
         timestamps.push(timestamp_units.saturating_add(timestamp_offset_units));
 
@@ -727,11 +733,6 @@ fn parse_stbl(
 
         timestamp_units = timestamp_units.saturating_add(timestamp_delta_units);
         remaining_samples_at_delta = remaining_samples_at_delta.saturating_sub(1);
-        if remaining_samples_at_delta == 0 && remaining_delta_changes > 0 {
-            remaining_samples_at_delta = stts.read_u32_to_usize()?;
-            timestamp_delta_units = i64::from(stts.read_i32()?);
-            remaining_delta_changes -= 1;
-        }
         remaining_in_chunk -= 1;
     }
 
@@ -799,14 +800,19 @@ fn parse_stbl(
         if edit_media_time == -1 {
             continue;
         }
-        let edit_duration = scale_large_timestamp(edits.durations[i], timescale, movie_timescale);
         let mut s_idx = binary_search_floor(&timestamps, edit_media_time, true, true);
-        let e_idx = binary_search_ceil(
-            &timestamps,
-            edit_media_time.saturating_add(edit_duration),
-            false,
-            false,
-        );
+        let e_idx = if edits.durations[i] == 0 {
+            // ISO 14496-12 Section 8.6.6: segment_duration == 0 means the edit lasts until media end.
+            timestamps.len() as isize
+        } else {
+            let edit_duration = scale_large_timestamp(edits.durations[i], timescale, movie_timescale);
+            binary_search_ceil(
+                &timestamps,
+                edit_media_time.saturating_add(edit_duration),
+                false,
+                false,
+            )
+        };
         let initial_start = s_idx;
         while s_idx >= 0 && !key_frames[s_idx as usize] {
             s_idx -= 1;
@@ -825,10 +831,11 @@ fn parse_stbl(
     let mut edited_timestamps = Vec::new();
     let mut edited_sizes = Vec::new();
     let mut pts = 0i64;
+    let mut edited_duration_us = 0i64;
     for i in 0..edit_count {
         let edit_media_time = edits.media_times[i];
+        let pts_us = scale_large_timestamp(pts, MICROS_PER_SECOND, movie_timescale);
         if edit_media_time != -1 && end_indices[i] > start_indices[i] {
-            let pts_us = scale_large_timestamp(pts, MICROS_PER_SECOND, movie_timescale);
             for j in start_indices[i]..end_indices[i] {
                 if j >= 0 && (j as usize) < timestamps.len() {
                     if edited_timestamps.len() >= MAX_MP4_SAMPLES {
@@ -844,9 +851,22 @@ fn parse_stbl(
                 }
             }
         }
+        if edits.durations[i] == 0 && edit_media_time != -1 {
+            let remaining_us = scale_large_timestamp(
+                duration_units.saturating_sub(edit_media_time),
+                MICROS_PER_SECOND,
+                timescale,
+            );
+            edited_duration_us = edited_duration_us.max(pts_us.saturating_add(remaining_us));
+            break;
+        }
         pts = pts.saturating_add(edits.durations[i]);
+        edited_duration_us = edited_duration_us.max(scale_large_timestamp(
+            pts,
+            MICROS_PER_SECOND,
+            movie_timescale,
+        ));
     }
-    let edited_duration_us = scale_large_timestamp(pts, MICROS_PER_SECOND, movie_timescale);
     Some(Mp4SubtitleSampleTable {
         track_id,
         codec,
@@ -1109,8 +1129,10 @@ mod tests {
             // Version/flags at pos+4..pos+8, entry_count at pos+8..pos+12
             moov[pos + 8..pos + 12].copy_from_slice(&999_999u32.to_be_bytes());
         }
-        // parse_elst rejects the bogus header cleanly -> track fails safely without OOMing.
-        assert!(parse_moov_subtitles(&moov).is_none());
+        // parse_elst rejects the bogus header cleanly -> corrupt track is skipped safely without OOMing.
+        let idx = parse_moov_subtitles(&moov).expect("moov stays valid");
+        assert!(idx.has_text_tracks);
+        assert!(idx.tables.is_empty());
 
         // Zero-duration shift with i32::MIN media_time does not overflow/panic.
         let moov_shift = build_synthetic_moov(
@@ -1123,11 +1145,78 @@ mod tests {
     }
 
     #[test]
-    fn elst_expansion_exceeding_max_samples_returns_none_for_track() {
-        // 600 samples repeated 1_000 times = 600_000 > MAX_MP4_SAMPLES (500_000) -> rejected safely.
+    fn elst_expansion_exceeding_max_samples_skips_track_safely() {
+        // 600 samples repeated 1_000 times = 600_000 > MAX_MP4_SAMPLES (500_000) -> skipped safely.
         let sizes = vec![10u32; 600];
         let edits = vec![(600_000u32, 0i32, 1i16); 1_000];
         let moov = build_synthetic_moov(b"tx3g", &sizes, &[(600, 1000)], Some(&edits));
-        assert!(parse_moov_subtitles(&moov).is_none());
+        let idx = parse_moov_subtitles(&moov).expect("moov skips oversized track");
+        assert!(idx.has_text_tracks);
+        assert!(idx.tables.is_empty());
+    }
+
+    #[test]
+    fn dwell_edit_chapter_track_does_not_abort_valid_subtitle_track() {
+        // Track 1: tx3g track with dwell edit (media_rate = 0 -> parse_elst returns None).
+        let bad_moov = build_synthetic_moov(
+            b"tx3g",
+            &[10, 12],
+            &[(2, 1000)],
+            Some(&[(1000, 0, 0)]),
+        );
+        // Track 2: valid tx3g subtitle track.
+        let good_moov = build_synthetic_moov(b"tx3g", &[10, 12, 14], &[(3, 1000)], None);
+
+        let bad_root = Mp4Box {
+            box_type: TYPE_MOOV,
+            start: 0,
+            end: bad_moov.len(),
+            header_size: HEADER_SIZE,
+        };
+        let bad_trak = children(&bad_moov, bad_root)
+            .unwrap()
+            .into_iter()
+            .find(|b| b.box_type == TYPE_TRAK)
+            .unwrap();
+
+        let good_root = Mp4Box {
+            box_type: TYPE_MOOV,
+            start: 0,
+            end: good_moov.len(),
+            header_size: HEADER_SIZE,
+        };
+        let good_children = children(&good_moov, good_root).unwrap();
+        let good_mvhd = good_children.iter().find(|b| b.box_type == TYPE_MVHD).unwrap();
+        let good_trak = good_children.iter().find(|b| b.box_type == TYPE_TRAK).unwrap();
+
+        let mut body = Vec::new();
+        body.extend_from_slice(&good_moov[good_mvhd.start..good_mvhd.end]);
+        body.extend_from_slice(&bad_moov[bad_trak.start..bad_trak.end]);
+        body.extend_from_slice(&good_moov[good_trak.start..good_trak.end]);
+        let combined = {
+            let mut out = Vec::with_capacity(8 + body.len());
+            out.extend_from_slice(&((8 + body.len()) as u32).to_be_bytes());
+            out.extend_from_slice(b"moov");
+            out.extend_from_slice(&body);
+            out
+        };
+
+        let idx = parse_moov_subtitles(&combined).expect("valid track survives bad chapter track");
+        assert!(idx.has_text_tracks);
+        assert_eq!(idx.tables.len(), 1);
+        assert_eq!(idx.tables[0].timestamps_us.len(), 3);
+    }
+
+    #[test]
+    fn parse_elst_supports_leading_dwell_entry_and_open_ended_tail() {
+        let moov = build_synthetic_moov(
+            b"tx3g",
+            &[10, 12, 14],
+            &[(3, 1000)],
+            Some(&[(500, -1, 0), (0, 0, 1)]),
+        );
+        let idx = parse_moov_subtitles(&moov).expect("dwell + open-ended elst");
+        assert_eq!(idx.tables.len(), 1);
+        assert_eq!(idx.tables[0].timestamps_us, vec![500_000, 1_500_000, 2_500_000]);
     }
 }

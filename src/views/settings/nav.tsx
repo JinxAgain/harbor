@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { isDesktopTauri } from "@/lib/platform";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
 import { activeLayout } from "@/lib/theme";
@@ -1903,20 +1904,6 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
       "duplicate subtitles",
       "captions",
       "srt",
-    ],
-  },
-  {
-    label: "OpenSubtitles API key",
-    section: "subtitles",
-    tab: "sources",
-    anchorTitle: "Subtitle sources",
-    keywords: [
-      "opensubtitles key",
-      "opensubtitles api",
-      "os key",
-      "subtitle api key",
-      "opensubtitles login",
-      "opensubtitles account",
     ],
   },
   {
@@ -11332,7 +11319,7 @@ export function SettingsNav({
     p2p: null,
     plugins: pluginCount > 0 ? String(pluginCount) : null,
     language: null,
-    subtitles: settings.subtitleAutoSync ? "sync" : null,
+    subtitles: isDesktopTauri() && settings.subtitleAutoSync ? "sync" : null,
     player: settings.playerEngine === "auto" ? null : settings.playerEngine,
     mpv:
       (settings.mpvQuality ?? "balanced") === "balanced"

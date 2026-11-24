@@ -27,7 +27,7 @@ use crate::subsync::cue_parser::{
     decode_subtitle_bytes, parse_subtitles, SubtitleCue, SubtitleFormat,
 };
 use crate::subsync::text_retimer::{
-    format_srt_from_cues, format_srt_from_retimed_cues, retime_subtitle_text,
+    format_srt_from_cues, format_srt_from_retimed_cues, retime_subtitle_text_for_format,
 };
 use crate::subsync::url_guard;
 
@@ -69,21 +69,97 @@ const ASYMMETRIC_CHECKPOINT_MIN_REFERENCE_RATIO: f64 = 1.15;
 const ASYMMETRIC_CHECKPOINT_MAX_TARGET_SKIP_RUN: usize = 2;
 const NO_FIT_STOP_AFTER_SOURCES: usize = 3;
 
-fn active_runs() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
-    static RUNS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+#[derive(Clone)]
+struct RunCancellation {
+    flag: Arc<AtomicBool>,
+    tx: Arc<tokio::sync::watch::Sender<bool>>,
+}
+
+impl RunCancellation {
+    fn new() -> Self {
+        let (tx, _) = tokio::sync::watch::channel(false);
+        Self {
+            flag: Arc::new(AtomicBool::new(false)),
+            tx: Arc::new(tx),
+        }
+    }
+
+    fn cancel(&self) {
+        self.flag.store(true, Ordering::Relaxed);
+        let _ = self.tx.send(true);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.flag.load(Ordering::Relaxed)
+    }
+
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.tx.subscribe()
+    }
+
+    fn flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.flag)
+    }
+}
+
+async fn wait_cancelled(rx: &mut tokio::sync::watch::Receiver<bool>) {
+    if *rx.borrow() {
+        return;
+    }
+    while rx.changed().await.is_ok() {
+        if *rx.borrow() {
+            return;
+        }
+    }
+}
+
+fn active_runs() -> &'static Mutex<HashMap<String, RunCancellation>> {
+    static RUNS: OnceLock<Mutex<HashMap<String, RunCancellation>>> = OnceLock::new();
     RUNS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+const CANCEL_TOMBSTONE_TTL: Duration = Duration::from_secs(30);
+const MAX_CANCEL_TOMBSTONES: usize = 128;
+
+fn cancelled_run_tombstones() -> &'static Mutex<HashMap<String, std::time::Instant>> {
+    static TOMBSTONES: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
+    TOMBSTONES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn prune_tombstones(map: &mut HashMap<String, std::time::Instant>, now: std::time::Instant) {
+    map.retain(|_, ts| now.saturating_duration_since(*ts) <= CANCEL_TOMBSTONE_TTL);
+    while map.len() > MAX_CANCEL_TOMBSTONES {
+        if let Some(oldest_key) = map
+            .iter()
+            .min_by_key(|(_, ts)| *ts)
+            .map(|(k, _)| k.clone())
+        {
+            map.remove(&oldest_key);
+        } else {
+            break;
+        }
+    }
 }
 
 struct RunGuard {
     run_id: String,
-    cancel: Arc<AtomicBool>,
+    cancel: RunCancellation,
 }
 
 impl RunGuard {
     fn register(run_id: String) -> Self {
-        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel = RunCancellation::new();
+        let now = std::time::Instant::now();
+        if let Ok(mut tombstones) = cancelled_run_tombstones().lock() {
+            prune_tombstones(&mut tombstones, now);
+            if tombstones.remove(&run_id).is_some() {
+                cancel.cancel();
+            }
+        }
         if let Ok(mut map) = active_runs().lock() {
-            map.insert(run_id.clone(), cancel.clone());
+            if let Some(prev) = map.insert(run_id.clone(), cancel.clone()) {
+                prev.cancel();
+            }
         }
         Self { run_id, cancel }
     }
@@ -93,7 +169,7 @@ impl Drop for RunGuard {
     fn drop(&mut self) {
         if let Ok(mut map) = active_runs().lock() {
             if let Some(existing) = map.get(&self.run_id) {
-                if Arc::ptr_eq(existing, &self.cancel) {
+                if Arc::ptr_eq(&existing.flag, &self.cancel.flag) {
                     map.remove(&self.run_id);
                 }
             }
@@ -258,9 +334,18 @@ pub async fn subsync_prefetch_embedded(
 
 #[tauri::command]
 pub fn subsync_cancel(run_id: String) -> Result<(), String> {
+    let mut found_active = false;
     if let Ok(map) = active_runs().lock() {
-        if let Some(flag) = map.get(&run_id) {
-            flag.store(true, Ordering::Relaxed);
+        if let Some(cancel) = map.get(&run_id) {
+            cancel.cancel();
+            found_active = true;
+        }
+    }
+    if !found_active {
+        if let Ok(mut tombstones) = cancelled_run_tombstones().lock() {
+            let now = std::time::Instant::now();
+            tombstones.insert(run_id, now);
+            prune_tombstones(&mut tombstones, now);
         }
     }
     Ok(())
@@ -272,13 +357,23 @@ pub async fn subsync_align_subtitles(
 ) -> Result<AlignSubtitlesResponse, String> {
     let guard = RunGuard::register(request.run_id.clone());
     let cancel = guard.cancel.clone();
+    if cancel.is_cancelled() {
+        return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
+    }
+    let mut cancel_rx = cancel.subscribe();
     let media_headers = request.media_headers.clone().unwrap_or_default();
 
-    let loaded_selected_fut = load_candidate_subtitle(&request.selected_track, cancel.clone());
+    let loaded_selected_fut = load_candidate_subtitle(&request.selected_track, cancel.clone(), true);
     let container_fut = load_embedded_timeline(&request.media_url, &media_headers);
 
-    let (container_outcome, loaded_selected) = tokio::join!(container_fut, loaded_selected_fut);
-    if cancel.load(Ordering::Relaxed) {
+    let (container_outcome, loaded_selected) = tokio::select! {
+        biased;
+        _ = wait_cancelled(&mut cancel_rx) => {
+            return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
+        }
+        res = async { tokio::join!(container_fut, loaded_selected_fut) } => res,
+    };
+    if cancel.is_cancelled() {
         return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
     }
 
@@ -297,7 +392,7 @@ pub async fn subsync_align_subtitles(
         }
     };
 
-    let cancel_prep = cancel.clone();
+    let cancel_prep = cancel.flag();
     let (primary_refs, forced_refs, ref_activity_cache) = tokio::task::spawn_blocking(move || {
         let (mut primary_refs, mut forced_refs) =
             select_and_filter_references(&timeline.tracks, &cancel_prep);
@@ -323,7 +418,7 @@ pub async fn subsync_align_subtitles(
     .await
     .map_err(|e| format!("autosync reference prep failed: {e}"))?;
 
-    if cancel.load(Ordering::Relaxed) {
+    if cancel.is_cancelled() {
         return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
     }
     if primary_refs.is_empty() && forced_refs.is_empty() {
@@ -352,10 +447,13 @@ pub async fn subsync_align_subtitles(
                 forced_refs,
                 ref_activity_cache,
                 aggressive,
-                cancel,
+                cancel.flag(),
             )
             .await?;
-            finalize_pool_response(&request, eval, &request.selected_track.url).await
+            if cancel.is_cancelled() {
+                return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
+            }
+            finalize_pool_response(&request, eval, &request.selected_track.url, &cancel).await
         }
         AutoSyncCandidateScope::SelectedThenSearch => {
             let mut selected_confirmed_no_fit = false;
@@ -367,10 +465,10 @@ pub async fn subsync_align_subtitles(
                     Arc::clone(&forced_refs),
                     Arc::clone(&ref_activity_cache),
                     aggressive,
-                    Arc::clone(&cancel),
+                    cancel.flag(),
                 )
                 .await?;
-                if cancel.load(Ordering::Relaxed) {
+                if cancel.is_cancelled() {
                     return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
                 }
                 if first_eval.winner.is_some() {
@@ -378,6 +476,7 @@ pub async fn subsync_align_subtitles(
                         &request,
                         first_eval,
                         &request.selected_track.url,
+                        &cancel,
                     )
                     .await;
                 }
@@ -392,8 +491,8 @@ pub async fn subsync_align_subtitles(
                 }
             }
             // Selected track did not align cleanly (or failed to load) -> search same-language alternatives.
-            let loaded_alts = load_candidates_parallel(&request.candidates, 0, &cancel).await;
-            if cancel.load(Ordering::Relaxed) {
+            let loaded_alts = load_candidates_parallel(&request.candidates, 0, &cancel, false).await;
+            if cancel.is_cancelled() {
                 return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
             }
             if loaded_alts.is_empty() {
@@ -411,28 +510,30 @@ pub async fn subsync_align_subtitles(
                 forced_refs,
                 ref_activity_cache,
                 aggressive,
-                cancel,
+                cancel.flag(),
             )
             .await?;
-            finalize_pool_response(&request, alt_eval, &request.selected_track.url).await
+            if cancel.is_cancelled() {
+                return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
+            }
+            finalize_pool_response(&request, alt_eval, &request.selected_track.url, &cancel).await
         }
         AutoSyncCandidateScope::StartupSearch => {
-            let mut pool: Vec<(usize, SubtitleCandidateInput, LoadedSubtitle)> = selected_only_list;
-            if !pool.is_empty() && !request.candidates.is_empty() {
-                let selected_eval = evaluate_pool_blocking(
-                    pool.clone(),
+            let selected_eval = if !selected_only_list.is_empty() {
+                let ev = evaluate_pool_blocking(
+                    selected_only_list.clone(),
                     Some(request.selected_track.url.clone()),
                     Arc::clone(&primary_refs),
                     Arc::clone(&forced_refs),
                     Arc::clone(&ref_activity_cache),
                     aggressive,
-                    Arc::clone(&cancel),
+                    cancel.flag(),
                 )
                 .await?;
-                if cancel.load(Ordering::Relaxed) {
+                if cancel.is_cancelled() {
                     return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
                 }
-                if let Some(ref w) = selected_eval.winner {
+                if let Some(ref w) = ev.winner {
                     let fast_accept = is_exceptional_match(&w.reference, &w.timeline)
                         || (!aggressive
                             && (is_strong_checkpoint(&w.reference, &w.timeline, false)
@@ -444,41 +545,79 @@ pub async fn subsync_align_subtitles(
                     if fast_accept {
                         return finalize_pool_response(
                             &request,
-                            selected_eval,
+                            ev,
                             &request.selected_track.url,
+                            &cancel,
                         )
                         .await;
                     }
                 }
-            }
+                Some(ev)
+            } else {
+                None
+            };
 
-            let loaded_alts = load_candidates_parallel(&request.candidates, 1, &cancel).await;
-            if cancel.load(Ordering::Relaxed) {
+            let loaded_alts = load_candidates_parallel(&request.candidates, 1, &cancel, false).await;
+            if cancel.is_cancelled() {
                 return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
             }
-            let mut seen_urls = HashSet::new();
-            for item in &pool {
-                seen_urls.insert(item.1.url.clone());
-            }
-            for item in loaded_alts {
-                if seen_urls.insert(item.1.url.clone()) {
-                    pool.push(item);
+            let selected_url_ref = &request.selected_track.url;
+            let filtered_alts: Vec<_> = if selected_only_list.is_empty() {
+                loaded_alts
+            } else {
+                loaded_alts
+                    .into_iter()
+                    .filter(|(_, c, _)| c.url != *selected_url_ref)
+                    .collect()
+            };
+
+            let alt_eval = if !filtered_alts.is_empty() {
+                let ev = evaluate_pool_blocking(
+                    filtered_alts,
+                    None,
+                    primary_refs,
+                    forced_refs,
+                    ref_activity_cache,
+                    aggressive,
+                    cancel.flag(),
+                )
+                .await?;
+                if cancel.is_cancelled() {
+                    return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
                 }
-            }
-            if pool.is_empty() {
-                return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Inconclusive));
-            }
-            let eval = evaluate_pool_blocking(
-                pool,
-                Some(request.selected_track.url.clone()),
-                primary_refs,
-                forced_refs,
-                ref_activity_cache,
-                aggressive,
-                cancel,
-            )
-            .await?;
-            finalize_pool_response(&request, eval, &request.selected_track.url).await
+                Some(ev)
+            } else {
+                None
+            };
+
+            let merged_eval = match (selected_eval, alt_eval) {
+                (None, None) => return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Inconclusive)),
+                (Some(sel), None) => sel,
+                (None, Some(alt)) => alt,
+                (Some(sel), Some(alt)) => match (sel.winner, alt.winner) {
+                    (Some(sw), Some(aw)) => {
+                        let pick_selected =
+                            !is_better_match(&aw.reference, &aw.timeline, &sw.reference, &sw.timeline, false);
+                        PoolEvalResult {
+                            winner: Some(if pick_selected { sw } else { aw }),
+                            confirmed_no_fit: false,
+                        }
+                    }
+                    (Some(sw), None) => PoolEvalResult {
+                        winner: Some(sw),
+                        confirmed_no_fit: false,
+                    },
+                    (None, Some(aw)) => PoolEvalResult {
+                        winner: Some(aw),
+                        confirmed_no_fit: false,
+                    },
+                    (None, None) => PoolEvalResult {
+                        winner: None,
+                        confirmed_no_fit: sel.confirmed_no_fit && alt.confirmed_no_fit,
+                    },
+                },
+            };
+            finalize_pool_response(&request, merged_eval, &request.selected_track.url, &cancel).await
         }
     }
 }
@@ -613,7 +752,13 @@ fn evaluate_pool(
         let total_ranked = families[f_idx].ranked_refs.len();
 
         for r_idx in 0..total_ranked {
-            if families[f_idx].abandoned || cancel.load(Ordering::Relaxed) {
+            if cancel.load(Ordering::Relaxed) {
+                return PoolEvalResult {
+                    winner: None,
+                    confirmed_no_fit: false,
+                };
+            }
+            if families[f_idx].abandoned {
                 break;
             }
             let (ref_track, cheap_aff, _suit) = families[f_idx].ranked_refs[r_idx].clone();
@@ -713,6 +858,13 @@ fn evaluate_pool(
             }
         }
 
+        if cancel.load(Ordering::Relaxed) {
+            return PoolEvalResult {
+                winner: None,
+                confirmed_no_fit: false,
+            };
+        }
+
         // Quick-mode global early exit or top-priority family exceptional match.
         if let Some((best_fi, ref best_trk, ref best_tl)) = overall_best {
             if best_fi == f_idx {
@@ -774,6 +926,13 @@ fn evaluate_pool(
         }
     }
 
+    if cancel.load(Ordering::Relaxed) {
+        return PoolEvalResult {
+            winner: None,
+            confirmed_no_fit: false,
+        };
+    }
+
     if let Some((win_fi, win_ref, win_tl)) = overall_best {
         let fam = &families[win_fi];
         let win_member = fam
@@ -826,7 +985,11 @@ async fn finalize_pool_response(
     request: &AlignSubtitlesRequest,
     eval: PoolEvalResult,
     selected_url: &str,
+    cancel: &RunCancellation,
 ) -> Result<AlignSubtitlesResponse, String> {
+    if cancel.is_cancelled() {
+        return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
+    }
     let Some(winner) = eval.winner else {
         let outcome = if eval.confirmed_no_fit {
             AlignOutcome::NoFit
@@ -881,13 +1044,19 @@ async fn finalize_pool_response(
             if within_tolerance {
                 (other, winner.loaded.raw_body.clone())
             } else {
-                let Some(retimed) = retime_subtitle_text(&winner.loaded.raw_body, tl) else {
+                let Some(retimed) =
+                    retime_subtitle_text_for_format(&winner.loaded.raw_body, tl, other)
+                else {
                     return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Inconclusive));
                 };
                 (other, retimed)
             }
         }
     };
+
+    if cancel.is_cancelled() {
+        return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
+    }
 
     let retimed_path = write_autosync_temp_file(
         "autosync_",
@@ -907,6 +1076,9 @@ async fn finalize_pool_response(
                 other => Some((other, winner.loaded.raw_body.clone())),
             };
             if let Some((orig_fmt, orig_text)) = orig_pair {
+                if cancel.is_cancelled() {
+                    return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
+                }
                 let orig_path = write_autosync_temp_file(
                     "autosync_orig_",
                     &request.media_url,
@@ -923,6 +1095,10 @@ async fn finalize_pool_response(
         } else {
             (None, None, None)
         };
+
+    if cancel.is_cancelled() {
+        return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
+    }
 
     Ok(AlignSubtitlesResponse {
         outcome: AlignOutcome::Synced,
@@ -995,6 +1171,66 @@ async fn write_autosync_temp_file(
     .map_err(|e| format!("write temp task failed: {e}"))?
 }
 
+fn prune_older_autosync_files(dir: &std::path::Path, prefix: &str, current_name: &str) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut others: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name_str = entry.file_name().to_string_lossy().into_owned();
+            if !name_str.starts_with(prefix) || name_str == current_name {
+                return None;
+            }
+            let modified = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            Some((modified, entry.path()))
+        })
+        .collect();
+    // Retain the most recent previous generation so an active track stays intact if commit/re-sync fails.
+    others.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in others.into_iter().skip(1) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn verify_temp_dir_safe(dir: &std::path::Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let euid = unsafe { libc::geteuid() };
+        if let Some(parent) = dir.parent() {
+            let parent_meta = std::fs::symlink_metadata(parent)
+                .map_err(|e| format!("stat parent temp dir: {e}"))?;
+            if parent_meta.file_type().is_symlink() || !parent_meta.is_dir() {
+                return Err("unsafe parent temp dir".into());
+            }
+            if parent_meta.uid() != euid {
+                return Err("unowned parent temp dir".into());
+            }
+        }
+        let dir_meta =
+            std::fs::symlink_metadata(dir).map_err(|e| format!("stat temp dir: {e}"))?;
+        if dir_meta.file_type().is_symlink() || !dir_meta.is_dir() {
+            return Err("unsafe temp dir".into());
+        }
+        if dir_meta.uid() != euid {
+            return Err("unowned temp dir".into());
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let dir_meta =
+            std::fs::symlink_metadata(dir).map_err(|e| format!("stat temp dir: {e}"))?;
+        if dir_meta.file_type().is_symlink() || !dir_meta.is_dir() {
+            return Err("unsafe temp dir".into());
+        }
+    }
+    Ok(())
+}
+
 fn write_autosync_temp_file_sync(
     file_prefix: &str,
     media_url: &str,
@@ -1006,6 +1242,14 @@ fn write_autosync_temp_file_sync(
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        if let Some(parent) = dir.parent() {
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(parent)
+                .map_err(|e| format!("create parent temp dir: {e}"))?;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
         std::fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
@@ -1017,6 +1261,7 @@ fn write_autosync_temp_file_sync(
     {
         std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
     }
+    verify_temp_dir_safe(&dir)?;
 
     let media_track_hash = sha256_hex16(&format!("{media_url}\0{track_key}"));
     let content_hash = sha256_hex16(contents);
@@ -1024,37 +1269,57 @@ fn write_autosync_temp_file_sync(
     let file_name = format!("{prefix}{content_hash}.{ext}");
     let target_path = dir.join(&file_name);
 
-    // Clean stale autosync temp files for the same media + track key so repeated runs don't leak.
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with(&prefix) && name_str != file_name {
-                let _ = std::fs::remove_file(entry.path());
-            }
+    if target_path.is_file() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o600));
         }
+        prune_older_autosync_files(&dir, &prefix, &file_name);
+        return Ok(target_path.to_string_lossy().into_owned());
     }
 
-    #[cfg(unix)]
-    {
+    let staging_path = dir.join(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+
+    let mut created_staging = false;
+    let write_res: Result<(), String> = (|| {
         use std::io::Write;
+        #[cfg(unix)]
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&target_path)
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create_new(true).write(true);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let mut f = opts
+            .open(&staging_path)
             .map_err(|e| format!("write retimed subtitle: {e}"))?;
+        created_staging = true;
+        #[cfg(unix)]
         let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
         f.write_all(contents.as_bytes())
             .map_err(|e| format!("write retimed subtitle: {e}"))?;
+        Ok(())
+    })();
+
+    if let Err(err) = write_res {
+        if created_staging {
+            let _ = std::fs::remove_file(&staging_path);
+        }
+        return Err(err);
     }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(&target_path, contents.as_bytes())
-            .map_err(|e| format!("write retimed subtitle: {e}"))?;
+
+    if let Err(err) = std::fs::rename(&staging_path, &target_path) {
+        let _ = std::fs::remove_file(&staging_path);
+        if !target_path.is_file() {
+            return Err(format!("rename retimed subtitle: {err}"));
+        }
     }
+
+    prune_older_autosync_files(&dir, &prefix, &file_name);
     Ok(target_path.to_string_lossy().into_owned())
 }
 
@@ -1418,7 +1683,8 @@ fn is_asymmetric_checkpoint(
 async fn load_candidates_parallel(
     candidates: &[SubtitleCandidateInput],
     start_index: usize,
-    cancel: &Arc<AtomicBool>,
+    cancel: &RunCancellation,
+    allow_local_file: bool,
 ) -> Vec<(usize, SubtitleCandidateInput, LoadedSubtitle)> {
     let sem = Arc::new(Semaphore::new(MAX_PARALLEL_CANDIDATE_DOWNLOADS));
     let mut handles = Vec::with_capacity(candidates.len());
@@ -1427,17 +1693,29 @@ async fn load_candidates_parallel(
         let cancel_c = cancel.clone();
         handles.push(tokio::spawn(async move {
             let _permit = sem_c.acquire().await.ok()?;
-            if cancel_c.load(Ordering::Relaxed) {
+            if cancel_c.is_cancelled() {
                 return None;
             }
-            let loaded = load_candidate_subtitle(&cand, cancel_c).await?;
+            let loaded = load_candidate_subtitle(&cand, cancel_c, allow_local_file).await?;
             Some((start_index + offset, cand, loaded))
         }));
     }
     let mut out = Vec::new();
-    for h in handles {
-        if let Ok(Some(item)) = h.await {
-            out.push(item);
+    let mut cancel_rx = cancel.subscribe();
+    for idx in 0..handles.len() {
+        tokio::select! {
+            biased;
+            _ = wait_cancelled(&mut cancel_rx) => {
+                for h in &handles[idx..] {
+                    h.abort();
+                }
+                return Vec::new();
+            }
+            res = &mut handles[idx] => {
+                if let Ok(Some(item)) = res {
+                    out.push(item);
+                }
+            }
         }
     }
     out.sort_by_key(|(idx, _, _)| *idx);
@@ -1467,11 +1745,42 @@ async fn decode_and_parse_blocking(
     .flatten()
 }
 
+fn is_path_inside_autosync_temp_dir(path: &std::path::Path) -> bool {
+    let Ok(base) = std::fs::canonicalize(autosync_temp_dir()) else {
+        return false;
+    };
+    let Ok(resolved) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    resolved.starts_with(&base)
+}
+
+fn inflate_gzip_subtitle(raw_bytes: &[u8]) -> Option<Vec<u8>> {
+    let decoder = flate2::read::GzDecoder::new(Cursor::new(raw_bytes));
+    let mut limited = decoder.take((MAX_SUBTITLE_RESPONSE_BYTES + 1) as u64);
+    let mut out = Vec::new();
+    if limited.read_to_end(&mut out).is_err() {
+        return None;
+    }
+    if out.len() > MAX_SUBTITLE_RESPONSE_BYTES {
+        return None;
+    }
+    // Reject nested archives / polyglot bombs inside a .gz wrapper.
+    if out.starts_with(b"PK\x03\x04")
+        || out.starts_with(b"PK\x05\x06")
+        || out.starts_with(&[0x1f, 0x8b])
+    {
+        return None;
+    }
+    Some(out)
+}
+
 async fn load_candidate_subtitle(
     cand: &SubtitleCandidateInput,
-    cancel: Arc<AtomicBool>,
+    cancel: RunCancellation,
+    allow_local_file: bool,
 ) -> Option<LoadedSubtitle> {
-    if cancel.load(Ordering::Relaxed) {
+    if cancel.is_cancelled() {
         return None;
     }
 
@@ -1500,38 +1809,53 @@ async fn load_candidate_subtitle(
     }
 
     if let Some(ref lp) = cand.local_path {
-        if let Some(path) = url_guard::local_file_path(lp).or_else(|| Some(PathBuf::from(lp))) {
-            if let Some(bytes) = read_local_file_limited(&path, MAX_SUBTITLE_RESPONSE_BYTES).await {
-                if let Some(loaded) = decode_and_parse_blocking(
-                    bytes,
-                    path.to_string_lossy().into_owned(),
-                    cand.format.clone(),
-                    cand.lang.clone(),
-                )
-                .await
+        if let Some(path) = url_guard::local_subtitle_path(lp) {
+            let permitted = if allow_local_file {
+                true
+            } else {
+                let p_check = path.clone();
+                tokio::task::spawn_blocking(move || is_path_inside_autosync_temp_dir(&p_check))
+                    .await
+                    .unwrap_or(false)
+            };
+            if permitted {
+                if let Some(bytes) = read_local_file_limited(&path, MAX_SUBTITLE_RESPONSE_BYTES).await
                 {
-                    return Some(loaded);
+                    if let Some(loaded) = decode_and_parse_blocking(
+                        bytes,
+                        path.to_string_lossy().into_owned(),
+                        cand.format.clone(),
+                        cand.lang.clone(),
+                    )
+                    .await
+                    {
+                        return Some(loaded);
+                    }
                 }
             }
         }
     }
 
-    // Check if url itself is a local file path.
-    if let Some(local_path) = url_guard::local_file_path(&cand.url) {
-        if let Some(bytes) = read_local_file_limited(&local_path, MAX_SUBTITLE_RESPONSE_BYTES).await {
-            return decode_and_parse_blocking(
-                bytes,
-                cand.url.clone(),
-                cand.format.clone(),
-                cand.lang.clone(),
-            )
-            .await;
+    // Check if url itself is a strictly local subtitle path (only for selected track, never remote candidates).
+    if allow_local_file {
+        if let Some(local_path) = url_guard::local_subtitle_path(&cand.url) {
+            if let Some(bytes) =
+                read_local_file_limited(&local_path, MAX_SUBTITLE_RESPONSE_BYTES).await
+            {
+                return decode_and_parse_blocking(
+                    bytes,
+                    cand.url.clone(),
+                    cand.format.clone(),
+                    cand.lang.clone(),
+                )
+                .await;
+            }
+            return None;
         }
-        return None;
     }
 
     let raw_bytes = download_subtitle_bytes_with_429_retry(cand, &cancel).await?;
-    if cancel.load(Ordering::Relaxed) {
+    if cancel.is_cancelled() {
         return None;
     }
     let is_zip = raw_bytes.starts_with(b"PK\x03\x04") || raw_bytes.starts_with(b"PK\x05\x06");
@@ -1555,11 +1879,19 @@ async fn load_candidate_subtitle(
         .ok()
         .flatten();
     }
-    if raw_bytes.len() > MAX_SUBTITLE_RESPONSE_BYTES {
+    let payload_bytes = if raw_bytes.starts_with(&[0x1f, 0x8b]) {
+        tokio::task::spawn_blocking(move || inflate_gzip_subtitle(&raw_bytes))
+            .await
+            .ok()
+            .flatten()?
+    } else {
+        raw_bytes
+    };
+    if payload_bytes.len() > MAX_SUBTITLE_RESPONSE_BYTES {
         return None;
     }
     decode_and_parse_blocking(
-        raw_bytes,
+        payload_bytes,
         cand.url.clone(),
         cand.format.clone(),
         cand.lang.clone(),
@@ -1582,9 +1914,11 @@ async fn read_local_file_limited(path: &std::path::Path, max_bytes: usize) -> Op
 
 async fn download_subtitle_bytes_with_429_retry(
     cand: &SubtitleCandidateInput,
-    cancel: &AtomicBool,
+    cancel: &RunCancellation,
 ) -> Option<Vec<u8>> {
-    let allow_local = cand.local_trusted.unwrap_or(false);
+    let parsed_initial = url::Url::parse(cand.url.trim()).ok()?;
+    let allow_local =
+        cand.local_trusted.unwrap_or(false) && url_guard::is_explicit_local_or_lan_host(&parsed_initial);
     let parsed_url = url_guard::validate_subtitle_candidate_url(&cand.url, allow_local).ok()?;
 
     let credential = cand
@@ -1597,16 +1931,19 @@ async fn download_subtitle_bytes_with_429_retry(
         cand.headers.as_ref(),
         credential.as_ref(),
         allow_local,
+        cancel,
     )
     .await;
     match first {
         Ok((200..=299, bytes)) => Some(bytes),
         Ok((429, _)) => {
-            if cancel.load(Ordering::Relaxed) {
-                return None;
+            let mut cancel_rx = cancel.subscribe();
+            tokio::select! {
+                biased;
+                _ = wait_cancelled(&mut cancel_rx) => return None,
+                _ = tokio::time::sleep(HTTP_429_RETRY_DELAY) => {}
             }
-            tokio::time::sleep(HTTP_429_RETRY_DELAY).await;
-            if cancel.load(Ordering::Relaxed) {
+            if cancel.is_cancelled() {
                 return None;
             }
             match fetch_with_redirects(
@@ -1614,6 +1951,7 @@ async fn download_subtitle_bytes_with_429_retry(
                 cand.headers.as_ref(),
                 credential.as_ref(),
                 allow_local,
+                cancel,
             )
             .await
             {
@@ -1629,21 +1967,37 @@ async fn fetch_with_redirects(
     initial_url: url::Url,
     headers: Option<&HashMap<String, String>>,
     credential: Option<&crate::subtitle_credentials::ResolvedSubtitleCredential>,
-    allow_local: bool,
+    mut allow_local: bool,
+    cancel: &RunCancellation,
 ) -> Result<(u16, Vec<u8>), String> {
+    if !url_guard::is_explicit_local_or_lan_host(&initial_url) {
+        allow_local = false;
+    }
     let mut current_url = initial_url;
     let empty_hdrs = HashMap::new();
     let mut safe_hdrs = url_guard::safe_reqwest_headers(headers.unwrap_or(&empty_hdrs), false);
     let mut active_credential = credential;
+    let mut cancel_rx = cancel.subscribe();
 
     for _hop in 0..=5 {
-        let (host, addrs) =
-            url_guard::resolve_and_validate_http_target(&current_url, allow_local).await?;
+        if cancel.is_cancelled() {
+            return Err("cancelled".into());
+        }
+        let (host, addrs) = tokio::select! {
+            biased;
+            _ = wait_cancelled(&mut cancel_rx) => return Err("cancelled".into()),
+            res = url_guard::resolve_and_validate_http_target(&current_url, allow_local) => res?,
+        };
+        // Latch allow_local off once any hop resolves to a public IP so public CDNs can never bounce back to LAN/loopback.
+        if url_guard::any_addr_is_public(&addrs) {
+            allow_local = false;
+        }
         let client = url_guard::build_pinned_http_client(
             &host,
             &addrs,
             Duration::from_secs(5),
             Some(SUBTITLE_DOWNLOAD_TIMEOUT),
+            false,
         )?;
 
         let (req_url, cred_hdr) = match active_credential {
@@ -1654,14 +2008,25 @@ async fn fetch_with_redirects(
             None => (current_url.clone(), None),
         };
         let mut req = client.get(req_url).header("Accept", "*/*");
+        let cred_key = cred_hdr.as_ref().map(|(k, _)| k.to_ascii_lowercase());
         for (k, v) in &safe_hdrs {
+            if cred_key
+                .as_deref()
+                .is_some_and(|ck| k.eq_ignore_ascii_case(ck))
+            {
+                continue;
+            }
             req = req.header(k.as_str(), v.as_str());
         }
         if let Some((ck, cv)) = cred_hdr {
             req = req.header(ck.as_str(), cv.as_str());
         }
 
-        let mut resp = req.send().await.map_err(|e| e.to_string())?;
+        let mut resp = tokio::select! {
+            biased;
+            _ = wait_cancelled(&mut cancel_rx) => return Err("cancelled".into()),
+            res = req.send() => res.map_err(|e| e.without_url().to_string())?,
+        };
         let status = resp.status().as_u16();
         if matches!(status, 301 | 302 | 303 | 307 | 308) {
             let loc = resp
@@ -1670,6 +2035,9 @@ async fn fetch_with_redirects(
                 .and_then(|v| v.to_str().ok())
                 .ok_or_else(|| "redirect missing location".to_string())?;
             let next_url = current_url.join(loc).map_err(|e| e.to_string())?;
+            if !url_guard::is_explicit_local_or_lan_host(&next_url) {
+                allow_local = false;
+            }
             url_guard::validate_subtitle_candidate_url(next_url.as_str(), allow_local)?;
             if current_url.scheme() == "https" && next_url.scheme() == "http" {
                 return Err("https downgrade blocked".into());
@@ -1682,7 +2050,15 @@ async fn fetch_with_redirects(
             continue;
         }
         let mut buf = Vec::new();
-        while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+        loop {
+            let next_chunk = tokio::select! {
+                biased;
+                _ = wait_cancelled(&mut cancel_rx) => return Err("cancelled".into()),
+                res = resp.chunk() => res.map_err(|e| e.without_url().to_string())?,
+            };
+            let Some(chunk) = next_chunk else {
+                break;
+            };
             if buf.len() + chunk.len() > MAX_ARCHIVE_DOWNLOAD_BYTES {
                 return Err("subtitle payload exceeded limit".into());
             }
@@ -1833,7 +2209,7 @@ fn score_zip_entry(
     episode: Option<u32>,
     release: Option<&str>,
     filename: Option<&str>,
-) -> i32 {
+) -> Option<i32> {
     let mut score = format_score * 25 + (cue_count.min(1000) as i32);
     let entry_tokens = filename_tokens(entry_name);
 
@@ -1846,7 +2222,7 @@ fn score_zip_entry(
             if ep == target_ep && season_ok {
                 score += 5_000;
             } else {
-                score -= 10_000;
+                return None;
             }
         }
     }
@@ -1900,7 +2276,7 @@ fn score_zip_entry(
         score -= 100;
     }
 
-    score
+    Some(score)
 }
 
 fn extract_best_subtitle_from_zip(
@@ -1943,14 +2319,22 @@ fn extract_best_subtitle_from_zip(
         if entry.size() > MAX_SUBTITLE_RESPONSE_BYTES as u64 {
             continue;
         }
-        let mut bytes = Vec::with_capacity((entry.size() as usize).min(MAX_SUBTITLE_RESPONSE_BYTES));
-        let mut limited = (&mut entry).take((MAX_SUBTITLE_RESPONSE_BYTES + 1) as u64);
-        if limited.read_to_end(&mut bytes).is_err() || bytes.len() > MAX_SUBTITLE_RESPONSE_BYTES {
-            continue;
+        let remaining_archive = MAX_ARCHIVE_INFLATED_BYTES.saturating_sub(total_inflated);
+        if remaining_archive == 0 {
+            break;
         }
-        total_inflated += bytes.len();
+        let read_cap = remaining_archive
+            .min(MAX_SUBTITLE_RESPONSE_BYTES)
+            .saturating_add(1);
+        let mut bytes = Vec::with_capacity((entry.size() as usize).min(read_cap));
+        let mut limited = (&mut entry).take(read_cap as u64);
+        let read_res = limited.read_to_end(&mut bytes);
+        total_inflated = total_inflated.saturating_add(bytes.len());
         if total_inflated > MAX_ARCHIVE_INFLATED_BYTES {
             break;
+        }
+        if read_res.is_err() || bytes.len() > MAX_SUBTITLE_RESPONSE_BYTES {
+            continue;
         }
         if bytes.starts_with(b"PK\x03\x04") {
             continue;
@@ -1962,7 +2346,7 @@ fn extract_best_subtitle_from_zip(
         if cues.len() < MIN_SELECTED_CUES {
             continue;
         }
-        let score = score_zip_entry(
+        let Some(score) = score_zip_entry(
             &name,
             format_score,
             cues.len(),
@@ -1971,7 +2355,9 @@ fn extract_best_subtitle_from_zip(
             episode,
             release,
             filename,
-        );
+        ) else {
+            continue;
+        };
         if best.as_ref().is_none_or(|(bs, _)| score > *bs) {
             best = Some((
                 score,
@@ -1993,6 +2379,7 @@ mod tests {
     use crate::subsync::aligner::build_delay_only_timeline;
     use crate::subsync::aligner::DelayOnlyAlignment;
     use std::io::Write;
+    use std::time::Instant;
     use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
 
@@ -2181,7 +2568,8 @@ Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,Line 4
             confirmed_no_fit: false,
         };
 
-        let resp = finalize_pool_response(&req, eval, &req.selected_track.url)
+        let cancel = RunCancellation::new();
+        let resp = finalize_pool_response(&req, eval, &req.selected_track.url, &cancel)
             .await
             .expect("finalize");
         assert_eq!(resp.outcome, AlignOutcome::Synced);
@@ -2211,6 +2599,7 @@ Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,Line 4
         let tl_zero = sample_delay_timeline(&cues, 0.0);
 
         let req_zero = base_request(0, "https://subs.example/a.srt");
+        let cancel = RunCancellation::new();
         let res_zero = finalize_pool_response(
             &req_zero,
             PoolEvalResult {
@@ -2227,6 +2616,7 @@ Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,Line 4
                 confirmed_no_fit: false,
             },
             &req_zero.selected_track.url,
+            &cancel,
         )
         .await
         .unwrap();
@@ -2255,6 +2645,7 @@ Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,Line 4
                 confirmed_no_fit: false,
             },
             &req_tol.selected_track.url,
+            &cancel,
         )
         .await
         .unwrap();
@@ -2281,6 +2672,7 @@ Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,Line 4
                 confirmed_no_fit: false,
             },
             &req_bad.selected_track.url,
+            &cancel,
         )
         .await
         .unwrap();
@@ -2336,6 +2728,7 @@ Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,Line 4
             Some(&hdrs),
             None,
             true,
+            &RunCancellation::new(),
         )
         .await
         .expect("redirect fetch");
@@ -2438,6 +2831,207 @@ Dialogue: 0,0:00:10.00,0:00:12.00,Default,,0,0,0,,Line 4
         req.media_url = "http://169.254.169.254/latest/meta-data".to_string();
         let resp = subsync_align_subtitles(req).await.expect("align cmd");
         assert_eq!(resp.outcome, AlignOutcome::ContainerUnavailable);
+    }
+
+    #[test]
+    fn zip_extraction_stops_before_exceeding_total_archive_inflation_cap() {
+        // Nine ~4 MiB entries pass the per-entry cap (<= 4 MiB) and exceed the 32 MiB
+        // MAX_ARCHIVE_INFLATED_BYTES archive budget before reaching the trailing valid subtitle.
+        let near_cap_entry = vec![b'A'; MAX_SUBTITLE_RESPONSE_BYTES - 1];
+        let small_valid = b"1\n00:00:01,000 --> 00:00:03,000\nValid cue 1\n\n2\n00:00:04,000 --> 00:00:06,000\nValid cue 2\n\n3\n00:00:07,000 --> 00:00:09,000\nValid cue 3\n\n4\n00:00:10,000 --> 00:00:12,000\nValid cue 4\n";
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut cursor);
+            let opts = SimpleFileOptions::default();
+            for idx in 0..9usize {
+                zip.start_file(format!("filler_{idx}.srt"), opts).unwrap();
+                zip.write_all(&near_cap_entry).unwrap();
+            }
+            // Entry #10 sits past MAX_ARCHIVE_INFLATED_BYTES (32 MiB), so extraction must stop early.
+            zip.start_file("trailing_valid.srt", opts).unwrap();
+            zip.write_all(small_valid).unwrap();
+            zip.finish().unwrap();
+        }
+        let extracted = extract_best_subtitle_from_zip(
+            &cursor.into_inner(),
+            Some("en"),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(extracted.is_none());
+
+        // Also verify a size-spoofed ZIP entry (claiming uncompressed_size = 0 while compressed stream
+        // expands beyond MAX_SUBTITLE_RESPONSE_BYTES) counts toward total_inflated even when skipped.
+        let mut spoofed_cursor = Cursor::new(Vec::new());
+        let big_payload = vec![b'B'; MAX_SUBTITLE_RESPONSE_BYTES + 128];
+        {
+            let mut zip = ZipWriter::new(&mut spoofed_cursor);
+            let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            for idx in 0..9usize {
+                zip.start_file(format!("spoof_{idx}.srt"), opts).unwrap();
+                zip.write_all(&big_payload).unwrap();
+            }
+            zip.start_file("trailing_valid.srt", opts).unwrap();
+            zip.write_all(small_valid).unwrap();
+            zip.finish().unwrap();
+        }
+        let mut archive_bytes = spoofed_cursor.into_inner();
+        let needle_size = (big_payload.len() as u32).to_le_bytes();
+        // Zero out the uncompressed_size fields in local and central headers so `entry.size()` reports 0.
+        for pos in 0..archive_bytes.len().saturating_sub(4) {
+            if archive_bytes[pos..pos + 4] == needle_size {
+                archive_bytes[pos..pos + 4].copy_from_slice(&0u32.to_le_bytes());
+            }
+        }
+        let spoofed_extracted = extract_best_subtitle_from_zip(
+            &archive_bytes,
+            Some("en"),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(spoofed_extracted.is_none());
+    }
+
+    #[tokio::test]
+    async fn subsync_cancel_aborts_stalled_http_download_promptly() {
+        use axum::{routing::get, Router};
+
+        let router = Router::new().route(
+            "/stalled.srt",
+            get(|| async {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                "1\n00:00:01,000 --> 00:00:03,000\nLate\n"
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/stalled.srt", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+        let cancel = RunCancellation::new();
+        let cand = SubtitleCandidateInput {
+            url: url.clone(),
+            local_path: None,
+            inline_text: None,
+            format: None,
+            lang: Some("en".to_string()),
+            title: None,
+            release: None,
+            filename: None,
+            season: None,
+            episode: None,
+            headers: None,
+            local_trusted: Some(true),
+            download_auth: None,
+            sub_id: None,
+        };
+
+        let cancel_trigger = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            cancel_trigger.cancel();
+        });
+
+        let started = Instant::now();
+        let res = fetch_with_redirects(
+            url::Url::parse(&url).unwrap(),
+            None,
+            None,
+            true,
+            &cancel,
+        )
+        .await;
+        assert!(res.is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let _ = cand;
+
+        task.abort();
+    }
+
+    #[test]
+    fn write_autosync_temp_file_keeps_previous_generation_and_skips_identical_rewrite() {
+        let unique_media = format!("file:///test/{}.mkv", uuid::Uuid::new_v4());
+        let p1 = write_autosync_temp_file_sync("autosync_", &unique_media, "trk", "srt", "v1").unwrap();
+        std::thread::sleep(Duration::from_millis(15));
+        let p2 = write_autosync_temp_file_sync("autosync_", &unique_media, "trk", "srt", "v2").unwrap();
+        assert_ne!(p1, p2);
+        assert!(std::path::Path::new(&p1).is_file(), "latest prior generation must remain on disk");
+        assert!(std::path::Path::new(&p2).is_file());
+
+        std::thread::sleep(Duration::from_millis(15));
+        let p3 = write_autosync_temp_file_sync("autosync_", &unique_media, "trk", "srt", "v3").unwrap();
+        assert!(std::path::Path::new(&p2).is_file(), "newest prior generation kept");
+        assert!(std::path::Path::new(&p3).is_file());
+        // Calling again with identical content returns the existing file cleanly without error.
+        let p3_dup = write_autosync_temp_file_sync("autosync_", &unique_media, "trk", "srt", "v3").unwrap();
+        assert_eq!(p3, p3_dup);
+
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&p2);
+        let _ = std::fs::remove_file(&p3);
+    }
+
+    #[test]
+    fn subsync_cancel_tombstone_gzip_zip_episode_and_temp_containment() {
+        use flate2::{write::GzEncoder, Compression};
+        use std::io::Write;
+
+        let late_id = format!("late-cancel-{}", uuid::Uuid::new_v4());
+        subsync_cancel(late_id.clone()).unwrap();
+        let guard = RunGuard::register(late_id);
+        assert!(guard.cancel.is_cancelled());
+        drop(guard);
+
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(b"1\n00:00:01,000 --> 00:00:02,000\nHello gzip\n")
+            .unwrap();
+        let gz = enc.finish().unwrap();
+        let inflated = inflate_gzip_subtitle(&gz).expect("valid gzip subtitle");
+        assert!(std::str::from_utf8(&inflated)
+            .unwrap()
+            .contains("Hello gzip"));
+
+        let mut nested = GzEncoder::new(Vec::new(), Compression::default());
+        nested.write_all(b"PK\x03\x04nested").unwrap();
+        let nested_gz = nested.finish().unwrap();
+        assert!(inflate_gzip_subtitle(&nested_gz).is_none());
+
+        assert!(score_zip_entry(
+            "Show.S01E02.en.srt",
+            4,
+            100,
+            Some("en"),
+            Some(1),
+            Some(1),
+            None,
+            None,
+        )
+        .is_none());
+        assert!(score_zip_entry(
+            "Show.S01E01.en.srt",
+            4,
+            100,
+            Some("en"),
+            Some(1),
+            Some(1),
+            None,
+            None,
+        )
+        .is_some());
+
+        let outside = std::env::temp_dir().join(format!("outside_{}.srt", uuid::Uuid::new_v4()));
+        std::fs::write(&outside, "outside").unwrap();
+        assert!(!is_path_inside_autosync_temp_dir(&outside));
+        let _ = std::fs::remove_file(&outside);
+
+        let unique_media = format!("file:///test/{}.mkv", uuid::Uuid::new_v4());
+        let inside = write_autosync_temp_file_sync("autosync_", &unique_media, "t", "srt", "v")
+            .unwrap();
+        assert!(is_path_inside_autosync_temp_dir(std::path::Path::new(&inside)));
+        let _ = std::fs::remove_file(&inside);
     }
 }
 

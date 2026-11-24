@@ -1,12 +1,13 @@
+import { isDesktopTauri } from "@/lib/platform";
 import type { PlayerBridge, TrackInfo } from "@/lib/player/bridge";
 import type { SubtitleSelectionOrigin } from "@/lib/player/subtitle-selection";
 import { subtitleTrackDownloadHeaders } from "@/lib/subtitles/provider-auth";
-import { trackAutoSyncKey, type SubtitleCandidateInput } from "@/lib/subtitles/autosync/embedded-sync";
-import { parseSubtitle } from "@/lib/subtitles/parser";
 import {
-  registerPreparedSubtitle,
-  takePreparedSubtitle,
-} from "@/lib/subtitles/prepared-registry";
+  trackAutoSyncKey,
+  type SubtitleCandidateInput,
+} from "@/lib/subtitles/autosync/embedded-sync";
+import { parseSubtitle } from "@/lib/subtitles/parser";
+import { registerPreparedSubtitle, takePreparedSubtitle } from "@/lib/subtitles/prepared-registry";
 import type { SubtitleLoadMetadata } from "@/lib/subtitles/types";
 
 export type AutoSyncScope = { mediaKey: string; trackId: string };
@@ -46,9 +47,7 @@ export function normalizeUrlKey(url: string | null | undefined): string {
   return (url ?? "").replace(/\\/g, "/");
 }
 
-export function normalizeTextSubFormat(
-  fmt: string | null | undefined,
-): SupportedTextSubFormat {
+export function normalizeTextSubFormat(fmt: string | null | undefined): SupportedTextSubFormat {
   if (fmt === "ass" || fmt === "ssa" || fmt === "vtt") return fmt;
   return "srt";
 }
@@ -121,6 +120,7 @@ export async function commitSyncedSubtitleTrack(params: {
   ok: boolean;
   committedTrackId: string | null;
   committedTrackKey: string | null;
+  staleCommit?: boolean;
 }> {
   const {
     bridge,
@@ -190,25 +190,29 @@ export async function commitSyncedSubtitleTrack(params: {
     takePreparedSubtitle(playableUrl)?.cleanup();
     return { ok: false, committedTrackId: null, committedTrackKey: null };
   }
-  if (!isStillCurrent()) {
-    return { ok: false, committedTrackId: null, committedTrackKey: null };
-  }
 
   const tracks = getCurrentTracks();
   const committedTrack =
     tracks.find(
-      (t) =>
-        t.selected &&
-        t.autoSynced === true &&
-        (!replaceTrackId || t.id !== replaceTrackId),
+      (t) => t.selected && t.autoSynced === true && (!replaceTrackId || t.id !== replaceTrackId),
     ) ?? null;
   // Pre-seed the deterministic source key because HTML5 emits snapshot updates asynchronously
   // after addSubtitle resolves and liveSnapRef may still hold pre-commit tracks here.
   const deterministicKey = normalizeUrlKey(chosenUrl || playableUrl);
 
+  if (!isStillCurrent()) {
+    return {
+      ok: true,
+      staleCommit: true,
+      committedTrackId: committedTrack?.id ?? null,
+      committedTrackKey: committedTrack ? trackAutoSyncKey(committedTrack) : deterministicKey,
+    };
+  }
+
   bridge.setSubDelay(0);
   return {
     ok: true,
+    staleCommit: false,
     committedTrackId: committedTrack?.id ?? null,
     committedTrackKey: committedTrack ? trackAutoSyncKey(committedTrack) : deterministicKey,
   };
@@ -218,10 +222,13 @@ export async function restoreRevertedSubtitleTrack(params: {
   bridge: Pick<PlayerBridge, "addSubtitle" | "setSubtitleTrack" | "setSubDelay">;
   applied: AppliedAutoSyncState;
   currentSelected: TrackInfo | null;
+  availableTracks?: readonly TrackInfo[];
   engine: "html5" | "mpv";
   commitOrigin: SubtitleSelectionOrigin;
+  isCancelled?: () => boolean;
 }): Promise<boolean> {
-  const { bridge, applied, currentSelected, engine, commitOrigin } = params;
+  const { bridge, applied, currentSelected, availableTracks, engine, commitOrigin, isCancelled } =
+    params;
   if (!applied.changed) return false;
   if (
     currentSelected &&
@@ -253,25 +260,26 @@ export async function restoreRevertedSubtitleTrack(params: {
     }
 
     if (playableUrl) {
+      if (usedPrepared) {
+        const text = applied.originalBackupText ?? "";
+        registerPreparedSubtitle({
+          originalUrl: origUrl || playableUrl,
+          playableUrl,
+          format: backupFmt,
+          cues: text ? parseSubtitle(text, backupFmt) : [],
+          text,
+          encoding: "utf-8",
+          encodingHealth: 1,
+          encodingDiagnostics: [],
+          release: orig.release,
+          rawFilename: orig.externalFilename ?? `restored.${backupFmt}`,
+          archive: false,
+          cleanup,
+        });
+      }
+      let ok = false;
       try {
-        if (usedPrepared) {
-          const text = applied.originalBackupText ?? "";
-          registerPreparedSubtitle({
-            originalUrl: origUrl || playableUrl,
-            playableUrl,
-            format: backupFmt,
-            cues: text ? parseSubtitle(text, backupFmt) : [],
-            text,
-            encoding: "utf-8",
-            encodingHealth: 1,
-            encodingDiagnostics: [],
-            release: orig.release,
-            rawFilename: orig.externalFilename ?? `restored.${backupFmt}`,
-            archive: false,
-            cleanup,
-          });
-        }
-        const ok = await bridge.addSubtitle(
+        ok = await bridge.addSubtitle(
           playableUrl,
           orig.lang,
           orig.title,
@@ -292,17 +300,26 @@ export async function restoreRevertedSubtitleTrack(params: {
           },
           commitOrigin,
         );
-        if (!ok && usedPrepared) {
+      } catch (err) {
+        if (usedPrepared) {
           takePreparedSubtitle(playableUrl)?.cleanup();
         }
-        return ok;
-      } finally {
+        throw err;
+      }
+      if (!ok && usedPrepared) {
+        takePreparedSubtitle(playableUrl)?.cleanup();
+      }
+      if (ok && !isCancelled?.()) {
         bridge.setSubDelay(applied.subDelayBefore);
       }
+      return ok;
     }
   }
 
   if (applied.originalTrackId) {
+    if (availableTracks && !availableTracks.some((track) => track.id === applied.originalTrackId)) {
+      return false;
+    }
     bridge.setSubtitleTrack(applied.originalTrackId, commitOrigin);
     bridge.setSubDelay(applied.subDelayBefore);
     return true;
@@ -352,9 +369,14 @@ export function resolveAutoSyncRunTarget(params: {
   episode?: number;
 }): AutoSyncRunTarget | null {
   const { currentSelected, applied, currentMediaKey, season, episode } = params;
+  const hasUsableSource = (input: SubtitleCandidateInput): boolean =>
+    Boolean(input.localPath) ||
+    input.inlineText != null ||
+    !/^(blob|data|memory):/i.test(input.url);
+
   if (!currentSelected.autoSynced) {
     const selectedInput = buildSelectedCandidateInput(currentSelected, { season, episode });
-    if (!selectedInput) return null;
+    if (!selectedInput || !hasUsableSource(selectedInput)) return null;
     return {
       sourceTrack: currentSelected,
       selectedInput,
@@ -382,6 +404,7 @@ export function resolveAutoSyncRunTarget(params: {
       selectedInput.inlineText = applied.originalBackupText;
       selectedInput.format = applied.originalBackupFormat ?? selectedInput.format;
     }
+    if (!hasUsableSource(selectedInput)) return null;
     return {
       sourceTrack: orig,
       selectedInput,
@@ -395,7 +418,9 @@ export function resolveAutoSyncRunTarget(params: {
   const externalTemp = isRetimedAutosyncPath(currentSelected.externalFilename);
   const sourceUrl =
     currentSelected.originalUrl || (!externalTemp ? currentSelected.url : undefined);
-  if (!sourceUrl || isRetimedAutosyncPath(sourceUrl)) return null;
+  if (!sourceUrl || /^(blob|data|memory):/i.test(sourceUrl) || isRetimedAutosyncPath(sourceUrl)) {
+    return null;
+  }
   const sanitized: TrackInfo = {
     ...currentSelected,
     url: sourceUrl,
@@ -404,7 +429,7 @@ export function resolveAutoSyncRunTarget(params: {
     prepared: externalTemp ? false : currentSelected.prepared,
   };
   const selectedInput = buildSelectedCandidateInput(sanitized, { season, episode });
-  if (!selectedInput) return null;
+  if (!selectedInput || !hasUsableSource(selectedInput)) return null;
   return {
     sourceTrack: sanitized,
     selectedInput,
@@ -420,15 +445,18 @@ export function buildSelectedCandidateInput(
   const sourceUrl = track.originalUrl || track.url || track.externalFilename;
   if (!sourceUrl) return null;
   const localPath =
-    track.prepared && track.externalFilename
+    track.prepared &&
+    track.externalFilename &&
+    !/^(blob|data|memory):/i.test(track.externalFilename)
       ? track.externalFilename
       : !/^(https?|blob|data|memory):/i.test(sourceUrl)
         ? sourceUrl
         : undefined;
   const providerDerived = track.providerDerived ?? Boolean(track.provider);
-  const headers = /^https?:/i.test(sourceUrl)
-    ? subtitleTrackDownloadHeaders(track.downloadAuth, sourceUrl, providerDerived)
-    : undefined;
+  const headers =
+    !isDesktopTauri() && /^https?:/i.test(sourceUrl)
+      ? subtitleTrackDownloadHeaders(track.downloadAuth, sourceUrl, providerDerived)
+      : undefined;
   return {
     url: sourceUrl,
     localPath,

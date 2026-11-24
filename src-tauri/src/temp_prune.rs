@@ -16,12 +16,26 @@ fn is_orphan_dir(name: &str) -> bool {
 }
 
 fn sweep_prepared_subtitles_at(temp_dir: &std::path::Path, now: SystemTime) {
-    let prepared = temp_dir.join("harbor-subs").join("prepared");
+    let harbor_subs = temp_dir.join("harbor-subs");
+    if std::fs::symlink_metadata(&harbor_subs)
+        .map(|m| m.file_type().is_symlink() || !m.is_dir())
+        .unwrap_or(true)
+    {
+        return;
+    }
+    let prepared = harbor_subs.join("prepared");
+    if std::fs::symlink_metadata(&prepared)
+        .map(|m| m.file_type().is_symlink() || !m.is_dir())
+        .unwrap_or(true)
+    {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(&prepared) else {
         return;
     };
     for entry in entries.flatten() {
-        let Ok(meta) = entry.metadata() else {
+        let path = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
             continue;
         };
         let age = meta
@@ -32,10 +46,10 @@ fn sweep_prepared_subtitles_at(temp_dir: &std::path::Path, now: SystemTime) {
         if age <= ORPHAN_MAX_AGE {
             continue;
         }
-        if meta.is_dir() {
-            let _ = std::fs::remove_dir_all(entry.path());
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            let _ = std::fs::remove_file(path);
         } else {
-            let _ = std::fs::remove_file(entry.path());
+            let _ = std::fs::remove_dir_all(path);
         }
     }
     let _ = std::fs::remove_dir(&prepared);
@@ -98,8 +112,10 @@ fn dir_size(path: &PathBuf) -> u64 {
         Err(_) => return 0,
     };
     for entry in entries.flatten() {
-        match entry.metadata() {
-            Ok(m) if m.is_dir() => total += dir_size(&entry.path()),
+        let p = entry.path();
+        match std::fs::symlink_metadata(&p) {
+            Ok(m) if m.file_type().is_symlink() => {}
+            Ok(m) if m.is_dir() => total += dir_size(&p),
             Ok(m) => total += m.len(),
             Err(_) => {}
         }
@@ -116,15 +132,19 @@ fn harbor_temp_dirs_at(dir: &std::path::Path) -> Vec<PathBuf> {
     for entry in entries.flatten() {
         let raw = entry.file_name();
         let name = raw.to_string_lossy();
-        if !entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
+        if !entry
+            .file_type()
+            .map(|ft| !ft.is_symlink() && ft.is_dir())
+            .unwrap_or(false)
+        {
             continue;
         }
         if is_updater_dir(&name) || is_orphan_dir(&name) || name == "harbor-trailers" {
             out.push(entry.path());
         } else if name == "harbor-subs" {
             let prepared = entry.path().join("prepared");
-            if std::fs::metadata(&prepared)
-                .map(|m| m.is_dir())
+            if std::fs::symlink_metadata(&prepared)
+                .map(|m| !m.file_type().is_symlink() && m.is_dir())
                 .unwrap_or(false)
             {
                 out.push(prepared);

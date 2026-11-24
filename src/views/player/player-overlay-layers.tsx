@@ -255,6 +255,7 @@ export const PlayerOverlayLayers = memo(function PlayerOverlayLayers(p: PlayerOv
         }}
         onEnterSync={p.onEnterSync}
         chromeVisible={p.showChrome}
+        tenFoot={p.tenFoot}
       />
       <CastLayer
         chromeVisible={p.showChrome}

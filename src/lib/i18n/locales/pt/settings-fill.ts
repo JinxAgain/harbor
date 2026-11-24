@@ -33,8 +33,6 @@ const settingsFill: Record<string, string> = {
   "Keeps watching through playback and gently re-nudges the timing if the subtitle slips out of sync partway through.":
     "Continua monitorando durante a reprodução e reajusta suavemente o tempo se a legenda sair de sincronia no meio do caminho.",
   "Smart resync with speech recognition": "Ressincronização inteligente com reconhecimento de fala",
-  "For the hardest files and the Try again button, Harbor transcribes a little speech on your device and lines the subtitle up to the actual words. Needs a build with the asr-whisper feature and downloads a small model the first time you use it.":
-    "Para os arquivos mais difíceis e o botão Tentar novamente, o Harbor transcreve um trecho da fala no seu dispositivo e alinha a legenda às palavras reais. Requer uma compilação com o recurso asr-whisper e baixa um modelo pequeno na primeira vez que você o usa.",
   "Match subtitles across languages (experimental)":
     "Comparar legendas entre idiomas (experimental)",
   "When the audio and subtitle use different languages, Harbor compares a release-matched subtitle in the audio language. It only offers a fix unless every safety check is measured.":

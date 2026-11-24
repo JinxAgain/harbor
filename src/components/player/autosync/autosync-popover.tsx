@@ -1,5 +1,5 @@
 import { Check, Loader2, RotateCcw, SlidersHorizontal, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n";
 import { openSyncBar } from "@/lib/player/sub-sync";
 import { formatSyncShift } from "@/lib/subtitles/autosync/embedded-sync";
@@ -34,10 +34,18 @@ function shouldShowPopover(handle: AutoSyncHandle): boolean {
   );
 }
 
-export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
+export function AutosyncPopover({
+  handle,
+  tenFoot = false,
+}: {
+  handle: AutoSyncHandle;
+  tenFoot?: boolean;
+}) {
   const tr = useT();
   const [dismissed, setDismissed] = useState(false);
   const [held, setHeld] = useState(false);
+  const handleRef = useRef(handle);
+  handleRef.current = handle;
 
   useEffect(() => {
     setDismissed(false);
@@ -54,14 +62,14 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
 
   useEffect(() => {
     if (!visible) return;
-    const ms = dwellMsFor(handle);
+    const ms = dwellMsFor(handleRef.current);
     if (ms == null || held) return;
     const id = window.setTimeout(() => {
       setDismissed(true);
-      handle.dismiss();
+      handleRef.current.dismiss();
     }, ms);
     return () => window.clearTimeout(id);
-  }, [handle, held, visible]);
+  }, [visible, held, handle.status, handle.trigger, handle.offsetMs]);
 
   if (!visible) return null;
 
@@ -77,15 +85,15 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
     <div
       role="status"
       aria-live="polite"
-      onPointerEnter={() => setHeld(true)}
-      onPointerLeave={() => setHeld(false)}
+      onPointerEnter={tenFoot ? undefined : () => setHeld(true)}
+      onPointerLeave={tenFoot ? undefined : () => setHeld(false)}
       className="pointer-events-none absolute inset-x-0 top-0 z-30 flex justify-center px-6 pt-[68px] animate-in fade-in slide-in-from-top-2 duration-200"
     >
       <div
         data-harbor-glass="modal"
         data-glass-tier="enhanced"
         data-player-glass="panel"
-        className="pointer-events-auto flex items-center gap-2.5 rounded-full bg-elevated px-3.5 py-1.5 text-[12.5px] font-medium text-ink shadow-[0_10px_30px_-12px_rgba(0,0,0,0.65)]"
+        className={`${tenFoot ? "" : "pointer-events-auto "}flex items-center gap-2.5 rounded-full bg-elevated px-3.5 py-1.5 text-[12.5px] font-medium text-ink shadow-[0_10px_30px_-12px_rgba(0,0,0,0.65)]`}
       >
         {handle.status === "analyzing" && (
           <>
@@ -95,16 +103,18 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
               className="animate-spin text-accent motion-reduce:animate-none"
             />
             <span>{tr("Syncing subtitles…")}</span>
-            <button
-              type="button"
-              onClick={() => {
-                setHeld(false);
-                handle.stop();
-              }}
-              className="rounded-full px-2 py-0.5 text-[12px] font-semibold text-ink-muted transition-colors hover:bg-raised hover:text-ink"
-            >
-              {tr("Cancel")}
-            </button>
+            {!tenFoot && (
+              <button
+                type="button"
+                onClick={() => {
+                  setHeld(false);
+                  handle.stop();
+                }}
+                className="rounded-full px-2 py-0.5 text-[12px] font-semibold text-ink-muted transition-colors hover:bg-raised hover:text-ink"
+              >
+                {tr("Cancel")}
+              </button>
+            )}
           </>
         )}
 
@@ -116,7 +126,7 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
                 ? tr("Subtitles synced ({shift})", { shift: shiftLabel })
                 : tr("Subtitles synced")}
             </span>
-            {handle.canRevert && (
+            {!tenFoot && handle.canRevert && (
               <button
                 type="button"
                 onClick={() => {
@@ -148,15 +158,21 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
               {handle.status === "no-embedded"
                 ? tr("No embedded subtitle reference found")
                 : handle.status === "error"
-                  ? tr("Auto-sync failed")
+                  ? handle.errorMessage
+                    ? tr(handle.errorMessage)
+                    : tr("Auto-sync failed")
                   : tr("Could not auto-sync subtitles")}
             </span>
-            {handle.status === "error" && (
+            {!tenFoot && handle.status === "error" && (
               <button
                 type="button"
                 onClick={() => {
                   setHeld(false);
-                  handle.run();
+                  if (handle.errorAction === "revert" && handle.canRevert) {
+                    handle.revert();
+                  } else {
+                    handle.run();
+                  }
                 }}
                 className="inline-flex items-center gap-1 rounded-full bg-raised px-2.5 py-0.5 text-[12px] font-semibold text-ink transition-colors hover:bg-surface-hover"
               >
@@ -164,21 +180,23 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
                 {tr("Retry")}
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => {
-                dismissNow();
-                openSyncBar();
-              }}
-              className="inline-flex items-center gap-1 rounded-full bg-raised px-2.5 py-0.5 text-[12px] font-semibold text-ink transition-colors hover:bg-surface-hover"
-            >
-              <SlidersHorizontal size={12} strokeWidth={2.2} />
-              {tr("Sync manually")}
-            </button>
+            {!tenFoot && (
+              <button
+                type="button"
+                onClick={() => {
+                  dismissNow();
+                  openSyncBar();
+                }}
+                className="inline-flex items-center gap-1 rounded-full bg-raised px-2.5 py-0.5 text-[12px] font-semibold text-ink transition-colors hover:bg-surface-hover"
+              >
+                <SlidersHorizontal size={12} strokeWidth={2.2} />
+                {tr("Sync manually")}
+              </button>
+            )}
           </>
         )}
 
-        {handle.status !== "analyzing" && (
+        {!tenFoot && handle.status !== "analyzing" && (
           <button
             type="button"
             onClick={dismissNow}

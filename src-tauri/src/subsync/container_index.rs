@@ -336,7 +336,9 @@ async fn load_and_classify(
                     ContainerLoadOutcome::NoUsableReference
                 }
             }
-            Ok(Err(TimedOrPermanent::Transient)) => ContainerLoadOutcome::Unavailable,
+            Ok(Err(TimedOrPermanent::Transient)) | Ok(Err(TimedOrPermanent::Blocked)) => {
+                ContainerLoadOutcome::Unavailable
+            }
             Ok(Err(TimedOrPermanent::Permanent)) => ContainerLoadOutcome::NoUsableReference,
             Err(_) => ContainerLoadOutcome::Unavailable,
         };
@@ -354,7 +356,9 @@ async fn load_and_classify(
         Ok(Ok(InspectResult::NeedsLocalFfprobeFallback { .. })) => {
             ContainerLoadOutcome::NoUsableReference
         }
-        Ok(Err(TimedOrPermanent::Transient)) => ContainerLoadOutcome::Unavailable,
+        Ok(Err(TimedOrPermanent::Transient)) | Ok(Err(TimedOrPermanent::Blocked)) => {
+            ContainerLoadOutcome::Unavailable
+        }
         Ok(Err(TimedOrPermanent::Permanent)) => ContainerLoadOutcome::NoUsableReference,
         Err(_) => ContainerLoadOutcome::Unavailable,
     }
@@ -363,6 +367,7 @@ async fn load_and_classify(
 #[derive(Debug)]
 enum TimedOrPermanent {
     Transient,
+    Blocked,
     Permanent,
 }
 
@@ -483,8 +488,9 @@ impl RandomAccessReader for LocalSourceReader {
 
 struct HttpRangeReader {
     url: url::Url,
+    allow_local: bool,
     headers: Vec<(String, String)>,
-    cached_client: Option<(String, u16, reqwest::Client)>,
+    cached_client: Option<(String, u16, bool, bool, reqwest::Client)>,
     deadline: Instant,
     bytes_read: u64,
     requests: usize,
@@ -493,10 +499,12 @@ struct HttpRangeReader {
 impl HttpRangeReader {
     fn new(url_str: String, raw_headers: HashMap<String, String>) -> Result<Self, TimedOrPermanent> {
         let parsed = url::Url::parse(&url_str).map_err(|_| TimedOrPermanent::Permanent)?;
-        url_guard::check_http_url(&parsed, true).map_err(|_| TimedOrPermanent::Permanent)?;
+        let allow_local = url_guard::is_explicit_local_or_lan_host(&parsed);
+        url_guard::check_http_url(&parsed, allow_local).map_err(|_| TimedOrPermanent::Blocked)?;
         let headers = url_guard::safe_reqwest_headers(&raw_headers, true);
         Ok(Self {
             url: parsed,
+            allow_local,
             headers,
             cached_client: None,
             deadline: Instant::now() + TOTAL_TIMEOUT,
@@ -505,11 +513,11 @@ impl HttpRangeReader {
         })
     }
 
-    async fn client_for_url(
-        &mut self,
+    async fn resolve_client_for_url(
+        &self,
         target: &url::Url,
-        cache_if_initial: bool,
-    ) -> Result<reqwest::Client, TimedOrPermanent> {
+        allow_local: bool,
+    ) -> Result<(reqwest::Client, bool, Option<(String, u16, bool, bool, reqwest::Client)>), TimedOrPermanent> {
         let host_key = target
             .host_str()
             .ok_or(TimedOrPermanent::Permanent)?
@@ -519,31 +527,46 @@ impl HttpRangeReader {
         let port_key = target
             .port_or_known_default()
             .ok_or(TimedOrPermanent::Permanent)?;
-        if let Some((ref cached_host, cached_port, ref cached)) = self.cached_client {
-            if cached_host == &host_key && cached_port == port_key {
-                return Ok(cached.clone());
+        if let Some((
+            ref cached_host,
+            cached_port,
+            cached_any_public,
+            cached_all_public,
+            ref cached,
+        )) = self.cached_client
+        {
+            if cached_host == &host_key
+                && cached_port == port_key
+                && (allow_local || cached_all_public)
+            {
+                return Ok((cached.clone(), cached_any_public, None));
             }
         }
-        let (resolved_host, addrs) = url_guard::resolve_and_validate_http_target(target, true)
-            .await
-            .map_err(|e| {
-                if e == "dns-lookup-failed" {
-                    TimedOrPermanent::Transient
-                } else {
-                    TimedOrPermanent::Permanent
-                }
-            })?;
+        let (resolved_host, addrs) =
+            url_guard::resolve_and_validate_http_target(target, allow_local)
+                .await
+                .map_err(|e| {
+                    if e == "dns-lookup-failed" {
+                        TimedOrPermanent::Transient
+                    } else {
+                        TimedOrPermanent::Blocked
+                    }
+                })?;
+        let any_public = url_guard::any_addr_is_public(&addrs);
+        let all_public = addrs.iter().all(|addr| url_guard::check_ip(addr.ip(), false).is_ok());
         let client = url_guard::build_pinned_http_client(
             &resolved_host,
             &addrs,
             Duration::from_secs(4),
             None,
+            true,
         )
         .map_err(|_| TimedOrPermanent::Transient)?;
-        if cache_if_initial {
-            self.cached_client = Some((host_key, port_key, client.clone()));
-        }
-        Ok(client)
+        Ok((
+            client.clone(),
+            any_public,
+            Some((host_key, port_key, any_public, all_public, client)),
+        ))
     }
 }
 
@@ -585,16 +608,24 @@ impl RandomAccessReader for HttpRangeReader {
 
         let mut current_url = self.url.clone();
         let mut current_headers = self.headers.clone();
+        let mut allow_local = self.allow_local;
         let mut redirected = false;
         let mut final_resp: Option<reqwest::Response> = None;
 
-        for hop in 0..=5 {
+        for _hop in 0..=5 {
             let now = Instant::now();
             if now >= self.deadline {
                 return Err(TimedOrPermanent::Transient);
             }
             let req_timeout = (self.deadline - now).min(Duration::from_secs(5));
-            let client = self.client_for_url(&current_url, hop == 0 || redirected).await?;
+            let (client, resolved_public, candidate_cache) = self
+                .resolve_client_for_url(&current_url, allow_local)
+                .await?;
+            // Latch allow_local off permanently once any hop touches a public IP so public
+            // origins can never redirect back into loopback or private LAN services.
+            if resolved_public {
+                allow_local = false;
+            }
 
             let mut req = client
                 .get(current_url.clone())
@@ -616,10 +647,13 @@ impl RandomAccessReader for HttpRangeReader {
                 let next_url = current_url
                     .join(loc)
                     .map_err(|_| TimedOrPermanent::Permanent)?;
-                url_guard::check_http_url(&next_url, true)
-                    .map_err(|_| TimedOrPermanent::Permanent)?;
+                if !url_guard::is_explicit_local_or_lan_host(&next_url) {
+                    allow_local = false;
+                }
+                url_guard::check_http_url(&next_url, allow_local)
+                    .map_err(|_| TimedOrPermanent::Blocked)?;
                 if current_url.scheme() == "https" && next_url.scheme() == "http" {
-                    return Err(TimedOrPermanent::Permanent);
+                    return Err(TimedOrPermanent::Blocked);
                 }
                 if !crate::http_redirect::same_origin(&current_url, &next_url) {
                     current_headers
@@ -629,9 +663,15 @@ impl RandomAccessReader for HttpRangeReader {
                 redirected = true;
                 continue;
             }
-            if redirected && (200..300).contains(&status) {
-                self.url = current_url.clone();
-                self.headers = current_headers.clone();
+            if (200..300).contains(&status) {
+                self.allow_local = allow_local;
+                if let Some(entry) = candidate_cache {
+                    self.cached_client = Some(entry);
+                }
+                if redirected {
+                    self.url = current_url.clone();
+                    self.headers = current_headers.clone();
+                }
             }
             final_resp = Some(resp);
             break;
@@ -639,8 +679,20 @@ impl RandomAccessReader for HttpRangeReader {
 
         let mut resp = final_resp.ok_or(TimedOrPermanent::Permanent)?;
         let status = resp.status().as_u16();
+        if matches!(status, 408 | 429 | 500..=599) {
+            return Err(TimedOrPermanent::Transient);
+        }
         if !(200..300).contains(&status) {
             return Err(TimedOrPermanent::Permanent);
+        }
+        if let Some(ce) = resp
+            .headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok())
+        {
+            if !ce.trim().is_empty() && !ce.trim().eq_ignore_ascii_case("identity") {
+                return Err(TimedOrPermanent::Permanent);
+            }
         }
         if (require_partial || start > 0) && status != 206 {
             return Err(TimedOrPermanent::Permanent);
@@ -781,7 +833,10 @@ async fn inspect_container(
             Some(b) => b,
             None => match fetch_element_at(reader, pos, ID_SEEK_HEAD, MAX_SEEK_HEAD_BYTES).await {
                 Ok(Some(b)) => b,
-                _ => continue,
+                Ok(None) | Err(TimedOrPermanent::Permanent) => continue,
+                Err(e @ (TimedOrPermanent::Transient | TimedOrPermanent::Blocked)) => {
+                    return Err(e);
+                }
             },
         };
         for (id, rel_pos) in parse_seek_head(&bytes) {
@@ -797,9 +852,13 @@ async fn inspect_container(
     let timestamp_scale_ns = if let Some(&info_pos) = resolved.get(&ID_INFO).or_else(|| direct_positions.get(&ID_INFO)) {
         let info_bytes = match extract_element_from_probe(&initial.bytes, info_pos, ID_INFO, MAX_INFO_BYTES) {
             Some(b) => Some(b),
-            None => fetch_element_at(reader, info_pos, ID_INFO, MAX_INFO_BYTES)
-                .await
-                .unwrap_or(None),
+            None => match fetch_element_at(reader, info_pos, ID_INFO, MAX_INFO_BYTES).await {
+                Ok(b) => b,
+                Err(TimedOrPermanent::Permanent) => None,
+                Err(e @ (TimedOrPermanent::Transient | TimedOrPermanent::Blocked)) => {
+                    return Err(e);
+                }
+            },
         };
         info_bytes
             .as_deref()
@@ -830,7 +889,9 @@ async fn inspect_container(
             None => match fetch_element_at(reader, pos, ID_CUES, MAX_CUES_BYTES).await {
                 Ok(b) => b,
                 Err(TimedOrPermanent::Permanent) => None,
-                Err(TimedOrPermanent::Transient) => return Err(TimedOrPermanent::Transient),
+                Err(e @ (TimedOrPermanent::Transient | TimedOrPermanent::Blocked)) => {
+                    return Err(e);
+                }
             },
         };
         cues_bytes.map(|b| parse_subtitle_cue_timelines(&b, &subtitle_tracks, timestamp_scale_ns))
@@ -989,17 +1050,27 @@ async fn find_mp4_moov(
                 return Ok(None);
             }
         }
+        let initial_len = initial.bytes.len() as u64;
+        let can_use_initial_8 = position.saturating_add(8) <= initial_len && {
+            let off = position as usize;
+            let size32 = u32::from_be_bytes([
+                initial.bytes[off],
+                initial.bytes[off + 1],
+                initial.bytes[off + 2],
+                initial.bytes[off + 3],
+            ]);
+            size32 != 1 || position.saturating_add(MP4_BOX_HEADER_BYTES as u64) <= initial_len
+        };
         let owned_header;
-        let (header_bytes, header_offset): (&[u8], usize) =
-            if position.saturating_add(MP4_BOX_HEADER_BYTES as u64) <= initial.bytes.len() as u64 {
-                (&initial.bytes, position as usize)
-            } else {
-                owned_header = reader
-                    .read_range(position, MP4_BOX_HEADER_BYTES, position > 0, false)
-                    .await?
-                    .bytes;
-                (&owned_header, 0)
-            };
+        let (header_bytes, header_offset): (&[u8], usize) = if can_use_initial_8 {
+            (&initial.bytes, position as usize)
+        } else {
+            owned_header = reader
+                .read_range(position, MP4_BOX_HEADER_BYTES, position > 0, false)
+                .await?
+                .bytes;
+            (&owned_header, 0)
+        };
 
         let extends_to_end = initial
             .total_length
@@ -1199,106 +1270,195 @@ fn select_ffprobe_text_tracks(tracks: &[MatroskaSubtitleTrack]) -> Vec<(usize, M
     candidates
 }
 
+const MAX_FFPROBE_STDOUT_BYTES: usize = 8 * 1024 * 1024;
+const MAX_FFPROBE_CUES_PER_STREAM: usize = 50_000;
+const MAX_FFPROBE_STREAM_BUCKETS: usize = 32;
+
+#[derive(Default)]
+struct FfprobeCompactAccumulator {
+    stream_indices: Vec<u32>,
+    packets_by_stream: HashMap<u32, Vec<SubtitleCue>>,
+}
+
+impl FfprobeCompactAccumulator {
+    fn feed_line(&mut self, line: &str) {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("stream|") {
+            if self.stream_indices.len() >= MAX_FFPROBE_STREAM_BUCKETS {
+                return;
+            }
+            for part in rest.split('|') {
+                if let Some(idx_str) = part.strip_prefix("index=") {
+                    if let Ok(idx) = idx_str.trim().parse::<u32>() {
+                        self.stream_indices.push(idx);
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("packet|") {
+            let mut stream_index: Option<u32> = None;
+            let mut pts_s: Option<f64> = None;
+            let mut dur_s: Option<f64> = None;
+            for part in rest.split('|') {
+                if let Some(v) = part.strip_prefix("stream_index=") {
+                    stream_index = v.trim().parse::<u32>().ok();
+                } else if let Some(v) = part.strip_prefix("pts_time=") {
+                    pts_s = v.trim().parse::<f64>().ok();
+                } else if let Some(v) = part.strip_prefix("duration_time=") {
+                    dur_s = v.trim().parse::<f64>().ok();
+                }
+            }
+            let (Some(s_idx), Some(pts)) = (stream_index, pts_s) else {
+                return;
+            };
+            if !pts.is_finite() || pts < 0.0 || pts > 3_600_000.0 {
+                return;
+            }
+            if !self.packets_by_stream.contains_key(&s_idx)
+                && self.packets_by_stream.len() >= MAX_FFPROBE_STREAM_BUCKETS
+            {
+                return;
+            }
+            let bucket = self.packets_by_stream.entry(s_idx).or_default();
+            if bucket.len() >= MAX_FFPROBE_CUES_PER_STREAM {
+                return;
+            }
+            let start_ms = (pts * 1_000.0).round() as i64;
+            let valid_dur = dur_s.filter(|d| d.is_finite() && *d > 0.0 && *d <= 86_400.0);
+            let estimated = valid_dur.is_none();
+            let dur_ms = valid_dur
+                .map(|d| (d * 1_000.0).round() as i64)
+                .unwrap_or(2_500);
+            bucket.push(SubtitleCue {
+                start_ms,
+                end_ms: start_ms.saturating_add(dur_ms.max(1)),
+                text: String::new(),
+                estimated_end: estimated,
+            });
+        }
+    }
+
+    fn finish(mut self, text_indices: Vec<(usize, MatroskaSubtitleTrack)>) -> Option<Vec<ReferenceTrack>> {
+        let mut out = Vec::new();
+        for (sub_ordinal, track) in text_indices {
+            let Some(&stream_idx) = self.stream_indices.get(sub_ordinal) else {
+                continue;
+            };
+            let Some(mut cues) = self.packets_by_stream.remove(&stream_idx) else {
+                continue;
+            };
+            cues.sort_by_key(|c| c.start_ms);
+            cues.dedup_by_key(|c| c.start_ms);
+            if is_matroska_ass_codec(track.codec_id.as_deref()) {
+                cues = filter_indexed_ass_dialogue_cues(cues);
+            }
+            if cues.len() >= MIN_INDEXED_CUES
+                && cues.last().unwrap().start_ms - cues.first().unwrap().start_ms >= MIN_INDEXED_SPAN_MS
+            {
+                let lang = track
+                    .language_ietf
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                    .or(track.language.as_deref().filter(|s| !s.trim().is_empty()))
+                    .map(|s| s.to_string());
+                let label = track
+                    .name
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| build_fallback_track_label(&track));
+                out.push(ReferenceTrack {
+                    key: format!("ffprobe-pkts:{}", track.number),
+                    language: lang,
+                    label: Some(label),
+                    cues,
+                    is_forced: track.forced,
+                    is_commentary: track.commentary,
+                    is_descriptive: track.visual_impaired || track.text_descriptions,
+                    is_sdh: track.hearing_impaired,
+                    sampled: false,
+                });
+            }
+        }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
+}
+
 async fn ffprobe_mkv_text_subtitles(
     local_path: &Path,
     tracks: &[MatroskaSubtitleTrack],
 ) -> Option<Vec<ReferenceTrack>> {
+    use tokio::io::AsyncBufReadExt as _;
+
     let ffprobe = cached_ffprobe_path().await?;
     let text_indices = select_ffprobe_text_tracks(tracks);
     if text_indices.is_empty() {
         return None;
     }
 
-    let mut out = Vec::new();
-    for (sub_ordinal, track) in text_indices {
-        let mut cmd = tokio::process::Command::new(&ffprobe);
-        cmd.kill_on_drop(true);
-        cmd.arg("-v")
-            .arg("error")
-            .arg("-select_streams")
-            .arg(format!("s:{}", sub_ordinal))
-            .arg("-show_entries")
-            .arg("packet=pts_time,duration_time")
-            .arg("-of")
-            .arg("csv=p=0")
-            .arg(local_path)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        #[cfg(windows)]
-        {
-            cmd.creation_flags(0x0800_0000);
-        }
-        let Ok(Ok(output)) = tokio::time::timeout(FFPROBE_FALLBACK_TIMEOUT, cmd.output()).await
-        else {
-            continue;
-        };
-        if !output.status.success() {
-            continue;
-        }
-        let text = String::from_utf8_lossy(&output.stdout);
-        let mut cues = Vec::new();
-        for line in text.lines() {
-            let mut parts = line.split(',');
-            let Some(pts_s) = parts.next().and_then(|s| s.trim().parse::<f64>().ok()) else {
-                continue;
-            };
-            if !pts_s.is_finite() || pts_s < 0.0 {
-                continue;
-            }
-            let start_ms = (pts_s * 1_000.0).round() as i64;
-            let dur_s = parts
-                .next()
-                .and_then(|s| s.trim().parse::<f64>().ok())
-                .filter(|d| d.is_finite() && *d > 0.0);
-            let estimated = dur_s.is_none();
-            let dur_ms = dur_s.map(|d| (d * 1_000.0).round() as i64).unwrap_or(2_500);
-            cues.push(SubtitleCue {
-                start_ms,
-                end_ms: start_ms + dur_ms.max(1),
-                text: String::new(),
-                estimated_end: estimated,
-            });
-        }
-        cues.sort_by_key(|c| c.start_ms);
-        cues.dedup_by_key(|c| c.start_ms);
-        if is_matroska_ass_codec(track.codec_id.as_deref()) {
-            cues = filter_indexed_ass_dialogue_cues(cues);
-        }
-        if cues.len() >= MIN_INDEXED_CUES
-            && cues.last().unwrap().start_ms - cues.first().unwrap().start_ms >= MIN_INDEXED_SPAN_MS
-        {
-            let lang = track
-                .language_ietf
-                .as_deref()
-                .filter(|s| !s.trim().is_empty())
-                .or(track.language.as_deref().filter(|s| !s.trim().is_empty()))
-                .map(|s| s.to_string());
-            let label = track
-                .name
-                .as_deref()
-                .filter(|s| !s.trim().is_empty())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| build_fallback_track_label(&track));
-            out.push(ReferenceTrack {
-                key: format!("ffprobe-pkts:{}", track.number),
-                language: lang,
-                label: Some(label),
-                cues,
-                is_forced: track.forced,
-                is_commentary: track.commentary,
-                is_descriptive: track.visual_impaired || track.text_descriptions,
-                is_sdh: track.hearing_impaired,
-                sampled: false,
-            });
-        }
+    let mut cmd = tokio::process::Command::new(&ffprobe);
+    cmd.kill_on_drop(true);
+    cmd.arg("-v")
+        .arg("error")
+        .arg("-protocol_whitelist")
+        .arg("file")
+        .arg("-f")
+        .arg("matroska")
+        .arg("-select_streams")
+        .arg("s")
+        .arg("-show_entries")
+        .arg("stream=index:packet=stream_index,pts_time,duration_time")
+        .arg("-of")
+        .arg("compact=p=1")
+        .arg("-i")
+        .arg(local_path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(0x0800_0000);
     }
 
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    let mut child = cmd.spawn().ok()?;
+    let stdout = child.stdout.take()?;
+
+    let read_res = tokio::time::timeout(FFPROBE_FALLBACK_TIMEOUT, async {
+        let mut acc = FfprobeCompactAccumulator::default();
+        let mut reader = tokio::io::BufReader::new(stdout).lines();
+        let mut total_bytes = 0usize;
+        while let Ok(Some(line)) = reader.next_line().await {
+            total_bytes = total_bytes.saturating_add(line.len() + 1);
+            if total_bytes > MAX_FFPROBE_STDOUT_BYTES {
+                break;
+            }
+            acc.feed_line(&line);
+        }
+        let status = child.wait().await.ok()?;
+        if !status.success() {
+            return None;
+        }
+        Some(acc)
+    })
+    .await;
+
+    let acc = match read_res {
+        Ok(Some(a)) => a,
+        _ => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return None;
+        }
+    };
+
+    acc.finish(text_indices)
 }
 
 // ---------- MKV EBML Helpers ----------
@@ -1576,6 +1736,11 @@ fn parse_subtitle_cue_timelines(
         }
     });
 
+    for list in pending_by_track.values_mut() {
+        list.sort_by_key(|c| c.start_ms);
+        list.dedup_by_key(|c| c.start_ms);
+    }
+
     let mut peer_counts: Vec<usize> = subtitle_tracks
         .iter()
         .filter(|t| {
@@ -1597,9 +1762,7 @@ fn parse_subtitle_cue_timelines(
     let tracks_by_num: HashMap<i32, &MatroskaSubtitleTrack> =
         subtitle_tracks.iter().map(|t| (t.number, t)).collect();
     let mut out = HashMap::new();
-    for (trk_num, mut pending) in pending_by_track {
-        pending.sort_by_key(|c| c.start_ms);
-        pending.dedup_by_key(|c| c.start_ms);
+    for (trk_num, pending) in pending_by_track {
         let is_pgs = tracks_by_num
             .get(&trk_num)
             .and_then(|t| t.codec_id.as_deref())
@@ -1808,11 +1971,16 @@ async fn find_and_parse_cues_near_end(
         ) {
             Some(b) => Some(b),
             None => {
+                if start.saturating_add(tail.bytes.len() as u64) >= file_len {
+                    continue;
+                }
                 let abs = start + rel_offset as u64;
                 match fetch_element_at(reader, abs, ID_CUES, MAX_CUES_BYTES).await {
                     Ok(b) => b,
                     Err(TimedOrPermanent::Permanent) => continue,
-                    Err(TimedOrPermanent::Transient) => return Err(TimedOrPermanent::Transient),
+                    Err(e @ (TimedOrPermanent::Transient | TimedOrPermanent::Blocked)) => {
+                        return Err(e);
+                    }
                 }
             }
         };
@@ -1931,8 +2099,11 @@ fn vint_length(first_byte: u8) -> Option<usize> {
 
 fn read_unsigned(bytes: &[u8], el: EbmlElement) -> Option<u64> {
     let sz = el.size?;
-    if !(1..=8).contains(&sz) {
+    if sz > 8 {
         return None;
+    }
+    if sz == 0 {
+        return Some(0);
     }
     let end = el.data_start.checked_add(sz as usize)?;
     if end > bytes.len() {
@@ -2214,7 +2385,7 @@ mod tests {
 
         let mut reader = HttpRangeReader::new(format!("{r_url}/ssrf"), HashMap::new()).unwrap();
         let ssrf_res = reader.read_range(0, 128, false, false).await;
-        assert!(matches!(ssrf_res, Err(TimedOrPermanent::Permanent)));
+        assert!(matches!(ssrf_res, Err(TimedOrPermanent::Blocked)));
 
         t_task.abort();
         r_task.abort();
@@ -2342,6 +2513,129 @@ mod tests {
         let got = reader.read_range(0, 128, false, false).await.unwrap();
         assert_eq!(got.bytes.len(), 64);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn transient_http_429_and_503_are_unavailable_and_never_negatively_cached() {
+        use axum::{http::StatusCode, routing::get, Router};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        let mkv = Arc::new(build_synthetic_mkv(true, false));
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mkv_c = mkv.clone();
+        let hits_c = hits.clone();
+
+        let router = Router::new().route(
+            "/flaky.mkv",
+            get(move || {
+                use axum::response::IntoResponse;
+                let n = hits_c.fetch_add(1, Ordering::SeqCst);
+                let data = mkv_c.clone();
+                async move {
+                    if n == 0 {
+                        return (StatusCode::TOO_MANY_REQUESTS, Vec::<u8>::new()).into_response();
+                    }
+                    if n == 1 {
+                        return (StatusCode::SERVICE_UNAVAILABLE, Vec::<u8>::new()).into_response();
+                    }
+                    let len = data.len();
+                    (
+                        StatusCode::PARTIAL_CONTENT,
+                        [("content-range", format!("bytes 0-{}/{}", len - 1, len))],
+                        (*data).clone(),
+                    )
+                        .into_response()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/flaky.mkv", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+        let first = load_embedded_timeline(&url, &HashMap::new()).await;
+        assert!(matches!(first, ContainerLoadOutcome::Unavailable));
+
+        let second = load_embedded_timeline(&url, &HashMap::new()).await;
+        assert!(matches!(second, ContainerLoadOutcome::Unavailable));
+
+        let third = load_embedded_timeline(&url, &HashMap::new()).await;
+        assert!(matches!(third, ContainerLoadOutcome::Ready(_)));
+        assert!(hits.load(Ordering::SeqCst) >= 3);
+
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn public_http_stream_starts_with_allow_local_false_and_blocks_loopback_target() {
+        use axum::{http::StatusCode, routing::get, Router};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        let remote_reader =
+            HttpRangeReader::new("https://cdn.example.com/movie.mkv".to_string(), HashMap::new())
+                .unwrap();
+        assert!(!remote_reader.allow_local);
+
+        let loopback_hits = Arc::new(AtomicUsize::new(0));
+        let hits_c = loopback_hits.clone();
+        let router = Router::new().route(
+            "/secret.mkv",
+            get(move || {
+                let c = hits_c.clone();
+                async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    (StatusCode::PARTIAL_CONTENT, b"secret".to_vec())
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let loopback_url = url::Url::parse(&format!(
+            "http://{}/secret.mkv",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+        // Once allow_local has latched to false (as happens after touching any public origin),
+        // redirecting to loopback must be blocked before any TCP connection is opened.
+        let mut latched = remote_reader;
+        latched.url = loopback_url;
+        let res = latched.read_range(0, 64, false, false).await;
+        assert!(matches!(res, Err(TimedOrPermanent::Blocked)));
+        assert_eq!(loopback_hits.load(Ordering::SeqCst), 0);
+
+        task.abort();
+    }
+
+    #[test]
+    fn ebml_zero_byte_unsigned_vint_and_compact_ffprobe_accumulator() {
+        let zero_el = EbmlElement {
+            id: 0x53ac,
+            size: Some(0),
+            header_start: 0,
+            data_start: 3,
+            header_size: 3,
+        };
+        assert_eq!(read_unsigned(&[], zero_el), Some(0));
+
+        let mut acc = FfprobeCompactAccumulator::default();
+        acc.feed_line("stream|index=0");
+        acc.feed_line("packet|stream_index=0|pts_time=12.5|duration_time=1.5");
+        acc.feed_line("packet|stream_index=0|pts_time=-5.0|duration_time=1.0");
+        acc.feed_line("packet|stream_index=0|pts_time=20.0");
+        assert_eq!(acc.stream_indices, vec![0]);
+        let cues = acc.packets_by_stream.get(&0).expect("stream 0 bucket");
+        assert_eq!(cues.len(), 2);
+        assert_eq!(cues[0].start_ms, 12_500);
+        assert_eq!(cues[0].end_ms, 14_000);
+        assert!(!cues[0].estimated_end);
+        assert_eq!(cues[1].start_ms, 20_000);
+        assert!(cues[1].estimated_end);
     }
 }
 

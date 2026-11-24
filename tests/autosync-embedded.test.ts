@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 // @ts-expect-error Node test types are intentionally outside the browser-only tsconfig.
 import test from "node:test";
 import { parseStoredSettings } from "../src/lib/settings/load.ts";
+import { hasSensitiveRequestHeaders } from "../src/lib/fetch-fallback-policy.ts";
 import { takePreparedSubtitle } from "../src/lib/subtitles/prepared-registry.ts";
 import {
   collectSameLanguageCandidates,
@@ -46,7 +47,12 @@ test("trackAutoSyncKey distinguishes same-language external tracks by source URL
   });
   assert.notEqual(first, second);
   assert.equal(
-    trackAutoSyncKey({ id: "3", url: undefined, originalUrl: undefined, externalFilename: undefined }),
+    trackAutoSyncKey({
+      id: "3",
+      url: undefined,
+      originalUrl: undefined,
+      externalFilename: undefined,
+    }),
     "id:3",
   );
 });
@@ -358,7 +364,13 @@ test("commitSyncedSubtitleTrack and restoreRevertedSubtitleTrack handle mpv and 
   const restoredUrls: string[] = [];
 
   const htmlBridge = {
-    async addSubtitle(url: string, lang?: string, title?: string, select?: boolean, metadata?: Record<string, unknown>) {
+    async addSubtitle(
+      url: string,
+      lang?: string,
+      title?: string,
+      select?: boolean,
+      metadata?: Record<string, unknown>,
+    ) {
       restoredUrls.push(url);
       htmlTracks = [
         {
@@ -634,12 +646,21 @@ test("collectSameLanguageCandidates forwards episode and release metadata for ZI
 
 test("regression contracts: deferred replacement removal, popover held reset, restore guard, desktop gate", () => {
   const mpvSrc = readFileSync(new URL("../src/lib/player/mpv.ts", import.meta.url), "utf8");
-  const mpvAddBlock = mpvSrc.slice(mpvSrc.indexOf("async addSubtitle"), mpvSrc.indexOf("getSelectedTrackCues"));
+  const mpvAddBlock = mpvSrc.slice(
+    mpvSrc.indexOf("async addSubtitle"),
+    mpvSrc.indexOf("getSelectedTrackCues"),
+  );
   assert.ok(mpvAddBlock.indexOf('"mpv_sub_add"') > 0);
   assert.ok(mpvAddBlock.indexOf('"mpv_sub_remove"') > mpvAddBlock.indexOf('"mpv_sub_add"'));
 
-  const htmlSrc = readFileSync(new URL("../src/lib/player/html5/bridge.ts", import.meta.url), "utf8");
-  const htmlAddBlock = htmlSrc.slice(htmlSrc.indexOf("async addSubtitle"), htmlSrc.indexOf("getSelectedTrackCues"));
+  const htmlSrc = readFileSync(
+    new URL("../src/lib/player/html5/bridge.ts", import.meta.url),
+    "utf8",
+  );
+  const htmlAddBlock = htmlSrc.slice(
+    htmlSrc.indexOf("async addSubtitle"),
+    htmlSrc.indexOf("getSelectedTrackCues"),
+  );
   assert.ok(htmlAddBlock.indexOf("await ensureLoaded(track)") > 0);
   assert.ok(
     htmlAddBlock.indexOf("if (loaded) removeSupersededTrack()") >
@@ -650,7 +671,10 @@ test("regression contracts: deferred replacement removal, popover held reset, re
     new URL("../src/components/player/autosync/autosync-popover.tsx", import.meta.url),
     "utf8",
   );
-  assert.ok(popoverSrc.includes("if (!visible) {\n      setHeld(false);") || popoverSrc.includes("if (!visible)"));
+  assert.ok(
+    popoverSrc.includes("if (!visible) {\n      setHeld(false);") ||
+      popoverSrc.includes("if (!visible)"),
+  );
   assert.ok((popoverSrc.match(/setHeld\(false\)/g) ?? []).length >= 5);
 
   const autoloadSrc = readFileSync(
@@ -667,4 +691,276 @@ test("regression contracts: deferred replacement removal, popover held reset, re
   assert.ok(hookSrc.includes("isDesktopTauri()"));
   assert.ok(!hookSrc.includes("isNativeTauri"));
   assert.ok(hookSrc.includes('case "container_unavailable":'));
+  // Revert waits for restoreRevertedSubtitleTrack outcome and surfaces errors instead of dropping state eagerly.
+  assert.ok(hookSrc.includes("Could not restore original subtitle track."));
+
+  // HDR overlay forwards mediaKey on autosync actions, memoizes on primitives, and validates mediaKey on the bridge.
+  const hdrAppSrc = readFileSync(
+    new URL("../src/views/hdr-overlay-app.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(hdrAppSrc.includes("mediaKey: currentMediaKey"));
+  assert.ok(hdrAppSrc.includes("hasAutoSync,\n    asStatus,"));
+  const hdrBridgeSrc = readFileSync(
+    new URL("../src/views/player/hdr-stage-bridge.tsx", import.meta.url),
+    "utf8",
+  );
+  const autoSyncBindSlice = hdrBridgeSrc.slice(
+    hdrBridgeSrc.indexOf("await bind(HDR_STAGE_AUTOSYNC_RUN"),
+  );
+  assert.equal((autoSyncBindSlice.match(/isCurrentMediaRequest\(/g) ?? []).length, 5);
+
+  // AutosyncPopover dwell timer depends on primitives rather than handle object identity, and translates handle.errorMessage.
+  assert.ok(
+    popoverSrc.includes("}, [visible, held, handle.status, handle.trigger, handle.offsetMs]);"),
+  );
+  assert.ok(
+    popoverSrc
+      .replace(/\s+/g, " ")
+      .includes('handle.errorMessage ? tr(handle.errorMessage) : tr("Auto-sync failed")'),
+  );
+
+  // Subtitle menus gate Auto sync on desktop runtime.
+  const menuHeaderSrc = readFileSync(
+    new URL("../src/components/player/subtitle-menu/menu-header.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(menuHeaderSrc.includes("isDesktopTauri()"));
+  const bpSubSrc = readFileSync(
+    new URL("../src/views/big-picture/player/bp-player-subtitles.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(bpSubSrc.includes("isDesktopTauri()"));
+
+  // Legacy opensubtitlesApiKey is removed from Settings type/defaults and stripped on load.
+  const migrated = parseStoredSettings(
+    JSON.stringify({ opensubtitlesApiKey: "legacy-key", subtitleAutoSync: true }),
+  );
+  assert.equal("opensubtitlesApiKey" in (migrated as unknown as Record<string, unknown>), false);
+});
+
+test("audit regression behaviors: restore guard, stale commit, lang/providerDerived, blob rejection, and headers", async () => {
+  // 1. restoreRevertedSubtitleTrack does not touch subDelay when addSubtitle fails or revert is cancelled.
+  const calls: string[] = [];
+  let failAdd = true;
+  let cancelled = false;
+  const applied: AppliedAutoSyncState = {
+    originalTrack: {
+      id: "ext-orig",
+      lang: "en",
+      title: "Orig",
+      kind: "subtitle",
+      selected: false,
+      external: true,
+      originalUrl: "https://subs.example/orig.srt",
+      url: "https://subs.example/orig.srt",
+    },
+    replacedSelected: true,
+    originalTrackId: "ext-orig",
+    originalTrackKey: "https://subs.example/orig.srt",
+    committedTrackId: "ext-synced",
+    committedTrackKey: "https://subs.example/orig.srt",
+    originalBackupPath: null,
+    originalBackupText: "1\n00:00:01,000 --> 00:00:02,000\nHi\n",
+    originalBackupFormat: "srt",
+    subDelayBefore: -1.5,
+    scope: { mediaKey: "m1", trackId: "ext-orig" },
+    changed: true,
+  };
+  const bridge = {
+    async addSubtitle() {
+      calls.push("add");
+      return !failAdd;
+    },
+    setSubtitleTrack(id: string | null) {
+      calls.push(`select:${id}`);
+    },
+    setSubDelay(sec: number) {
+      calls.push(`delay:${sec}`);
+    },
+  };
+  const availableTracks = [
+    {
+      id: "ext-synced",
+      lang: "en",
+      title: "Synced",
+      kind: "subtitle" as const,
+      selected: true,
+      external: true,
+      autoSynced: true,
+    },
+  ];
+  const failedRestore = await restoreRevertedSubtitleTrack({
+    bridge,
+    applied,
+    currentSelected: null,
+    availableTracks,
+    engine: "html5",
+    commitOrigin: "manual",
+  });
+  assert.equal(failedRestore, false);
+  assert.deepEqual(calls, ["add"]);
+
+  failAdd = false;
+  cancelled = true;
+  calls.length = 0;
+  const cancelledRestore = await restoreRevertedSubtitleTrack({
+    bridge,
+    applied,
+    currentSelected: null,
+    availableTracks,
+    engine: "html5",
+    commitOrigin: "manual",
+    isCancelled: () => cancelled,
+  });
+  assert.equal(cancelledRestore, true);
+  assert.deepEqual(calls, ["add"]);
+
+  // When replacedSelected === false, missing originalTrackId returns false without calling setSubtitleTrack/setSubDelay.
+  calls.length = 0;
+  const missingOrig = await restoreRevertedSubtitleTrack({
+    bridge,
+    applied: { ...applied, replacedSelected: false, originalTrackId: "gone-track" },
+    currentSelected: null,
+    availableTracks,
+    engine: "mpv",
+    commitOrigin: "manual",
+  });
+  assert.equal(missingOrig, false);
+  assert.deepEqual(calls, []);
+
+  // 2. commitSyncedSubtitleTrack preserves staleCommit without calling setSubDelay(0).
+  calls.length = 0;
+  const staleRes = await commitSyncedSubtitleTrack({
+    bridge,
+    engine: "html5",
+    chosenUrl: "https://subs.example/orig.srt",
+    retimedPath: null,
+    retimedText: "1\n00:00:02,000 --> 00:00:03,000\nHi\n",
+    format: "srt",
+    lang: "en",
+    title: "Synced",
+    baseMetadata: {},
+    replaceExisting: true,
+    replaceTrackId: "ext-orig",
+    commitOrigin: "automatic",
+    getCurrentTracks: () => [
+      {
+        id: "ext-synced",
+        lang: "en",
+        kind: "subtitle",
+        selected: true,
+        external: true,
+        autoSynced: true,
+      },
+    ],
+    isStillCurrent: () => false,
+  });
+  assert.equal(staleRes.ok, true);
+  assert.equal(staleRes.staleCommit, true);
+  assert.deepEqual(calls, ["add"]);
+
+  // 3. collectSameLanguageCandidates requires a non-empty target language and sets providerDerived from localTrusted.
+  assert.deepEqual(
+    collectSameLanguageCandidates(
+      { lang: "", url: "https://subs.example/a.srt" },
+      [
+        {
+          id: "sub-1",
+          url: "https://subs.example/b.srt",
+          lang: "en",
+          format: "srt",
+        },
+      ],
+      [],
+    ),
+    [],
+  );
+  const picked = collectSameLanguageCandidates(
+    { lang: "en", url: "https://subs.example/a.srt" },
+    [
+      {
+        id: "trusted-local",
+        url: "http://127.0.0.1:8080/local.srt",
+        lang: "en",
+        format: "srt",
+        localTrusted: true,
+        downloadAuth: { provider: "opensubtitles", token: "tok" },
+      },
+      {
+        id: "remote-provider",
+        url: "https://subs.example/remote.srt",
+        lang: "en",
+        format: "srt",
+        downloadAuth: { provider: "opensubtitles", token: "tok" },
+      },
+    ],
+    [],
+  );
+  assert.equal(picked.length, 2);
+  assert.equal(picked.find((c) => c.subId === "trusted-local")?.localTrusted, true);
+  assert.equal(picked.find((c) => c.subId === "remote-provider")?.localTrusted, false);
+
+  // 4. resolveAutoSyncRunTarget rejects bare blob:/data: tracks lacking localPath/inlineText.
+  assert.equal(
+    resolveAutoSyncRunTarget({
+      currentSelected: {
+        id: "b1",
+        lang: "en",
+        kind: "subtitle",
+        selected: true,
+        external: true,
+        url: "blob:https://app.invalid/1234",
+      },
+      applied: EMPTY_APPLIED_STATE,
+      currentMediaKey: "m1",
+    }),
+    null,
+  );
+  assert.equal(
+    resolveAutoSyncRunTarget({
+      currentSelected: {
+        id: "d1",
+        lang: "en",
+        kind: "subtitle",
+        selected: true,
+        external: true,
+        url: "data:text/plain;base64,MQo=",
+      },
+      applied: EMPTY_APPLIED_STATE,
+      currentMediaKey: "m1",
+    }),
+    null,
+  );
+
+  // 5. X-Harbor-Public-Network-Only is flagged as a sensitive header for redirect stripping.
+  assert.equal(hasSensitiveRequestHeaders({ "X-Harbor-Public-Network-Only": "1" }), true);
+
+  // 6. Contract checks for mpv abort, FPS manual-timing suspension, nav desktop gate, URL validation, and i18n keys.
+  const mpvSrc = readFileSync(new URL("../src/lib/player/mpv.ts", import.meta.url), "utf8");
+  assert.ok(
+    mpvSrc.includes(
+      "if (metadata?.replaceExisting === true && selectionRequest && !selectAtCommit)",
+    ),
+  );
+
+  const fpsControlSrc = readFileSync(
+    new URL("../src/components/player/subtitle-menu/subtitle-fps-control.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(fpsControlSrc.includes("autoSync?.suspendForManualTiming ?? autoSync?.stop"));
+
+  const navSrc = readFileSync(new URL("../src/views/settings/nav.tsx", import.meta.url), "utf8");
+  assert.ok(navSrc.includes('isDesktopTauri() && settings.subtitleAutoSync ? "sync" : null'));
+
+  const gestdownSrc = readFileSync(
+    new URL("../src/lib/subtitles/autosync/sub-source-gestdown.ts", import.meta.url),
+    "utf8",
+  );
+  assert.ok(gestdownSrc.includes("resolveSubtitleDownloadUrl("));
+  const podnapisiSrc = readFileSync(
+    new URL("../src/lib/subtitles/autosync/sub-source-podnapisi.ts", import.meta.url),
+    "utf8",
+  );
+  assert.ok(podnapisiSrc.includes("resolveSubtitleDownloadUrl("));
 });

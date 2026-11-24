@@ -45,6 +45,7 @@ test("manual timing cancels background work without reverting the chosen delay",
   const awaitingCommitRef = { current: null as unknown };
   const scope = {
     manualTimingMediaRef,
+    revertTokenRef: { current: 0 },
     statusScopeRef,
     appliedRef,
     EMPTY_APPLIED_STATE: { changed: false },
@@ -57,10 +58,12 @@ test("manual timing cancels background work without reverting the chosen delay",
       canRevert = value;
     },
     setErrorMessage() {},
+    setErrorAction() {},
     setStatus() {},
   };
   callback("suspendForManualTiming", scope)();
   assert.equal(disposed, 1);
+  assert.equal(scope.revertTokenRef.current, 1);
   assert.equal(manualTimingMediaRef.current, "movie-A");
   assert.equal(statusScopeRef.current, null);
   assert.equal(canRevert, false);

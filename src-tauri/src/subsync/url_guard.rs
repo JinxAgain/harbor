@@ -18,23 +18,54 @@ const HOP_BY_HOP: &[&str] = &[
     "content-length",
 ];
 
-fn is_abs_path(value: &str) -> bool {
+fn is_local_abs_path(value: &str) -> bool {
     let bytes = value.as_bytes();
     (bytes.len() > 2 && bytes[1] == b':' && (bytes[2] == b'/' || bytes[2] == b'\\'))
-        || value.starts_with('/')
-        || value.starts_with("\\\\")
+        || (value.starts_with('/') && !value.starts_with("//"))
 }
 
-/// Resolves a local filesystem path from either a `file://` URL or an absolute path.
+fn is_abs_path(value: &str) -> bool {
+    is_local_abs_path(value) || value.starts_with("\\\\")
+}
+
+fn is_allowed_unc_host(host: &str) -> bool {
+    let trimmed = host.trim_start_matches('[').trim_end_matches(']').trim_end_matches('.');
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower == "metadata.google.internal" {
+        return false;
+    }
+    if let Ok(ip) = trimmed.parse::<IpAddr>() {
+        return check_ip(ip, true).is_ok();
+    }
+    true
+}
+
+/// Resolves a local filesystem path for media playback from either a `file://` URL or an absolute path.
+/// Allows NAS/SMB UNC paths except link-local, unspecified, or cloud metadata hosts.
 pub(crate) fn local_file_path(source: &str) -> Option<PathBuf> {
     let trimmed = source.trim();
     if trimmed.to_ascii_lowercase().starts_with("file://") {
         if let Ok(parsed) = url::Url::parse(trimmed) {
+            if let Some(host) = parsed.host_str() {
+                if !host.is_empty() && !is_allowed_unc_host(host) {
+                    return None;
+                }
+            }
             if let Ok(path) = parsed.to_file_path() {
                 return Some(path);
             }
         }
         return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix("\\\\") {
+        let host = rest.split(['\\', '/']).next().unwrap_or("");
+        if !is_allowed_unc_host(host) {
+            return None;
+        }
+        return Some(PathBuf::from(trimmed));
     }
     if is_abs_path(trimmed) {
         return Some(PathBuf::from(trimmed));
@@ -42,25 +73,53 @@ pub(crate) fn local_file_path(source: &str) -> Option<PathBuf> {
     None
 }
 
+/// Resolves a strictly local subtitle file path, rejecting UNC shares, remote `file://` hosts,
+/// and relative paths.
+pub(crate) fn local_subtitle_path(source: &str) -> Option<PathBuf> {
+    let trimmed = source.trim();
+    if trimmed.starts_with("\\\\") || trimmed.starts_with("//") {
+        return None;
+    }
+    if trimmed.to_ascii_lowercase().starts_with("file://") {
+        let parsed = url::Url::parse(trimmed).ok()?;
+        if let Some(host) = parsed.host_str() {
+            if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+                return None;
+            }
+        }
+        return parsed.to_file_path().ok();
+    }
+    if is_local_abs_path(trimmed) {
+        return Some(PathBuf::from(trimmed));
+    }
+    None
+}
+
 fn is_disallowed_ipv4(ip: Ipv4Addr, allow_lan_and_loopback: bool) -> Result<(), String> {
-    let octets = ip.octets();
-    if octets[0] == 0
-        || ip.is_link_local()
-        || ip.is_unspecified()
-        || ip.is_broadcast()
-        || ip.is_multicast()
+    let [a, b, c, _] = ip.octets();
+    if a == 0
+        || (a == 169 && b == 254)
+        || (a == 192 && b == 0)
+        || (a == 192 && b == 88 && c == 99)
+        || (a == 198 && (b == 18 || b == 19))
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
+        || a >= 224
     {
         return Err("internal-ip-blocked".into());
     }
-    if ip.is_loopback() {
+    if a == 127 {
         return if allow_lan_and_loopback {
             Ok(())
         } else {
             Err("loopback-blocked".into())
         };
     }
-    let shared_cgnat = octets[0] == 100 && (octets[1] & 0xc0) == 0x40;
-    if ip.is_private() || shared_cgnat {
+    let lan_or_reserved = a == 10
+        || (a == 100 && (64..=127).contains(&b))
+        || (a == 172 && (16..=31).contains(&b))
+        || (a == 192 && b == 168);
+    if lan_or_reserved {
         return if allow_lan_and_loopback {
             Ok(())
         } else {
@@ -71,16 +130,25 @@ fn is_disallowed_ipv4(ip: Ipv4Addr, allow_lan_and_loopback: bool) -> Result<(), 
 }
 
 fn is_disallowed_ipv6(ip: Ipv6Addr, allow_lan_and_loopback: bool) -> Result<(), String> {
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return is_disallowed_ipv4(v4, allow_lan_and_loopback);
+    }
     if ip.is_unspecified() || ip.is_multicast() {
         return Err("internal-ip-blocked".into());
     }
     let seg = ip.segments();
-    // fe80::/10 link-local is always blocked (cloud/host metadata surface).
-    if (seg[0] & 0xffc0) == 0xfe80 {
+    // fe80::/10 link-local and AWS IPv6 IMDS (fd00:ec2::254) are always blocked.
+    if (seg[0] & 0xffc0) == 0xfe80 || seg == [0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254] {
         return Err("internal-ip-blocked".into());
     }
-    if let Some(v4) = ip.to_ipv4_mapped() {
-        return is_disallowed_ipv4(v4, allow_lan_and_loopback);
+    // Strict global-unicast allowlist matching http_fetch::is_public_network_ip
+    // (excludes 2002::/16 6to4, 2001:db8::/32 doc, 2001:0000::/23 IETF/Teredo, NAT64, site-local, etc.).
+    let is_global_unicast = (seg[0] & 0xe000) == 0x2000
+        && seg[0] != 0x2002
+        && !(seg[0] == 0x2001 && seg[1] == 0x0db8)
+        && !(seg[0] == 0x2001 && seg[1] < 0x0200);
+    if is_global_unicast {
+        return Ok(());
     }
     if ip.is_loopback() {
         return if allow_lan_and_loopback {
@@ -97,7 +165,7 @@ fn is_disallowed_ipv6(ip: Ipv6Addr, allow_lan_and_loopback: bool) -> Result<(), 
             Err("internal-ip-blocked".into())
         };
     }
-    Ok(())
+    Err("internal-ip-blocked".into())
 }
 
 pub(crate) fn check_ip(ip: IpAddr, allow_lan_and_loopback: bool) -> Result<(), String> {
@@ -105,6 +173,16 @@ pub(crate) fn check_ip(ip: IpAddr, allow_lan_and_loopback: bool) -> Result<(), S
         IpAddr::V4(v4) => is_disallowed_ipv4(v4, allow_lan_and_loopback),
         IpAddr::V6(v6) => is_disallowed_ipv6(v6, allow_lan_and_loopback),
     }
+}
+
+fn is_local_domain_name(lower: &str) -> bool {
+    lower == "localhost"
+        || lower == "home.arpa"
+        || lower.ends_with(".localhost")
+        || lower.ends_with(".local")
+        || lower.ends_with(".internal")
+        || lower.ends_with(".home.arpa")
+        || lower.ends_with(".lan")
 }
 
 fn check_host(parsed: &url::Url, allow_lan_and_loopback: bool) -> Result<(), String> {
@@ -122,12 +200,7 @@ fn check_host(parsed: &url::Url, allow_lan_and_loopback: bool) -> Result<(), Str
     if lower == "metadata.google.internal" || lower == "169.254.169.254" {
         return Err("internal-ip-blocked".into());
     }
-    if !allow_lan_and_loopback
-        && (lower == "localhost"
-            || lower.ends_with(".localhost")
-            || lower.ends_with(".local")
-            || lower.ends_with(".internal"))
-    {
+    if !allow_lan_and_loopback && is_local_domain_name(&lower) {
         return Err("local-hostname-blocked".into());
     }
     Ok(())
@@ -138,6 +211,31 @@ pub(crate) fn check_http_url(parsed: &url::Url, allow_lan_and_loopback: bool) ->
         "http" | "https" => check_host(parsed, allow_lan_and_loopback),
         _ => Err("scheme-not-allowed".into()),
     }
+}
+
+/// Returns true only when a URL explicitly names a loopback or private LAN target
+/// (explicit private/loopback IP literal or local hostname) rather than a public domain.
+pub(crate) fn is_explicit_local_or_lan_host(parsed: &url::Url) -> bool {
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let trimmed = host.trim_start_matches('[').trim_end_matches(']').trim_end_matches('.');
+    if trimmed.is_empty() {
+        return false;
+    }
+    if let Ok(ip) = trimmed.parse::<IpAddr>() {
+        return check_ip(ip, false).is_err() && check_ip(ip, true).is_ok();
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower == "metadata.google.internal" {
+        return false;
+    }
+    !lower.contains('.') || is_local_domain_name(&lower)
+}
+
+/// Returns true when at least one resolved address is a publicly routable IP.
+pub(crate) fn any_addr_is_public(addrs: &[SocketAddr]) -> bool {
+    addrs.iter().any(|addr| check_ip(addr.ip(), false).is_ok())
 }
 
 pub(crate) async fn resolve_and_validate_http_target(
@@ -174,11 +272,15 @@ pub(crate) fn build_pinned_http_client(
     addrs: &[SocketAddr],
     connect_timeout: Duration,
     total_timeout: Option<Duration>,
+    disable_gzip: bool,
 ) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(connect_timeout);
+    if disable_gzip {
+        builder = builder.no_gzip();
+    }
     if let Some(t) = total_timeout {
         builder = builder.timeout(t);
     }
@@ -200,7 +302,7 @@ pub(crate) fn validate_playback_media_url(source: &str) -> Result<(), String> {
         return Ok(());
     }
     let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("file://") {
+    if lower.starts_with("file://") || trimmed.starts_with("\\\\") {
         return Err("invalid-local-path".into());
     }
     let parsed = url::Url::parse(trimmed).map_err(|_| "invalid-url".to_string())?;
@@ -230,7 +332,12 @@ pub(crate) fn safe_header_blob(headers: &HashMap<String, String>) -> String {
     let mut blob = String::new();
     for (k, v) in headers {
         let lk = k.to_ascii_lowercase();
-        if lk == "user-agent" || HOP_BY_HOP.contains(&lk.as_str()) || has_ctl(k) || has_ctl(v) {
+        if lk == "user-agent"
+            || lk.starts_with("x-harbor-")
+            || HOP_BY_HOP.contains(&lk.as_str())
+            || has_ctl(k)
+            || has_ctl(v)
+        {
             continue;
         }
         blob.push_str(&format!("{}: {}\r\n", k, v));
@@ -248,7 +355,7 @@ pub(crate) fn safe_reqwest_headers(
         if HOP_BY_HOP.contains(&lk.as_str()) || has_ctl(k) || has_ctl(v) {
             continue;
         }
-        if lk == "x-harbor-subtitle-credential" || lk == "x-harbor-subtitle-public-network" {
+        if lk.starts_with("x-harbor-") {
             continue;
         }
         if skip_range_and_encoding && (lk == "range" || lk == "accept-encoding") {
@@ -341,5 +448,73 @@ mod tests {
             assert_eq!(resolved_host, "localhost");
             assert!(!resolved_addrs.is_empty());
         }
+    }
+
+    #[test]
+    fn explicit_local_host_and_public_addr_helpers_classify_accurately() {
+        for url in [
+            "http://127.0.0.1:11470/stream.mkv",
+            "http://[::1]:8096/stream.mkv",
+            "http://192.168.1.50:32400/library/parts/1/file.mkv",
+            "http://localhost:8096/video.mkv",
+            "http://nas:8080/video.mkv",
+            "http://media-box.local/video.mkv",
+            "http://plex.internal/video.mkv",
+        ] {
+            let parsed = url::Url::parse(url).unwrap();
+            assert!(is_explicit_local_or_lan_host(&parsed), "expected local for {url}");
+        }
+
+        for url in [
+            "https://cdn.example.com/movie.mkv",
+            "https://8.8.8.8/movie.mkv",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://metadata.google.internal/computeMetadata/v1/",
+            "http://[fe80::1]/movie.mkv",
+        ] {
+            let parsed = url::Url::parse(url).unwrap();
+            assert!(!is_explicit_local_or_lan_host(&parsed), "expected non-local for {url}");
+        }
+
+        let public_addrs = vec!["93.184.216.34:443".parse::<SocketAddr>().unwrap()];
+        let local_addrs = vec!["127.0.0.1:8080".parse::<SocketAddr>().unwrap()];
+        assert!(any_addr_is_public(&public_addrs));
+        assert!(!any_addr_is_public(&local_addrs));
+    }
+
+    #[test]
+    fn blocks_cgnat_benchmark_docs_aws_ipv6_imds_and_strips_harbor_policy_headers_and_unc() {
+        assert!(validate_subtitle_candidate_url("http://100.64.0.1/sub.srt", false).is_err());
+        assert!(validate_playback_media_url("http://198.18.0.1/video.mkv").is_err());
+        assert!(validate_playback_media_url("http://192.0.2.1/video.mkv").is_err());
+        assert!(validate_playback_media_url("http://[fd00:ec2::254]/latest").is_err());
+        assert!(validate_subtitle_candidate_url("http://nas.home.arpa/sub.srt", false).is_err());
+        assert!(validate_subtitle_candidate_url("http://nas.lan/sub.srt", true).is_ok());
+
+        let home_arpa = url::Url::parse("http://nas.home.arpa/video.mkv").unwrap();
+        let lan = url::Url::parse("http://nas.lan/video.mkv").unwrap();
+        assert!(is_explicit_local_or_lan_host(&home_arpa));
+        assert!(is_explicit_local_or_lan_host(&lan));
+
+        let mut h = HashMap::new();
+        h.insert("X-Harbor-Public-Network-Only".into(), "1".into());
+        h.insert("X-Harbor-Subtitle-Credential".into(), "secret".into());
+        h.insert("User-Agent".into(), "Harbor/1.0".into());
+        let blob = safe_header_blob(&h).to_ascii_lowercase();
+        assert!(!blob.contains("x-harbor-"));
+        let req = safe_reqwest_headers(&h, true);
+        assert!(!req
+            .iter()
+            .any(|(k, _)| k.to_ascii_lowercase().starts_with("x-harbor-")));
+        assert_eq!(
+            req.iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("user-agent"))
+                .map(|(_, v)| v.as_str()),
+            Some("Harbor/1.0")
+        );
+
+        assert!(local_subtitle_path(r"\\server\share\sub.srt").is_none());
+        assert!(local_subtitle_path("file://server/share/sub.srt").is_none());
+        assert!(local_subtitle_path("relative/sub.srt").is_none());
     }
 }

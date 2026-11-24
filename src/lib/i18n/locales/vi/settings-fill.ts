@@ -31,8 +31,6 @@ const settingsFill: Record<string, string> = {
   "Keeps watching through playback and gently re-nudges the timing if the subtitle slips out of sync partway through.":
     "Liên tục theo dõi trong khi phát và nhẹ nhàng căn lại thời gian nếu phụ đề bị lệch đồng bộ giữa chừng.",
   "Smart resync with speech recognition": "Đồng bộ lại thông minh bằng nhận dạng giọng nói",
-  "For the hardest files and the Try again button, Harbor transcribes a little speech on your device and lines the subtitle up to the actual words. Needs a build with the asr-whisper feature and downloads a small model the first time you use it.":
-    "Với những tệp khó xử lý nhất và nút Thử lại, Harbor chép lời một đoạn hội thoại ngắn ngay trên thiết bị rồi căn phụ đề theo lời nói thực tế. Cần bản dựng có tính năng asr-whisper và sẽ tải xuống một mô hình nhỏ trong lần sử dụng đầu tiên.",
   "Community sync": "Đồng bộ cộng đồng",
   "A good correction only has to be found once. Harbor can share verified fixes so the next person with the same file and subtitle gets an instant result. Records are keyed by salted fingerprints, never your files or anything personal.":
     "Một bản sửa tốt chỉ cần được tìm ra một lần. Harbor có thể chia sẻ các bản sửa đã xác minh để người tiếp theo dùng cùng tệp và phụ đề nhận kết quả tức thì. Bản ghi được định danh bằng dấu vân tay đã thêm salt, tuyệt đối không dùng tệp hay thông tin cá nhân của bạn.",

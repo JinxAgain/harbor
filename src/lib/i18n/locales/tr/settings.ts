@@ -1085,8 +1085,6 @@ const settings: Record<string, string> = {
     "Dizüstü bilgisayar hoparlörleri ve kulaklıklar içindir. 5.1 veya 7.1 çevresel ses için mikslenmiş filmler iki hoparlörde boş tınlayabilir veya diyaloglar kısık kalabilir. Bu ayar sesi doğru şekilde stereoya indirger.",
   "For reliable HDR on this display, switch to True HDR, separate window in Settings.":
     "Bu ekranda güvenilir HDR için Ayarlar'dan Gerçek HDR, ayrı pencere seçeneğine geçin.",
-  "For the hardest files and the Try again button, Harbor transcribes a little speech on your device and lines the subtitle up to the actual words. Needs a build with the asr-whisper feature and downloads a small model the first time you use it.":
-    "Harbor, en zorlu dosyalarda ve Yeniden dene düğmesi kullanıldığında cihazınızda kısa bir konuşma bölümünü yazıya dökerek altyazıyı söylenen gerçek kelimelerle hizalar. asr-whisper özelliğini içeren bir derleme gerektirir ve ilk kullanımda küçük bir model indirir.",
   "For the manual path:": "Manuel yöntem için:",
   "For the manual path: {code} 20+ and {code} CLI.": "Manuel yol için: {code} 20+ ve {code} CLI.",
   "For users who want to deploy themselves or already have a wrangler workflow.":

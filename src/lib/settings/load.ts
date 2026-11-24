@@ -318,11 +318,16 @@ export function parseStoredSettings(raw: string | null): Settings {
       parsed.songCardPosition = DEFAULT.songCardPosition;
     }
     if (parsed.aiSearchModel) parsed.aiSearchModel = migrateModelId(parsed.aiSearchModel);
-    if (typeof parsed.steamSearchShortcut !== "boolean") parsed.steamSearchShortcut = DEFAULT.steamSearchShortcut;
-    if (!["first", "random", "manual"].includes(parsed.gameArtworkSelection as string)) parsed.gameArtworkSelection = DEFAULT.gameArtworkSelection;
-    if (typeof parsed.gameArtworkScreenshots !== "boolean") parsed.gameArtworkScreenshots = DEFAULT.gameArtworkScreenshots;
-    if (typeof parsed.gameArtworkCoverIcon !== "boolean") parsed.gameArtworkCoverIcon = DEFAULT.gameArtworkCoverIcon;
-    if (parsed.gameAgeRatingAgency !== "ESRB" && parsed.gameAgeRatingAgency !== "PEGI") parsed.gameAgeRatingAgency = DEFAULT.gameAgeRatingAgency;
+    if (typeof parsed.steamSearchShortcut !== "boolean")
+      parsed.steamSearchShortcut = DEFAULT.steamSearchShortcut;
+    if (!["first", "random", "manual"].includes(parsed.gameArtworkSelection as string))
+      parsed.gameArtworkSelection = DEFAULT.gameArtworkSelection;
+    if (typeof parsed.gameArtworkScreenshots !== "boolean")
+      parsed.gameArtworkScreenshots = DEFAULT.gameArtworkScreenshots;
+    if (typeof parsed.gameArtworkCoverIcon !== "boolean")
+      parsed.gameArtworkCoverIcon = DEFAULT.gameArtworkCoverIcon;
+    if (parsed.gameAgeRatingAgency !== "ESRB" && parsed.gameAgeRatingAgency !== "PEGI")
+      parsed.gameAgeRatingAgency = DEFAULT.gameAgeRatingAgency;
     if (parsed.aiSearchProvider !== "groq" && parsed.aiSearchProvider !== "openrouter") {
       parsed.aiSearchProvider = parsed.aiSearchModel
         ? providerTabFor(parsed.aiSearchModel)
@@ -368,6 +373,7 @@ export function parseStoredSettings(raw: string | null): Settings {
       "subtitleAutoSyncCrowd",
       "communitySyncUrl",
       "communitySyncOptOut",
+      "opensubtitlesApiKey",
     ]) {
       delete (parsed as Record<string, unknown>)[legacyKey];
     }

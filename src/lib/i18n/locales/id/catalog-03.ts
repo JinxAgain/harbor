@@ -907,8 +907,6 @@ const catalog: Record<string, string> = {
     "Agar HDR andal di layar ini, beralihlah ke True HDR, jendela terpisah di Pengaturan.",
   "For series and anime, keep playing the rest of the season from the release you first picked. Applies whether Play is instant or manual.":
     "Untuk serial dan anime, lanjutkan memutar sisa musim dari rilisan yang pertama kali Anda pilih. Berlaku baik saat Putar berlangsung instan maupun manual.",
-  "For the hardest files and the Try again button, Harbor transcribes a little speech on your device and lines the subtitle up to the actual words. Needs a build with the asr-whisper feature and downloads a small model the first time you use it.":
-    "Untuk file yang paling sulit dan tombol Coba lagi, Harbor mentranskripsikan sedikit ucapan di perangkat Anda lalu menyelaraskan subtitle dengan kata-kata yang sebenarnya. Memerlukan build dengan fitur asr-whisper dan akan mengunduh model kecil saat pertama kali digunakan.",
   "For the manual path:": "Untuk cara manual:",
   "For the manual path: {code} 20+ and {code} CLI.":
     "Untuk cara manual: {code} 20+ dan CLI {code}.",

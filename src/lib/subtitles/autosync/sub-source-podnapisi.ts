@@ -1,6 +1,7 @@
 import { safeFetch } from "@/lib/safe-fetch";
 import { normalizeLang } from "@/lib/subtitles/language";
 import type { SubSearchQuery } from "@/lib/subtitles/types";
+import { resolveSubtitleDownloadUrl } from "./download-url";
 import {
   isSeries,
   wantedLangs,
@@ -30,12 +31,17 @@ function tag(el: Element, name: string): string | null {
   return el.getElementsByTagName(name)[0]?.textContent?.trim() || null;
 }
 
-async function searchByHash(q: SubSearchQuery, ctx: ProviderCtx): Promise<SourceSubCandidate[] | null> {
+async function searchByHash(
+  q: SubSearchQuery,
+  ctx: ProviderCtx,
+): Promise<SourceSubCandidate[] | null> {
   if (!q.videoHash) return null;
   const url = `${BASE}/subtitles/search/old?sMH=${encodeURIComponent(q.videoHash)}&sXML=1`;
   let res: Response;
   try {
-    res = await safeFetch(url, { headers: { "User-Agent": ctx.userAgent, Accept: "application/xml" } });
+    res = await safeFetch(url, {
+      headers: { "User-Agent": ctx.userAgent, Accept: "application/xml" },
+    });
   } catch {
     return null;
   }
@@ -87,7 +93,10 @@ type PnRow = {
   url?: string;
 };
 
-async function searchByMeta(q: SubSearchQuery, ctx: ProviderCtx): Promise<SourceSubCandidate[] | null> {
+async function searchByMeta(
+  q: SubSearchQuery,
+  ctx: ProviderCtx,
+): Promise<SourceSubCandidate[] | null> {
   if (!q.title) return [];
   const langs = wantedLangs(q);
   const params = new URLSearchParams({
@@ -122,8 +131,8 @@ async function searchByMeta(q: SubSearchQuery, ctx: ProviderCtx): Promise<Source
     return {
       provider: "podnapisi",
       id: r.id ?? `${lang}:${r.releases?.[0] ?? ""}`,
-      url: dl ? `${BASE}${dl.startsWith("/") ? dl : `/${dl}`}` : null,
-      pageUrl: r.url ? `${BASE}${r.url}` : null,
+      url: resolveSubtitleDownloadUrl(dl, BASE),
+      pageUrl: resolveSubtitleDownloadUrl(r.url, BASE),
       lang,
       release: r.releases?.[0] ?? null,
       format: "zip",

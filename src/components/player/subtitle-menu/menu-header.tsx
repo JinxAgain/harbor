@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import { UiIcon } from "@/components/ui-icon";
 import type { TrackInfo } from "@/lib/player/bridge";
 import { useT } from "@/lib/i18n";
+import { isDesktopTauri } from "@/lib/platform";
 import { useAutoSyncHandle } from "@/components/player/autosync/autosync-store";
 import { HoverTooltip } from "@/components/hover-tooltip";
 import { SubtitleFpsControl } from "./subtitle-fps-control";
@@ -23,9 +24,8 @@ export function MenuHeader(p: Props) {
   const tr = useT();
   const autoSync = useAutoSyncHandle();
 
-  const autoSyncOn =
-    autoSync?.status === "analyzing" || autoSync?.status === "synced";
-  const canAutoSync = p.selectedTrack?.external === true || autoSyncOn;
+  const autoSyncOn = autoSync?.status === "analyzing" || autoSync?.status === "synced";
+  const canAutoSync = isDesktopTauri() && (p.selectedTrack?.external === true || autoSyncOn);
 
   return (
     <header className="flex items-center justify-between border-b border-edge-soft pe-4 ps-10 py-2.5">

@@ -1155,6 +1155,39 @@ const uiFallback: Record<string, string> = {
     "Show or hide the in-player keyboard shortcuts overlay.",
   "Press {key} or Esc to close": "Press {key} or Esc to close",
   "Close keyboard shortcuts": "Close keyboard shortcuts",
+  "Align external subtitles against the video's embedded subtitle tracks. Works across languages without decoding audio.":
+    "Align external subtitles against the video's embedded subtitle tracks. Works across languages without decoding audio.",
+  "Automatically match external subtitles to embedded subtitle timing when playback starts. Off by default.":
+    "Automatically match external subtitles to embedded subtitle timing when playback starts. Off by default.",
+  "Embedded subtitle auto-sync is available only in the Harbor desktop app.":
+    "Embedded subtitle auto-sync is available only in the Harbor desktop app.",
+  "Sync mode": "Sync mode",
+  "Stops at the first reliable subtitle match for faster startup.":
+    "Stops at the first reliable subtitle match for faster startup.",
+  "Checks more candidates and applies the strongest alignment.":
+    "Checks more candidates and applies the strongest alignment.",
+  Quick: "Quick",
+  Thorough: "Thorough",
+  "Sync tolerance": "Sync tolerance",
+  "Skip rewriting subtitles whose maximum timing shift is already within this threshold.":
+    "Skip rewriting subtitles whose maximum timing shift is already within this threshold.",
+  "Syncing subtitles…": "Syncing subtitles…",
+  "Subtitles synced ({shift})": "Subtitles synced ({shift})",
+  "Subtitles already in sync": "Subtitles already in sync",
+  "No embedded subtitle reference found": "No embedded subtitle reference found",
+  "Auto-sync failed": "Auto-sync failed",
+  "Could not auto-sync subtitles": "Could not auto-sync subtitles",
+  "Could not restore original subtitle track.": "Could not restore original subtitle track.",
+  "Embedded subtitle auto-sync requires desktop runtime.":
+    "Embedded subtitle auto-sync requires desktop runtime.",
+  "Original subtitle source is unavailable for re-sync.":
+    "Original subtitle source is unavailable for re-sync.",
+  "Could not reach video stream for subtitle alignment.":
+    "Could not reach video stream for subtitle alignment.",
+  "Could not load synced subtitle track.": "Could not load synced subtitle track.",
+  "{label}, sync options": "{label}, sync options",
+  "Auto synced": "Auto synced",
+  "Re-sync": "Re-sync",
 };
 
 export default uiFallback;

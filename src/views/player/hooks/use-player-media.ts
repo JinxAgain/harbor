@@ -183,10 +183,12 @@ export function usePlayerMedia(params: {
     withinTolerance: asWithinTolerance,
     canRevert: asCanRevert,
     errorMessage: asErrorMessage,
+    errorAction: asErrorAction,
     run: asRun,
     stop: asStop,
     revert: asRevert,
     dismiss: asDismiss,
+    suspendForManualTiming: asSuspendForManualTiming,
   } = autoSync;
   useEffect(() => {
     publishAutoSync({
@@ -197,10 +199,12 @@ export function usePlayerMedia(params: {
       withinTolerance: asWithinTolerance,
       canRevert: asCanRevert,
       errorMessage: asErrorMessage,
+      errorAction: asErrorAction,
       run: asRun,
       stop: asStop,
       revert: asRevert,
       dismiss: asDismiss,
+      suspendForManualTiming: asSuspendForManualTiming,
     });
     return () => publishAutoSync(null);
   }, [
@@ -211,10 +215,12 @@ export function usePlayerMedia(params: {
     asWithinTolerance,
     asCanRevert,
     asErrorMessage,
+    asErrorAction,
     asRun,
     asStop,
     asRevert,
     asDismiss,
+    asSuspendForManualTiming,
   ]);
 
   const hdrAutoSyncState = useMemo<HdrStageAutoSyncState>(
@@ -226,6 +232,7 @@ export function usePlayerMedia(params: {
       withinTolerance: asWithinTolerance,
       canRevert: asCanRevert,
       errorMessage: asErrorMessage,
+      errorAction: asErrorAction,
     }),
     [
       asStatus,
@@ -235,6 +242,7 @@ export function usePlayerMedia(params: {
       asWithinTolerance,
       asCanRevert,
       asErrorMessage,
+      asErrorAction,
     ],
   );
 
@@ -244,8 +252,9 @@ export function usePlayerMedia(params: {
       stop: asStop,
       revert: asRevert,
       dismiss: asDismiss,
+      suspendForManualTiming: asSuspendForManualTiming,
     }),
-    [asRun, asStop, asRevert, asDismiss],
+    [asRun, asStop, asRevert, asDismiss, asSuspendForManualTiming],
   );
 
   // Whether the video actually renders inside Harbor's webview. This mirrors the
@@ -280,10 +289,7 @@ export function usePlayerMedia(params: {
   const imageNativeActive = selectedImageSub && (subNativeRender || !subEmbed);
   const assNormalizeScale = useAssNormalize({
     enabled:
-      engine === "mpv" &&
-      (settings.subAssNormalizeSize || settings.subAssOverride === "scale") &&
-      assNativeActive &&
-      !subAssOverridden,
+      engine === "mpv" && settings.subAssNormalizeSize && assNativeActive && !subAssOverridden,
     sourceUrl: src.url ?? null,
     headers: src.headers,
     track: selectedSubTrack,

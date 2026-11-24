@@ -17,6 +17,7 @@ export const HDR_STAGE_AUTOSYNC_RUN = "hdr-stage://autosync-run";
 export const HDR_STAGE_AUTOSYNC_STOP = "hdr-stage://autosync-stop";
 export const HDR_STAGE_AUTOSYNC_REVERT = "hdr-stage://autosync-revert";
 export const HDR_STAGE_AUTOSYNC_DISMISS = "hdr-stage://autosync-dismiss";
+export const HDR_STAGE_AUTOSYNC_SUSPEND = "hdr-stage://autosync-suspend";
 
 export type HdrStageSubDelayRequest = {
   mediaKey: string;
@@ -24,20 +25,18 @@ export type HdrStageSubDelayRequest = {
 };
 
 export type HdrStageAutoSyncState = {
-  status:
-    | "idle"
-    | "analyzing"
-    | "synced"
-    | "within-tolerance"
-    | "no-fit"
-    | "no-embedded"
-    | "error";
+  status: "idle" | "analyzing" | "synced" | "within-tolerance" | "no-fit" | "no-embedded" | "error";
   trigger: "automatic" | "manual";
   offsetMs: number | null;
   scale: number | null;
   withinTolerance: boolean;
   canRevert: boolean;
   errorMessage: string | null;
+  errorAction?: "run" | "revert";
+};
+
+export type HdrStageAutoSyncActionRequest = {
+  mediaKey: string;
 };
 
 export type HdrStageSubtitleTrackRequest = {

@@ -7,12 +7,14 @@ import {
   HDR_STAGE_AUTOSYNC_REVERT,
   HDR_STAGE_AUTOSYNC_RUN,
   HDR_STAGE_AUTOSYNC_STOP,
+  HDR_STAGE_AUTOSYNC_SUSPEND,
   HDR_STAGE_SET_SECONDARY_SUBTITLE_TRACK,
   HDR_STAGE_SET_SUB_DELAY,
   HDR_STAGE_SET_SUBTITLE_TRACK,
   hdrOverlayEmitProps,
   type HdrStageAddSubtitleRequest,
   type HdrStageAddSubtitleResult,
+  type HdrStageAutoSyncActionRequest,
   type HdrStageSubDelayRequest,
   type HdrStageSubtitleTrackRequest,
   type HdrNavigationRequest,
@@ -44,6 +46,7 @@ export type HdrStageHandlers = {
   autoSyncStop: () => void;
   autoSyncRevert: () => void;
   autoSyncDismiss: () => void;
+  autoSyncSuspend?: () => void;
 } & Pick<PlayerBridge, "setSubtitleTrack" | "setSecondarySubtitleTrack" | "addSubtitle">;
 
 export function HdrStageBridge({
@@ -197,10 +200,31 @@ export function HdrStageBridge({
           h().setSubDelay(request.sec);
         }
       });
-      await bind(HDR_STAGE_AUTOSYNC_RUN, () => h().autoSyncRun());
-      await bind(HDR_STAGE_AUTOSYNC_STOP, () => h().autoSyncStop());
-      await bind(HDR_STAGE_AUTOSYNC_REVERT, () => h().autoSyncRevert());
-      await bind(HDR_STAGE_AUTOSYNC_DISMISS, () => h().autoSyncDismiss());
+      await bind(HDR_STAGE_AUTOSYNC_RUN, (p) => {
+        const request = p as Partial<HdrStageAutoSyncActionRequest> | null;
+        if (!isCurrentMediaRequest(request?.mediaKey)) return;
+        h().autoSyncRun();
+      });
+      await bind(HDR_STAGE_AUTOSYNC_STOP, (p) => {
+        const request = p as Partial<HdrStageAutoSyncActionRequest> | null;
+        if (!isCurrentMediaRequest(request?.mediaKey)) return;
+        h().autoSyncStop();
+      });
+      await bind(HDR_STAGE_AUTOSYNC_REVERT, (p) => {
+        const request = p as Partial<HdrStageAutoSyncActionRequest> | null;
+        if (!isCurrentMediaRequest(request?.mediaKey)) return;
+        h().autoSyncRevert();
+      });
+      await bind(HDR_STAGE_AUTOSYNC_DISMISS, (p) => {
+        const request = p as Partial<HdrStageAutoSyncActionRequest> | null;
+        if (!isCurrentMediaRequest(request?.mediaKey)) return;
+        h().autoSyncDismiss();
+      });
+      await bind(HDR_STAGE_AUTOSYNC_SUSPEND, (p) => {
+        const request = p as Partial<HdrStageAutoSyncActionRequest> | null;
+        if (!isCurrentMediaRequest(request?.mediaKey)) return;
+        h().autoSyncSuspend?.();
+      });
       if (!cancelled) {
         listening.current = true;
         void hdrOverlayEmitProps(payloadRef.current);

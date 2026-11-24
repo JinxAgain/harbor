@@ -147,8 +147,6 @@ const settingsFill: Record<string, string> = {
   "For an active ElfHosted subscription.": "Para una suscripción activa a ElfHosted.",
   "For donating to a charity.": "Para donar a una organización benéfica.",
   "For giving more than $100 to charity.": "Para donar más de $100 a una organización benéfica.",
-  "For the hardest files and the Try again button, Harbor transcribes a little speech on your device and lines the subtitle up to the actual words. Needs a build with the asr-whisper feature and downloads a small model the first time you use it.":
-    "Para los archivos más difíciles y el botón Volver a intentar, Harbor transcribe un poco de diálogo en tu dispositivo y sincroniza los subtítulos con las palabras reales. Requiere una compilación con la función asr-whisper y descarga un modelo pequeño la primera vez que la usas.",
   "Frost the top bar on scroll": "Aplicar efecto escarchado a la barra superior al desplazarse",
   "Fullscreen clock": "Reloj en pantalla completa",
   "Funds research into less toxic, more targeted treatments for childhood cancer.":

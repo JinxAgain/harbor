@@ -5,6 +5,7 @@ const SENSITIVE_HEADERS = new Set([
   "api-key",
   "x-auth-token",
   "x-harbor-auth",
+  "x-harbor-public-network-only",
   "x-harbor-subtitle-credential",
   "cookie",
 ]);

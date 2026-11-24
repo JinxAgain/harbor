@@ -403,7 +403,6 @@ export const DEFAULT: Settings = {
   tabHotkeys: true,
   bigPictureOverscan: null,
   playerHdrStage: "auto",
-  opensubtitlesApiKey: "",
   theIntroDbKey: "",
   jimakuToken: "",
   subdlApiKey: "",
