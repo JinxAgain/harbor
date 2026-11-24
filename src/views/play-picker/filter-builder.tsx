@@ -70,18 +70,22 @@ function MultiSection<T extends string>({
   dimension,
   selected,
   onToggle,
+  onClear,
 }: {
   title: string;
   options: readonly T[];
   dimension: BadgeDimension;
   selected: T[];
   onToggle: (value: T) => void;
+  onClear: () => void;
 }) {
+  const t = useT();
   const titleId = useId();
   return (
     <div role="group" aria-labelledby={titleId} className="flex flex-col gap-2.5">
       <SectionLabel id={titleId} title={title} count={selected.length} />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <BadgeCard label={t("All")} badge={null} active={selected.length === 0} onClick={onClear} />
         {options.map((o) => (
           <BadgeCard
             key={o}
@@ -319,6 +323,10 @@ export function FilterBuilder({
     });
   };
 
+  const clearMulti = (key: BadgeDimension) => {
+    setDraft((d) => ({ ...d, [key]: [] }));
+  };
+
   const save = () => {
     if (!canSave) return;
     onSave({ ...filter, name: draft.name.trim() });
@@ -385,6 +393,7 @@ export function FilterBuilder({
           dimension="resolution"
           selected={draft.resolution ?? []}
           onToggle={(v) => toggleMulti("resolution", v)}
+          onClear={() => clearMulti("resolution")}
         />
         <MultiSection
           title={t("Source")}
@@ -392,6 +401,7 @@ export function FilterBuilder({
           dimension="source"
           selected={draft.source ?? []}
           onToggle={(v) => toggleMulti("source", v)}
+          onClear={() => clearMulti("source")}
         />
         <MultiSection
           title={t("Codec")}
@@ -399,6 +409,7 @@ export function FilterBuilder({
           dimension="codec"
           selected={draft.codec ?? []}
           onToggle={(v) => toggleMulti("codec", v)}
+          onClear={() => clearMulti("codec")}
         />
         <MultiSection
           title={t("Audio")}
@@ -406,6 +417,7 @@ export function FilterBuilder({
           dimension="audio"
           selected={draft.audio ?? []}
           onToggle={(v) => toggleMulti("audio", v)}
+          onClear={() => clearMulti("audio")}
         />
 
         <div className="flex flex-col gap-2">
