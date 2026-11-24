@@ -5,7 +5,7 @@ import type { Addon } from "@/lib/addons";
 import type { ScoredStream } from "@/lib/streams/types";
 import { StremioRow } from "./stremio-row";
 import { FACET_DIMS, facetOptions, matchesFacets, type FacetState } from "./stream-facets";
-import { addonInstanceKey, buildAddonOptions, hasUncachedMarker } from "./picker-utils";
+import { addonInstanceKey, buildAddonOptions } from "./picker-utils";
 import { buildUniqueStreamKeys, stabilizeStreamOrder } from "./stream-order-stability";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
@@ -15,6 +15,7 @@ import { FilterBuilder } from "./filter-builder";
 import { SearchSortRow } from "./search-sort-row";
 import {
   compileStreamSearch,
+  defaultSortStreams,
   sortPickerStreams,
   type StreamSearchMode,
   type StreamSortField,
@@ -46,12 +47,21 @@ export function StremioLayout({
   isAnime?: boolean;
 }) {
   const t = useT();
-  const [filter, setFilter] = useState<string>("all");
   const [filterOpen, setFilterOpen] = useState(false);
-  const [facet, setFacet] = useState<FacetState>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMode, setSearchMode] = useState<StreamSearchMode>("plain");
   const { settings, update } = useSettings();
+  const savedFilter = settings.pickerAddonFilter || "all";
+  const savedFacet: FacetState = settings.pickerFacets ?? {};
+  const setFilter = (next: string) => {
+    update({ pickerAddonFilter: next || "all" });
+  };
+  const setFacetValue = (key: string, value: string) => {
+    const next: FacetState = { ...savedFacet };
+    if (!value || value === "all") delete next[key];
+    else next[key] = value;
+    update({ pickerFacets: next });
+  };
   const sortBy = settings.pickerSortBy ?? "default";
   const sortDir = settings.pickerSortDir ?? "desc";
   const handleSortByChange = (newSortBy: StreamSortField) => {
@@ -82,6 +92,13 @@ export function StremioLayout({
     return m;
   }, [addons]);
   const addonOptions = useMemo(() => buildAddonOptions(streams, addonRank), [streams, addonRank]);
+  const filter = useMemo(() => {
+    if (savedFilter === "all") return "all";
+    const hasMatch = streams.some((s) => addonInstanceKey(s) === savedFilter);
+    if (hasMatch) return savedFilter;
+    // Only fall back locally after all addons finish, without overwriting the user's saved default.
+    return pipelineDone && streams.length > 0 ? "all" : savedFilter;
+  }, [savedFilter, streams, pipelineDone]);
   const addonFiltered = useMemo(
     () => (filter === "all" ? streams : streams.filter((s) => addonInstanceKey(s) === filter)),
     [streams, filter],
@@ -94,6 +111,19 @@ export function StremioLayout({
     () => (compiledSearch.active ? addonFiltered.filter(compiledSearch.test) : addonFiltered),
     [addonFiltered, compiledSearch],
   );
+  const facet = useMemo(() => {
+    if (!pipelineDone || searchFiltered.length === 0) return savedFacet;
+    const next: FacetState = {};
+    for (const dim of FACET_DIMS) {
+      const sel = savedFacet[dim.key];
+      if (!sel || sel === "all") continue;
+      const pool = searchFiltered.filter((s) => matchesFacets(s, next, dim.key));
+      if (facetOptions(pool, dim).some((o) => o.key === sel)) {
+        next[dim.key] = sel;
+      }
+    }
+    return next;
+  }, [pipelineDone, savedFacet, searchFiltered]);
   const facetData = useMemo(
     () =>
       FACET_DIMS.map((dim) => {
@@ -107,44 +137,12 @@ export function StremioLayout({
       }),
     [searchFiltered, facet],
   );
-  useEffect(() => {
-    for (const f of facetData) {
-      if (f.value !== "all" && !f.options.some((o) => o.key === f.value)) {
-        setFacet((prev) => ({ ...prev, [f.dim.key]: "all" }));
-      }
-    }
-  }, [facetData]);
-  useEffect(() => {
-    if (filter !== "all" && addonFiltered.length === 0 && streams.length > 0) setFilter("all");
-  }, [filter, addonFiltered.length, streams.length]);
   const computedStreams = useMemo(() => {
     const filtered = searchFiltered.filter((s) => matchesFacets(s, facet));
-    const defaultOrderFn = (list: ScoredStream[]) => {
-      if (filter !== "all" || preserveOrder) return list;
-      const downloadRx = /[⏳⌛⬇⏬🔽📥]|\bdownload(ing)?\b|\bqueued?\b|\bnot[\s_-]?cached\b/iu;
-      const isDownload = (s: ScoredStream) => {
-        if (hasUncachedMarker(s)) return true;
-        const haystack = `${s.name ?? ""} ${s.title ?? ""} ${s.description ?? ""}`;
-        return downloadRx.test(haystack);
-      };
-      return list.slice().sort((a, b) => {
-        const aw = /watchhub/i.test(a.addonId) || /watchhub/i.test(a.addonName ?? "") ? 1 : 0;
-        const bw = /watchhub/i.test(b.addonId) || /watchhub/i.test(b.addonName ?? "") ? 1 : 0;
-        if (aw !== bw) return aw - bw;
-        const ad = isDownload(a) ? 1 : 0;
-        const bd = isDownload(b) ? 1 : 0;
-        if (ad !== bd) return ad - bd;
-        const ar = addonRank.get(a.addonUrl ?? "") ?? 9999;
-        const br = addonRank.get(b.addonUrl ?? "") ?? 9999;
-        if (ar !== br) return ar - br;
-        const ai = isInstantText(a) ? 1 : 0;
-        const bi = isInstantText(b) ? 1 : 0;
-        if (ai !== bi) return bi - ai;
-        return 0;
-      });
-    };
-    return sortPickerStreams(filtered, sortBy, sortDir, defaultOrderFn);
-  }, [searchFiltered, facet, filter, addonRank, preserveOrder, sortBy, sortDir]);
+    return sortPickerStreams(filtered, sortBy, sortDir, (list) =>
+      defaultSortStreams(list, { preserveOrder }),
+    );
+  }, [searchFiltered, facet, preserveOrder, sortBy, sortDir]);
 
   const facetSignature = useMemo(
     () =>
@@ -305,7 +303,7 @@ export function StremioLayout({
       />
       <FacetMenuRow
         facets={facetData}
-        onFacet={(key, v) => setFacet((prev) => ({ ...prev, [key]: v }))}
+        onFacet={setFacetValue}
         filters={customFilters}
         activeFilterId={activeFilterId}
         onSelectFilter={setActiveFilterId}
@@ -319,6 +317,10 @@ export function StremioLayout({
         }}
         extraNarrowed={compiledSearch.active}
         onResetExtra={() => setSearchQuery("")}
+        onResetFacets={() => {
+          update({ pickerFacets: {}, activeStreamFilterId: null });
+          setSearchQuery("");
+        }}
       />
       <div
         className="flex flex-col gap-2"
@@ -369,27 +371,28 @@ export function StremioLayout({
           />
         ))}
       </div>
-      {streams.length > 0 && displayedStreams.length === 0 && (
-        <div className="flex flex-col items-center gap-3 rounded-2xl bg-elevated/60 px-5 py-6 text-center ring-1 ring-edge-soft">
-          <p className="text-[14px] text-ink-muted">
-            {compiledSearch.error
-              ? t("Invalid regular expression")
-              : streams.length === 1
-                ? t("All {n} source is hidden by the active filter.", { n: streams.length })
-                : t("All {n} sources are hidden by the active filter.", { n: streams.length })}
-          </p>
-          <button
-            onClick={() => {
-              setFilter("all");
-              setFacet({});
-              setSearchQuery("");
-            }}
-            className="rounded-full bg-accent-soft px-4 py-2 text-[13px] font-semibold text-accent ring-1 ring-edge-soft transition-transform hover:scale-[1.02] active:scale-[0.98] motion-reduce:transition-none motion-reduce:hover:scale-100"
-          >
-            {t("Clear filters")}
-          </button>
-        </div>
-      )}
+      {streams.length > 0 &&
+        displayedStreams.length === 0 &&
+        (pipelineDone || Boolean(compiledSearch.error)) && (
+          <div className="flex flex-col items-center gap-3 rounded-2xl bg-elevated/60 px-5 py-6 text-center ring-1 ring-edge-soft">
+            <p className="text-[14px] text-ink-muted">
+              {compiledSearch.error
+                ? t("Invalid regular expression")
+                : streams.length === 1
+                  ? t("All {n} source is hidden by the active filter.", { n: streams.length })
+                  : t("All {n} sources are hidden by the active filter.", { n: streams.length })}
+            </p>
+            <button
+              onClick={() => {
+                update({ pickerAddonFilter: "all", pickerFacets: {}, activeStreamFilterId: null });
+                setSearchQuery("");
+              }}
+              className="rounded-full bg-accent-soft px-4 py-2 text-[13px] font-semibold text-accent ring-1 ring-edge-soft transition-transform hover:scale-[1.02] active:scale-[0.98] motion-reduce:transition-none motion-reduce:hover:scale-100"
+            >
+              {t("Clear filters")}
+            </button>
+          </div>
+        )}
       {deferredStreams != null && (
         <div className="pointer-events-none sticky bottom-14 z-10 flex justify-center">
           <button
@@ -516,11 +519,6 @@ function PendingChip({ addon }: { addon: Addon }) {
       </span>
     </span>
   );
-}
-
-function isInstantText(s: ScoredStream): boolean {
-  const haystack = `${s.name ?? ""} ${s.title ?? ""} ${s.description ?? ""}`.toLowerCase();
-  return /\binstant\b/.test(haystack) || haystack.includes("⚡");
 }
 
 function CircleLogo({

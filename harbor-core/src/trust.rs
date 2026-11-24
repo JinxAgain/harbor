@@ -82,6 +82,13 @@ static STATUS_LINE_RX: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
+static PROMO_BANNER_RX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\b(?:donation\s+needed|donate\b|support\s+the\s+project|join\s+(?:the\s+|our\s+)?discord|discord\s+server|donating\s+hides\s+this|keep\s+the\s+project\s+alive|patreon\.com|ko-fi\.com|buymeacoffee\.com|discord\.gg)\b",
+    )
+    .unwrap()
+});
+
 static VIDEO_EXT_RX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\.(mkv|mp4|m4v|avi|webm|mov|ts)(\?|$)").unwrap());
 
@@ -194,24 +201,45 @@ fn check_one(
         .as_deref()
         .map(|u| VIDEO_EXT_RX.is_match(u))
         .unwrap_or(false);
+    let bh = s.stream.behavior_hints.as_ref();
+    let has_status_video_size = bh
+        .and_then(|b| b.get("videoSize"))
+        .and_then(|v| v.as_f64())
+        .map(|n| n != 0.0)
+        .unwrap_or(false);
+    let has_status_filename = bh
+        .and_then(|b| b.get("filename"))
+        .and_then(|v| v.as_str())
+        .map(|f| !f.is_empty())
+        .unwrap_or(false);
     if s.stream.info_hash.is_none()
         && !url_is_video
         && STATUS_LINE_RX.is_match(&title_name_desc)
+        && !has_status_video_size
+        && !has_status_filename
     {
-        let bh = s.stream.behavior_hints.as_ref();
-        let has_video_size = bh
-            .and_then(|b| b.get("videoSize"))
-            .and_then(|v| v.as_f64())
-            .map(|n| n != 0.0)
-            .unwrap_or(false);
-        let has_filename = bh
-            .and_then(|b| b.get("filename"))
+        return Some("addon-status-card".to_string());
+    }
+    let has_promo_video_size = bh
+        .and_then(|b| b.get("videoSize"))
+        .and_then(|v| v.as_f64())
+        .map(|n| n > 0.0)
+        .unwrap_or(false);
+    let has_promo_filename = has_status_filename
+        || bh
+            .and_then(|b| b.get("fileName"))
             .and_then(|v| v.as_str())
             .map(|f| !f.is_empty())
             .unwrap_or(false);
-        if !has_video_size && !has_filename {
-            return Some("addon-status-card".to_string());
-        }
+    if s.stream.info_hash.is_none()
+        && !url_is_video
+        && !has_promo_video_size
+        && !has_promo_filename
+        && s.size.map(|sz| sz == 0).unwrap_or(true)
+        && s.seeders.is_none()
+        && PROMO_BANNER_RX.is_match(&title_name_desc)
+    {
+        return Some("addon-promo-card".to_string());
     }
 
     let filename = behavior_hint_filename(s).unwrap_or_default().to_lowercase();
@@ -1226,5 +1254,34 @@ mod tests {
         let rejected = apply_trust(vec![wrong], &opts);
         assert_eq!(rejected.rejected.len(), 1);
         assert_eq!(rejected.rejected[0].reason, "anime-title-mismatch");
+    }
+
+    #[test]
+    fn rejects_addon_promo_cards_without_touching_real_streams() {
+        let mut promo = base_stream();
+        promo.stream.info_hash = None;
+        promo.stream.url = Some("https://hdhub.example/donate".into());
+        promo.stream.name = Some("Donation needed.".into());
+        promo.stream.title = Some("Click here to donate to hdhub to keep the project alive.".into());
+        promo.stream.behavior_hints = None;
+        promo.size = None;
+        promo.seeders = None;
+
+        let mut discord = base_stream();
+        discord.stream.info_hash = None;
+        discord.stream.url = Some("https://discord.gg/example".into());
+        discord.stream.name = Some("Join the Discord server".into());
+        discord.stream.title = Some("Get latest updates or support.".into());
+        discord.stream.behavior_hints = None;
+        discord.size = None;
+        discord.seeders = None;
+
+        let real = base_stream();
+
+        let res = apply_trust(vec![promo, discord, real], &opts_strict());
+        assert_eq!(res.keep.len(), 1);
+        assert_eq!(res.rejected.len(), 2);
+        assert_eq!(res.rejected[0].reason, "addon-promo-card");
+        assert_eq!(res.rejected[1].reason, "addon-promo-card");
     }
 }

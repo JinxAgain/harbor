@@ -1,4 +1,5 @@
 import type { ParsedStream, Resolution } from "./types";
+import { isPromoCard } from "./cached";
 import { episodeSpanContains } from "@/lib/episode-span";
 export type { Resolution };
 
@@ -144,6 +145,9 @@ function checkOne(
     ) {
       return "addon-status-card";
     }
+  }
+  if (isPromoCard(s)) {
+    return "addon-promo-card";
   }
 
   const filenameRaw = s.behaviorHints?.filename ?? s.behaviorHints?.fileName ?? "";
@@ -409,10 +413,7 @@ function sequelMarker(title: string): number | null {
 }
 
 function tokenize(text: string): string[] {
-  const lower = text
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "");
+  const lower = text.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "");
   const words = lower.match(/[a-z0-9]+/g) ?? [];
   return words.filter((w) => w.length >= 3 && !TITLE_STOPWORDS.has(w));
 }

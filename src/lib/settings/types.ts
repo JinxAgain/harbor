@@ -644,6 +644,8 @@ export type Settings = {
   streamSort: "harbor" | "addon";
   pickerSortBy: PickerSortBy;
   pickerSortDir: PickerSortDir;
+  pickerAddonFilter: string;
+  pickerFacets: Record<string, string>;
   streamPriority: StreamPriorityEntry[];
   fullStreamDescription: boolean;
   pickerShowFilename: boolean;

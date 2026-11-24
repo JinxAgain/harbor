@@ -14,7 +14,9 @@ import {
   hasCachedMarker,
   hasUncachedMarker,
   hasDebridMarker,
+  isCached as coreIsCached,
   isExplicitlyUncached,
+  isPromoCard,
 } from "@/lib/streams/cached";
 import type { PlayEpisode } from "@/lib/view";
 import { parseKitsuId } from "@/lib/providers/kitsu";
@@ -434,9 +436,10 @@ export function hasInstantMarker(s: ScoredStream): boolean {
   return /\binstant\b/.test(haystack) || haystack.includes("⚡");
 }
 
-export { hasCachedMarker, hasUncachedMarker, hasDebridMarker, isExplicitlyUncached };
+export { hasCachedMarker, hasUncachedMarker, hasDebridMarker, isExplicitlyUncached, isPromoCard };
 
 export function anyStreamCached(s: ScoredStream): boolean {
+  if (isPromoCard(s)) return false;
   return Object.values(s.cached).some((v) => v === true) || hasCachedMarker(s);
 }
 
@@ -444,18 +447,10 @@ export function streamIsCached(
   s: ScoredStream,
   debrids: ReadonlyArray<{ slug: DebridSlug }>,
 ): boolean {
-  const activeSlugs = debrids.map((d) => d.slug);
-  if (isExplicitlyUncached(s, activeSlugs)) return false;
-  if (
-    debrids.some((d) => s.cached[d.slug] === true || s.inLibrary[d.slug] === true) ||
-    Object.values(s.cached ?? {}).some((v) => v === true) ||
-    Object.values(s.inLibrary ?? {}).some((v) => v === true)
-  ) {
-    return true;
-  }
-  if (hasCachedMarker(s)) return true;
-  if (s.url != null && !s.infoHash && !hasDebridMarker(s)) return true;
-  return false;
+  return coreIsCached(
+    s,
+    debrids.map((d) => d.slug),
+  );
 }
 
 const DEBRID_FAIL_CODES = new Set([

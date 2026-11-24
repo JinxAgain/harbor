@@ -12,7 +12,7 @@ import {
 import { useT } from "@/lib/i18n";
 import { resolveAddonLogo } from "@/components/addon-logo";
 import { torrentEngineStatus } from "@/lib/torrent/local-engine";
-import { directTorrentEnabled, torrentsDisabled } from "@/lib/torrent/stremio-stream";
+import { directTorrentEnabled } from "@/lib/torrent/stremio-stream";
 import { useAuth } from "@/lib/auth";
 import type { Meta } from "@/lib/cinemeta";
 import { useDebridClients } from "@/lib/debrid/registry";
@@ -57,14 +57,13 @@ import { NoSourcesConfiguredModal } from "./play-picker/no-sources-modal";
 import {
   addonFailureLabel,
   debridBanner,
-  hasCachedMarker,
-  hasDebridMarker,
   isExplicitlyUncached,
   isEngineWarmingError,
   normalizeLangCode,
   orderByAddonNative,
   playError,
   streamIdentity,
+  streamIsCached,
   streamMatchesLangs,
   translateDebridBannerTitle,
   translatePickerError,
@@ -322,23 +321,7 @@ export function PlayPicker({
     [hostMatch],
   );
 
-  const isCached = useCallback(
-    (s: ScoredStream) => {
-      const activeSlugs = debrids.map((d) => d.slug);
-      if (isExplicitlyUncached(s, activeSlugs)) return false;
-      if (
-        debrids.some((d) => s.cached[d.slug] === true || s.inLibrary[d.slug] === true) ||
-        Object.values(s.cached ?? {}).some((v) => v === true) ||
-        Object.values(s.inLibrary ?? {}).some((v) => v === true)
-      ) {
-        return true;
-      }
-      if (hasCachedMarker(s)) return true;
-      if (s.url != null && !s.infoHash && !hasDebridMarker(s)) return true;
-      return false;
-    },
-    [debrids],
-  );
+  const isCached = useCallback((s: ScoredStream) => streamIsCached(s, debrids), [debrids]);
   const hasStrongAddon = useMemo(
     () => (addons ?? []).some((a) => /mediafusion|comet/i.test(a.manifest?.name ?? "")),
     [addons],
@@ -1089,22 +1072,6 @@ export function PlayPicker({
             {t(
               "Last source wasn't actually cached on your debrid yet. Pick another from the list.",
             )}
-          </div>
-        )}
-
-        {torrentsDisabled() && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300/30 bg-amber-400/10 px-5 py-3.5 text-[13px] text-amber-100">
-            <span>
-              Torrents are disabled in settings. Uncached streams will not play unless they come
-              from a debrid service or a direct link.
-            </span>
-            <button
-              type="button"
-              onClick={() => openSettings("player")}
-              className="rounded-md border border-amber-300/40 px-3 py-1 text-[12px] font-semibold text-amber-100 transition-colors hover:bg-amber-300/10"
-            >
-              Open Settings
-            </button>
           </div>
         )}
 

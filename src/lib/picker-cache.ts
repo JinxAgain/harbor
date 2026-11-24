@@ -56,15 +56,24 @@ export function setPickerCache(
   complete = true,
 ): void {
   if (result.picker.all.length === 0) return;
-  const stripped: StoredResult = { picker: result.picker, rejected: result.rejected.slice(0, 60), debridErrors: result.debridErrors };
-  lruSet(cache, entryKey(meta, episode), {
-    meta,
-    episode,
-    result: stripped,
-    fetchedAt: Date.now(),
-    configHash,
-    complete,
-  }, MAX_ENTRIES);
+  const stripped: StoredResult = {
+    picker: result.picker,
+    rejected: result.rejected.slice(0, 60),
+    debridErrors: result.debridErrors,
+  };
+  lruSet(
+    cache,
+    entryKey(meta, episode),
+    {
+      meta,
+      episode,
+      result: stripped,
+      fetchedAt: Date.now(),
+      configHash,
+      complete,
+    },
+    MAX_ENTRIES,
+  );
   notify();
 }
 
@@ -139,7 +148,7 @@ export function pickerCacheMatches(meta: Meta, episode?: PlayEpisode): boolean {
 // Bumped whenever trust filter / parser / scoring logic changes in a way that
 // would re-classify existing cached results. Existing cache entries hash with
 // older versions and will fail equality on the next read → forced re-fetch.
-const TRUST_LOGIC_VERSION = "trust-2026-05-31-early-leak-rescue";
+const TRUST_LOGIC_VERSION = "trust-2026-11-24-promo-filter";
 
 export function buildPickerConfigHash(parts: {
   addonTransportUrls: string[];

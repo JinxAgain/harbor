@@ -640,8 +640,35 @@ export function parseStoredSettings(raw: string | null): Settings {
         parsed.pickerSortDir === "desc" || parsed.pickerSortDir === "asc"
           ? parsed.pickerSortDir
           : DEFAULT.pickerSortDir,
+      pickerAddonFilter:
+        typeof parsed.pickerAddonFilter === "string" && parsed.pickerAddonFilter.trim().length > 0
+          ? parsed.pickerAddonFilter
+          : DEFAULT.pickerAddonFilter,
+      pickerFacets: sanitizePickerFacets(parsed.pickerFacets),
     };
   } catch {
     return DEFAULT;
   }
+}
+
+const VALID_PICKER_FACET_KEYS = new Set([
+  "resolution",
+  "source",
+  "codec",
+  "hdr",
+  "audio",
+  "cached",
+]);
+
+function sanitizePickerFacets(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ...DEFAULT.pickerFacets };
+  }
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!VALID_PICKER_FACET_KEYS.has(k)) continue;
+    if (typeof v !== "string" || v.length === 0 || v === "all") continue;
+    out[k] = v;
+  }
+  return out;
 }

@@ -1261,6 +1261,49 @@ static DEBRID_TAG_RX: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
+static PROMO_BANNER_RX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\b(?:donation\s+needed|donate\b|support\s+the\s+project|join\s+(?:the\s+|our\s+)?discord|discord\s+server|donating\s+hides\s+this|keep\s+the\s+project\s+alive|patreon\.com|ko-fi\.com|buymeacoffee\.com|discord\.gg)\b",
+    )
+    .unwrap()
+});
+
+static VIDEO_EXT_RX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\.(mkv|mp4|m4v|avi|webm|mov|ts)(?:\?|$)").unwrap());
+
+fn is_promo_card(parsed: &ParsedStream, haystack: &str) -> bool {
+    if parsed.stream.info_hash.is_some() {
+        return false;
+    }
+    if parsed
+        .stream
+        .url
+        .as_deref()
+        .map(|u| VIDEO_EXT_RX.is_match(u))
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    let bh = parsed.stream.behavior_hints.as_ref();
+    let has_video_size = bh
+        .and_then(|b| b.get("videoSize"))
+        .and_then(|v| v.as_f64())
+        .map(|n| n > 0.0)
+        .unwrap_or(false);
+    if has_video_size {
+        return false;
+    }
+    let has_filename = bh
+        .and_then(|b| b.get("filename").or_else(|| b.get("fileName")))
+        .and_then(|v| v.as_str())
+        .map(|f| !f.is_empty())
+        .unwrap_or(false);
+    if has_filename || parsed.size.map(|sz| sz > 0).unwrap_or(false) || parsed.seeders.is_some() {
+        return false;
+    }
+    PROMO_BANNER_RX.is_match(haystack)
+}
+
 fn strip_invisibles(text: &str) -> String {
     text.chars()
         .filter(|&c| {
@@ -1285,6 +1328,15 @@ fn stream_haystack(parsed: &ParsedStream) -> String {
 fn is_cached_scored(s: &ScoredStream, active: &[String]) -> bool {
     let parsed = &s.parsed;
     let haystack = stream_haystack(parsed);
+    if is_promo_card(parsed, &haystack) {
+        return false;
+    }
+    if parsed.stream.url.is_none()
+        && parsed.stream.info_hash.is_none()
+        && parsed.stream.external_url.is_some()
+    {
+        return false;
+    }
     let has_cached_debrid = if !active.is_empty() {
         active.iter().any(|slug| {
             parsed.cached.get(slug).copied().unwrap_or(false)
@@ -2010,5 +2062,36 @@ mod tests {
             Some("http://127.0.0.1:7000/play/03338ef3"),
             "primary must select cached [PikPak ⚡] over uncached [PikPak 🧲]"
         );
+    }
+
+    #[test]
+    fn is_cached_scored_rejects_promo_cards_and_external_only_streams() {
+        let mut p_promo = base_parsed();
+        p_promo.stream.info_hash = None;
+        p_promo.stream.url = Some("https://pengu.uk/donate".to_string());
+        p_promo.stream.name = Some("support the project!".to_string());
+        p_promo.stream.title = Some("donating hides this message".to_string());
+        p_promo.stream.behavior_hints = None;
+        p_promo.size = None;
+        p_promo.seeders = None;
+        let s_promo = ScoredStream {
+            parsed: p_promo,
+            score: 0.0,
+            reasons: vec![],
+            tier: Tier::SD,
+        };
+        assert!(!is_cached_scored(&s_promo, &[]));
+
+        let mut p_ext = base_parsed();
+        p_ext.stream.info_hash = None;
+        p_ext.stream.url = None;
+        p_ext.stream.external_url = Some("https://example.invalid/open".to_string());
+        let s_ext = ScoredStream {
+            parsed: p_ext,
+            score: 0.0,
+            reasons: vec![],
+            tier: Tier::SD,
+        };
+        assert!(!is_cached_scored(&s_ext, &[]));
     }
 }

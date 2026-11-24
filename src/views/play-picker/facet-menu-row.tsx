@@ -23,6 +23,7 @@ export function FacetMenuRow({
   onEditFilter,
   extraNarrowed,
   onResetExtra,
+  onResetFacets,
 }: {
   facets: FacetRowEntry[];
   onFacet: (key: string, value: string) => void;
@@ -33,6 +34,7 @@ export function FacetMenuRow({
   onEditFilter: (filter: CustomStreamFilter) => void;
   extraNarrowed?: boolean;
   onResetExtra?: () => void;
+  onResetFacets?: () => void;
 }) {
   const t = useT();
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -41,9 +43,13 @@ export function FacetMenuRow({
     facets.some((f) => f.value !== "all") || activeFilterId !== null || Boolean(extraNarrowed);
   const newFilterLabel = filters.length > 0 ? t("New filter") : t("Create a custom filter");
   const reset = () => {
-    for (const f of facets) if (f.value !== "all") onFacet(f.dim.key, "all");
-    if (activeFilterId !== null) onSelectFilter(null);
-    onResetExtra?.();
+    if (onResetFacets) {
+      onResetFacets();
+    } else {
+      for (const f of facets) if (f.value !== "all") onFacet(f.dim.key, "all");
+      if (activeFilterId !== null) onSelectFilter(null);
+      onResetExtra?.();
+    }
     setOpenKey(null);
   };
   return (
@@ -272,6 +278,10 @@ function SavedChip({
   if (filter.maxSizeGb != null && Number.isFinite(filter.maxSizeGb) && filter.maxSizeGb > 0) {
     summaryParts.push(t("<= {size} GB", { size: filter.maxSizeGb }));
   }
+  const includeTrimmed = filter.includeRegex?.trim();
+  if (includeTrimmed) summaryParts.push(`+/${includeTrimmed}/`);
+  const excludeTrimmed = filter.excludeRegex?.trim();
+  if (excludeTrimmed) summaryParts.push(`-/${excludeTrimmed}/`);
   const summary = summaryParts.length > 0 ? summaryParts.join(" / ") : t("Any");
   return (
     <span

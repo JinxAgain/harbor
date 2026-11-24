@@ -528,6 +528,8 @@ export const DEFAULT: Settings = {
   streamSort: "addon",
   pickerSortBy: "default",
   pickerSortDir: "desc",
+  pickerAddonFilter: "all",
+  pickerFacets: {},
   streamPriority: [],
   fullStreamDescription: true,
   pickerShowFilename: false,

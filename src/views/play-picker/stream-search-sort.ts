@@ -1,3 +1,4 @@
+import { isExplicitlyCached, isPromoCard } from "@/lib/streams/cached";
 import type { Resolution, ScoredStream, Tier } from "@/lib/streams/types";
 
 export type StreamSearchMode = "plain" | "whole-word" | "wildcard" | "regex";
@@ -21,7 +22,9 @@ export function streamSearchHaystack(s: ScoredStream): string {
     s.releaseGroup,
     s.edition,
   ];
-  return parts.filter((part): part is string => typeof part === "string" && part.length > 0).join("\n");
+  return parts
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join("\n");
 }
 
 export function compileStreamSearch(query: string, mode: StreamSearchMode): CompiledStreamSearch {
@@ -88,7 +91,7 @@ const RESOLUTION_BASE: Record<Resolution, number> = {
   "1080p": 40,
   "720p": 30,
   "480p": 20,
-  "SD": 10,
+  SD: 10,
 };
 
 const TIER_BONUS: Partial<Record<Tier, number>> = {
@@ -98,8 +101,8 @@ const TIER_BONUS: Partial<Record<Tier, number>> = {
   "1080p_HDR": 2,
   "1080p": 1,
   "720p": 1,
-  "SD": 1,
-  "ROUGH": 0,
+  SD: 1,
+  ROUGH: 0,
 };
 
 function getMetric(s: ScoredStream, sortBy: StreamSortField): number | null {
@@ -123,6 +126,107 @@ function getMetric(s: ScoredStream, sortBy: StreamSortField): number | null {
   return null;
 }
 
+function isWatchHubStream(s: ScoredStream): boolean {
+  return /watchhub/i.test(s.addonId) || /watchhub/i.test(s.addonName ?? "");
+}
+
+function isExternalOnlyStream(s: ScoredStream): boolean {
+  return !s.url && !s.infoHash && Boolean(s.externalUrl);
+}
+
+function defaultStreamBucket(s: ScoredStream): number {
+  if (isPromoCard(s)) return 2;
+  if (isWatchHubStream(s) || isExternalOnlyStream(s)) return 1;
+  return 0;
+}
+
+function isUnlabeledStream(s: ScoredStream): boolean {
+  return (
+    s.resolution === "SD" &&
+    s.source === "Other" &&
+    s.size == null &&
+    s.seeders == null &&
+    !s.infoHash
+  );
+}
+
+function defaultResolutionRank(s: ScoredStream): number {
+  if (s.tier === "ROUGH") return 5;
+  if (isUnlabeledStream(s)) return 0;
+  return RESOLUTION_BASE[s.resolution] ?? 0;
+}
+
+function seederRank(s: ScoredStream): number {
+  return typeof s.seeders === "number" && Number.isFinite(s.seeders) && s.seeders >= 0
+    ? s.seeders
+    : -1;
+}
+
+function sizeRank(s: ScoredStream): number {
+  return typeof s.size === "number" && Number.isFinite(s.size) && s.size > 0 ? s.size : -1;
+}
+
+/**
+ * Default stream ordering for the picker:
+ * - Promo/donation cards always sink to the bottom (even when preserveOrder is true).
+ * - Explicitly cached streams always float to the top (even when preserveOrder is true).
+ * - In preserveOrder mode (addon order / Watch Together), incoming order is kept for non-cached real streams.
+ * - Otherwise: real streams before WatchHub/external, explicitly cached first, labeled before unlabeled,
+ *   then Resolution > Seeders > Size > Score.
+ */
+export function defaultSortStreams(
+  streams: ScoredStream[],
+  opts?: { preserveOrder?: boolean },
+): ScoredStream[] {
+  const indexed = streams.map((stream, index) => ({ stream, index }));
+  if (opts?.preserveOrder) {
+    return indexed
+      .sort((a, b) => {
+        const ba = defaultStreamBucket(a.stream);
+        const bb = defaultStreamBucket(b.stream);
+        if (ba === 2 || bb === 2) {
+          if (ba !== bb) return ba - bb;
+        }
+        const ca = isExplicitlyCached(a.stream) ? 1 : 0;
+        const cb = isExplicitlyCached(b.stream) ? 1 : 0;
+        if (ca !== cb) return cb - ca;
+        return a.index - b.index;
+      })
+      .map((entry) => entry.stream);
+  }
+
+  return indexed
+    .sort((a, b) => {
+      const sa = a.stream;
+      const sb = b.stream;
+
+      const bucketDiff = defaultStreamBucket(sa) - defaultStreamBucket(sb);
+      if (bucketDiff !== 0) return bucketDiff;
+
+      const cachedDiff = (isExplicitlyCached(sb) ? 1 : 0) - (isExplicitlyCached(sa) ? 1 : 0);
+      if (cachedDiff !== 0) return cachedDiff;
+
+      const unlabeledDiff = (isUnlabeledStream(sa) ? 1 : 0) - (isUnlabeledStream(sb) ? 1 : 0);
+      if (unlabeledDiff !== 0) return unlabeledDiff;
+
+      const resDiff = defaultResolutionRank(sb) - defaultResolutionRank(sa);
+      if (resDiff !== 0) return resDiff;
+
+      const seederDiff = seederRank(sb) - seederRank(sa);
+      if (seederDiff !== 0) return seederDiff;
+
+      const sizeDiff = sizeRank(sb) - sizeRank(sa);
+      if (sizeDiff !== 0) return sizeDiff;
+
+      const scoreA = typeof sa.score === "number" && Number.isFinite(sa.score) ? sa.score : 0;
+      const scoreB = typeof sb.score === "number" && Number.isFinite(sb.score) ? sb.score : 0;
+      if (scoreB !== scoreA) return scoreB - scoreA;
+
+      return a.index - b.index;
+    })
+    .map((entry) => entry.stream);
+}
+
 export function sortPickerStreams(
   streams: ScoredStream[],
   sortBy: StreamSortField,
@@ -137,6 +241,11 @@ export function sortPickerStreams(
   const baseIdx = new Map(base.map((s, i) => [s, i]));
 
   return base.slice().sort((a, b) => {
+    const cachedDiff = (isExplicitlyCached(b) ? 1 : 0) - (isExplicitlyCached(a) ? 1 : 0);
+    if (cachedDiff !== 0) {
+      return cachedDiff;
+    }
+
     const va = getMetric(a, sortBy);
     const vb = getMetric(b, sortBy);
 

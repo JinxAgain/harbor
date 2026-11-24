@@ -3,6 +3,7 @@ import test from "node:test";
 import type { ScoredStream } from "../src/lib/streams/types.ts";
 import {
   compileStreamSearch,
+  defaultSortStreams,
   sortPickerStreams,
   streamSearchHaystack,
 } from "../src/views/play-picker/stream-search-sort.ts";
@@ -192,10 +193,20 @@ test("sortPickerStreams resolution sorts 4K > 1080p > 720p > 480p > SD and respe
   const sd = createMockStream({ title: "SD", resolution: "SD", tier: "SD" });
   const defaultOrder = (arr: ScoredStream[]) => arr;
 
-  const desc = sortPickerStreams([p720, sd, hdr4k, p1080, dv4k, sdr4k], "resolution", "desc", defaultOrder);
+  const desc = sortPickerStreams(
+    [p720, sd, hdr4k, p1080, dv4k, sdr4k],
+    "resolution",
+    "desc",
+    defaultOrder,
+  );
   assert.deepEqual(desc, [dv4k, hdr4k, sdr4k, p1080, p720, sd]);
 
-  const asc = sortPickerStreams([p720, sd, hdr4k, p1080, dv4k, sdr4k], "resolution", "asc", defaultOrder);
+  const asc = sortPickerStreams(
+    [p720, sd, hdr4k, p1080, dv4k, sdr4k],
+    "resolution",
+    "asc",
+    defaultOrder,
+  );
   assert.deepEqual(asc, [sd, p720, p1080, sdr4k, hdr4k, dv4k]);
 });
 
@@ -210,4 +221,246 @@ test("sortPickerStreams score sorts desc and asc with ties falling back to defau
 
   const asc = sortPickerStreams([low, high1, high2], "score", "asc", defaultOrder);
   assert.deepEqual(asc, [low, high1, high2]);
+});
+
+test("defaultSortStreams sorts Resolution > Seeders > Size and keeps 4K above high-seeder 1080p", () => {
+  const uhdLowSeedSmall = createMockStream({
+    name: "[PikPak 🧲] StremList 2160p",
+    title: "Movie.2026.2160p.WEB-DL.H265.mkv",
+    resolution: "4K",
+    tier: "4K_DV",
+    seeders: 2,
+    size: 10 * 1024 ** 3,
+    score: 25,
+  });
+  const uhdHighSeed = createMockStream({
+    name: "[PikPak 🧲] StremList 2160p",
+    title: "Movie.2026.2160p.WEB-DL.H265.mkv",
+    resolution: "4K",
+    tier: "4K",
+    seeders: 12,
+    size: 18 * 1024 ** 3,
+    score: 20,
+  });
+  const fhdHighSeed = createMockStream({
+    name: "[PikPak 🧲] StremList 1080p",
+    title: "Movie.2026.1080p.WEBRip.x265.mkv",
+    resolution: "1080p",
+    tier: "1080p",
+    seeders: 8930,
+    size: 2 * 1024 ** 3,
+    score: 90,
+  });
+  const fhdMedSeedLarge = createMockStream({
+    name: "[PikPak 🧲] StremList 1080p",
+    title: "Movie.2026.1080p.WEB-DL.H264.mkv",
+    resolution: "1080p",
+    tier: "1080p",
+    seeders: 206,
+    size: 12 * 1024 ** 3,
+    score: 60,
+  });
+  const fhdMedSeedSmall = createMockStream({
+    name: "[PikPak 🧲] StremList 1080p",
+    title: "Movie.2026.1080p.WEB-DL.H264.mkv",
+    resolution: "1080p",
+    tier: "1080p",
+    seeders: 206,
+    size: 5 * 1024 ** 3,
+    score: 70,
+  });
+  const hd720 = createMockStream({
+    name: "[PikPak 🧲] StremList 720p",
+    title: "Movie.2026.720p.WEB-DL.mkv",
+    resolution: "720p",
+    tier: "720p",
+    seeders: 9999,
+    size: 4 * 1024 ** 3,
+  });
+
+  const sorted = defaultSortStreams([
+    hd720,
+    fhdMedSeedSmall,
+    uhdLowSeedSmall,
+    fhdHighSeed,
+    fhdMedSeedLarge,
+    uhdHighSeed,
+  ]);
+
+  assert.deepEqual(sorted, [
+    uhdHighSeed,
+    uhdLowSeedSmall,
+    fhdHighSeed,
+    fhdMedSeedLarge,
+    fhdMedSeedSmall,
+    hd720,
+  ]);
+});
+
+test("defaultSortStreams puts cached before uncached and sinks promo and unlabeled cards", () => {
+  const promo = createMockStream({
+    addonId: "com.hdhub",
+    addonName: "HDHub",
+    name: "🌟 Donation needed.",
+    title: "Click here to donate to hdhub to keep the project alive.",
+    url: "https://example.invalid/donate",
+    resolution: "SD",
+    source: "Other",
+    size: null,
+    seeders: null,
+    tier: "SD",
+    score: 999,
+  });
+  const unlabeled = createMockStream({
+    addonId: "org.unlabeled",
+    addonName: "Random",
+    name: "Stream link",
+    title: "Open stream",
+    url: "https://example.invalid/watch",
+    resolution: "SD",
+    source: "Other",
+    size: null,
+    seeders: null,
+    tier: "SD",
+    score: 200,
+  });
+  const uncached4k = createMockStream({
+    name: "[PikPak 🧲] StremList 2160p",
+    title: "Movie.2160p.WEB-DL.mkv",
+    resolution: "4K",
+    tier: "4K",
+    seeders: 50,
+    size: 15 * 1024 ** 3,
+  });
+  const cached1080 = createMockStream({
+    name: "[PikPak ⚡] StremList 1080p",
+    title: "Movie.1080p.WEB-DL.mkv",
+    resolution: "1080p",
+    tier: "1080p",
+    seeders: 10,
+    size: 4 * 1024 ** 3,
+  });
+
+  assert.deepEqual(defaultSortStreams([promo, unlabeled, uncached4k, cached1080]), [
+    cached1080,
+    uncached4k,
+    unlabeled,
+    promo,
+  ]);
+
+  // preserveOrder keeps addon order for non-cached real streams while pinning cached first and sinking promo cards.
+  assert.deepEqual(defaultSortStreams([promo, uncached4k, cached1080], { preserveOrder: true }), [
+    cached1080,
+    uncached4k,
+    promo,
+  ]);
+});
+
+test("defaultSortStreams does not promote plain direct HTTP 1080p streams above 4K uncached streams", () => {
+  const cached1080 = createMockStream({
+    name: "[PikPak ⚡] StremList 1080p",
+    title: "Movie.1080p.WEB-DL.mkv",
+    url: "https://example.invalid/cached.mkv",
+    resolution: "1080p",
+    tier: "1080p",
+    seeders: 10,
+    size: 2 * 1024 ** 3,
+  });
+  const directHdhub1080 = createMockStream({
+    addonId: "com.hdhub",
+    addonName: "4KHDHub",
+    name: "4KHDHub 1080p",
+    title: "[PixelDrain] Movie.1080p.BluRay.x265.mkv",
+    url: "https://pixeldrain.example/file",
+    resolution: "1080p",
+    tier: "1080p",
+    seeders: null,
+    size: 4.88 * 1024 ** 3,
+  });
+  const direct111477 = createMockStream({
+    addonId: "org.111477",
+    addonName: "111477 stremio",
+    name: "111477 stremio",
+    title: "Movie.1080p.BluRay.x265.mkv [a11 3.1 GB]",
+    url: "https://111477.example/video.mkv",
+    resolution: "1080p",
+    tier: "1080p",
+    seeders: null,
+    size: 3.1 * 1024 ** 3,
+  });
+  const uncached4k = createMockStream({
+    name: "[PikPak 🧲] StremList 2160p",
+    title: "Movie.2160p.BluRay.x265.mkv",
+    url: "https://example.invalid/4k",
+    resolution: "4K",
+    tier: "4K",
+    seeders: 271,
+    size: 6.6 * 1024 ** 3,
+  });
+
+  assert.deepEqual(defaultSortStreams([directHdhub1080, direct111477, uncached4k, cached1080]), [
+    cached1080,
+    uncached4k,
+    directHdhub1080,
+    direct111477,
+  ]);
+});
+
+test("sortPickerStreams always keeps explicitly cached streams at the top across all sort modes and directions", () => {
+  const cachedMarker1080 = createMockStream({
+    name: "[PikPak ⚡] StremList 1080p",
+    title: "Cached.1080p.mkv",
+    resolution: "1080p",
+    tier: "1080p",
+    seeders: 5,
+    size: 2 * 1024 ** 3,
+    score: 20,
+  });
+  const cachedDebrid720 = createMockStream({
+    name: "Comet 720p",
+    title: "Cached.720p.mkv",
+    cached: { rd: true },
+    resolution: "720p",
+    tier: "720p",
+    seeders: 1,
+    size: 1 * 1024 ** 3,
+    score: 10,
+  });
+  const uncached4k = createMockStream({
+    name: "[PikPak 🧲] StremList 2160p",
+    title: "Uncached.4K.mkv",
+    resolution: "4K",
+    tier: "4K_DV",
+    seeders: 9000,
+    size: 25 * 1024 ** 3,
+    score: 200,
+  });
+  const direct1080 = createMockStream({
+    name: "111477 stremio",
+    title: "Direct.1080p.mkv",
+    url: "https://111477.example/direct.mkv",
+    resolution: "1080p",
+    tier: "1080p",
+    seeders: 500,
+    size: 12 * 1024 ** 3,
+    score: 150,
+  });
+  const defaultOrder = (arr: ScoredStream[]) => arr;
+  const input = [uncached4k, direct1080, cachedDebrid720, cachedMarker1080];
+
+  for (const sortBy of ["size", "seeders", "resolution", "score"] as const) {
+    for (const sortDir of ["desc", "asc"] as const) {
+      const sorted = sortPickerStreams(input, sortBy, sortDir, defaultOrder);
+      const topTwo = sorted.slice(0, 2);
+      assert.ok(
+        topTwo.includes(cachedMarker1080) && topTwo.includes(cachedDebrid720),
+        `expected cached streams first for ${sortBy} (${sortDir})`,
+      );
+      if (sortDir === "desc") {
+        assert.deepEqual(sorted, [cachedMarker1080, cachedDebrid720, uncached4k, direct1080]);
+      } else {
+        assert.deepEqual(sorted, [cachedDebrid720, cachedMarker1080, direct1080, uncached4k]);
+      }
+    }
+  }
 });

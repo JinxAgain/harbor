@@ -44,6 +44,8 @@ export type CustomStreamFilter = {
   cachedOnly?: boolean;
   minSeeders?: number | null;
   maxSizeGb?: number | null;
+  includeRegex?: string | null;
+  excludeRegex?: string | null;
 };
 
 export const RESOLUTION_OPTIONS: CustomFilterResolution[] = ["4K", "1080p", "720p", "480p", "SD"];
@@ -92,11 +94,50 @@ export function newCustomFilter(name: string): CustomStreamFilter {
     cachedOnly: false,
     minSeeders: null,
     maxSizeGb: null,
+    includeRegex: null,
+    excludeRegex: null,
   };
 }
 
 function isPositive(value: number | null | undefined): value is number {
   return typeof value === "number" && value > 0;
+}
+
+export function validateFilterRegex(pattern: string | null | undefined): string | null {
+  const trimmed = pattern?.trim();
+  if (!trimmed) return null;
+  try {
+    new RegExp(trimmed, "i");
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : "Invalid regular expression";
+  }
+}
+
+export function compileFilterRegex(pattern: string | null | undefined): RegExp | null {
+  const trimmed = pattern?.trim();
+  if (!trimmed) return null;
+  try {
+    return new RegExp(trimmed, "i");
+  } catch {
+    return null;
+  }
+}
+
+export function streamFilterHaystack(stream: ParsedStream): string {
+  const parts = [
+    stream.name,
+    stream.title,
+    stream.description,
+    stream.behaviorHints?.filename,
+    stream.behaviorHints?.fileName,
+    stream.addonName,
+    stream.releaseGroup,
+    stream.edition,
+  ];
+  return parts
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join("\n");
 }
 
 export function isFilterEmpty(filter: CustomStreamFilter): boolean {
@@ -108,6 +149,8 @@ export function isFilterEmpty(filter: CustomStreamFilter): boolean {
   if (filter.cachedOnly === true) return false;
   if (isPositive(filter.minSeeders)) return false;
   if (isPositive(filter.maxSizeGb)) return false;
+  if (filter.includeRegex && filter.includeRegex.trim().length > 0) return false;
+  if (filter.excludeRegex && filter.excludeRegex.trim().length > 0) return false;
   return true;
 }
 
@@ -138,6 +181,19 @@ export function matchesCustomFilter(stream: ParsedStream, filter: CustomStreamFi
   if (isPositive(filter.maxSizeGb)) {
     if (stream.size != null && stream.size > filter.maxSizeGb * 1024 ** 3) return false;
   }
+  const includeTrimmed = filter.includeRegex?.trim();
+  const excludeTrimmed = filter.excludeRegex?.trim();
+  if (includeTrimmed || excludeTrimmed) {
+    const haystack = streamFilterHaystack(stream);
+    if (includeTrimmed) {
+      const rx = compileFilterRegex(includeTrimmed);
+      if (rx && !rx.test(haystack)) return false;
+    }
+    if (excludeTrimmed) {
+      const rx = compileFilterRegex(excludeTrimmed);
+      if (rx && rx.test(haystack)) return false;
+    }
+  }
   return true;
 }
 
@@ -162,5 +218,9 @@ export function summarizeFilter(filter: CustomStreamFilter): string {
   if (filter.cachedOnly === true) parts.push("Cached");
   if (isPositive(filter.minSeeders)) parts.push(`${filter.minSeeders}+ seeds`);
   if (isPositive(filter.maxSizeGb)) parts.push(`<= ${filter.maxSizeGb} GB`);
+  const includeTrimmed = filter.includeRegex?.trim();
+  if (includeTrimmed) parts.push(`+/${includeTrimmed}/`);
+  const excludeTrimmed = filter.excludeRegex?.trim();
+  if (excludeTrimmed) parts.push(`-/${excludeTrimmed}/`);
   return parts.join(" / ");
 }
