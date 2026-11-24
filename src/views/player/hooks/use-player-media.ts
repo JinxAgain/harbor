@@ -184,6 +184,8 @@ export function usePlayerMedia(params: {
     canRevert: asCanRevert,
     errorMessage: asErrorMessage,
     errorAction: asErrorAction,
+    noticeSeq: asNoticeSeq,
+    transitioningTrack: asTransitioningTrack,
     run: asRun,
     stop: asStop,
     revert: asRevert,
@@ -200,13 +202,14 @@ export function usePlayerMedia(params: {
       canRevert: asCanRevert,
       errorMessage: asErrorMessage,
       errorAction: asErrorAction,
+      noticeSeq: asNoticeSeq,
+      transitioningTrack: asTransitioningTrack,
       run: asRun,
       stop: asStop,
       revert: asRevert,
       dismiss: asDismiss,
       suspendForManualTiming: asSuspendForManualTiming,
     });
-    return () => publishAutoSync(null);
   }, [
     asStatus,
     asTrigger,
@@ -216,12 +219,16 @@ export function usePlayerMedia(params: {
     asCanRevert,
     asErrorMessage,
     asErrorAction,
+    asNoticeSeq,
+    asTransitioningTrack,
     asRun,
     asStop,
     asRevert,
     asDismiss,
     asSuspendForManualTiming,
   ]);
+
+  useEffect(() => () => publishAutoSync(null), []);
 
   const hdrAutoSyncState = useMemo<HdrStageAutoSyncState>(
     () => ({
@@ -233,6 +240,7 @@ export function usePlayerMedia(params: {
       canRevert: asCanRevert,
       errorMessage: asErrorMessage,
       errorAction: asErrorAction,
+      noticeSeq: asNoticeSeq,
     }),
     [
       asStatus,
@@ -243,6 +251,7 @@ export function usePlayerMedia(params: {
       asCanRevert,
       asErrorMessage,
       asErrorAction,
+      asNoticeSeq,
     ],
   );
 
@@ -289,7 +298,11 @@ export function usePlayerMedia(params: {
   const imageNativeActive = selectedImageSub && (subNativeRender || !subEmbed);
   const assNormalizeScale = useAssNormalize({
     enabled:
-      engine === "mpv" && settings.subAssNormalizeSize && assNativeActive && !subAssOverridden,
+      engine === "mpv" &&
+      settings.subAssNormalizeSize &&
+      !subAssOverridden &&
+      (assNativeActive || (Boolean(asTransitioningTrack) && selectedSubTrack == null)),
+    holdOnNull: Boolean(asTransitioningTrack),
     sourceUrl: src.url ?? null,
     headers: src.headers,
     track: selectedSubTrack,

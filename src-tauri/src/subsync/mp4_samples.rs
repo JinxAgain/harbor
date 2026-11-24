@@ -5,7 +5,6 @@
 //! sample filtering) so embedded MP4 subtitle timelines can be read without decoding media samples.
 
 const HEADER_SIZE: usize = 8;
-const FULL_HEADER_SIZE: usize = 12;
 const INDEX_UNSET: i32 = -1;
 const MAX_MP4_SAMPLES: usize = 500_000;
 
@@ -94,7 +93,7 @@ impl<'a> Reader<'a> {
     fn new(bytes: &'a [u8], b: Mp4Box) -> Self {
         Self {
             bytes,
-            start: b.start,
+            start: b.data_start(),
             end: b.end,
             position: 0,
         }
@@ -299,7 +298,7 @@ fn text_track_mdia(bytes: &[u8], trak: Mp4Box) -> Option<Mp4Box> {
     let mdia = child(bytes, trak, TYPE_MDIA)?;
     let hdlr = child(bytes, mdia, TYPE_HDLR)?;
     let mut r = Reader::new(bytes, hdlr);
-    r.position = FULL_HEADER_SIZE + 4;
+    r.position = 8;
     let handler = r.read_u32()?;
     if is_text_handler(handler) {
         Some(mdia)
@@ -314,7 +313,6 @@ fn full_box_version(full_box: u32) -> u8 {
 
 fn parse_tkhd_track_id(bytes: &[u8], tkhd: Mp4Box) -> Option<i32> {
     let mut r = Reader::new(bytes, tkhd);
-    r.position = HEADER_SIZE;
     let version = full_box_version(r.read_u32()?);
     r.skip(if version == 0 { 8 } else { 16 })?;
     r.read_i32()
@@ -322,7 +320,6 @@ fn parse_tkhd_track_id(bytes: &[u8], tkhd: Mp4Box) -> Option<i32> {
 
 fn parse_mvhd_timescale(bytes: &[u8], mvhd: Mp4Box) -> Option<i64> {
     let mut r = Reader::new(bytes, mvhd);
-    r.position = HEADER_SIZE;
     let version = full_box_version(r.read_u32()?);
     r.skip(if version == 0 { 8 } else { 16 })?;
     Some(i64::from(r.read_u32()?))
@@ -335,7 +332,6 @@ struct Mdhd {
 
 fn parse_mdhd(bytes: &[u8], mdhd: Mp4Box) -> Option<Mdhd> {
     let mut r = Reader::new(bytes, mdhd);
-    r.position = HEADER_SIZE;
     let version = full_box_version(r.read_u32()?);
     r.skip(if version == 0 { 8 } else { 16 })?;
     let timescale = i64::from(r.read_u32()?);
@@ -358,7 +354,7 @@ fn parse_mdhd(bytes: &[u8], mdhd: Mp4Box) -> Option<Mdhd> {
 
 fn parse_stsd_codec(bytes: &[u8], stsd: Mp4Box) -> Option<Option<Mp4SubtitleCodec>> {
     let mut r = Reader::new(bytes, stsd);
-    r.position = FULL_HEADER_SIZE;
+    r.position = 4;
     let entry_count = r.read_i32()?;
     if entry_count < 0 {
         return None;
@@ -392,13 +388,14 @@ struct EditList {
     media_times: Vec<i64>,
 }
 
+const MAX_ELST_ENTRIES: usize = 4_096;
+
 fn parse_elst(bytes: &[u8], elst: Mp4Box) -> Option<EditList> {
     let mut r = Reader::new(bytes, elst);
-    r.position = HEADER_SIZE;
     let version = full_box_version(r.read_u32()?);
     let entry_count = r.read_u32_to_usize()?;
     let entry_size = if version == 1 { 20 } else { 12 };
-    if entry_count > 1_000_000 || entry_count > r.bytes_left() / entry_size {
+    if entry_count > MAX_ELST_ENTRIES || entry_count > r.bytes_left() / entry_size {
         return None;
     }
     let mut durations = Vec::with_capacity(entry_count.min(4096));
@@ -446,7 +443,7 @@ enum SampleSizes<'a> {
 impl<'a> SampleSizes<'a> {
     fn from_stsz(bytes: &'a [u8], box_stsz: Mp4Box) -> Option<Self> {
         let mut r = Reader::new(bytes, box_stsz);
-        r.position = FULL_HEADER_SIZE;
+        r.position = 4;
         let fixed_raw = r.read_u32_to_usize()?;
         let fixed_size = if fixed_raw == 0 {
             None
@@ -463,7 +460,7 @@ impl<'a> SampleSizes<'a> {
 
     fn from_stz2(bytes: &'a [u8], box_stz2: Mp4Box) -> Option<Self> {
         let mut r = Reader::new(bytes, box_stz2);
-        r.position = FULL_HEADER_SIZE;
+        r.position = 4;
         let field_size = r.read_u32_to_usize()? & 0xff;
         let sample_count = r.read_u32_to_usize()?;
         Some(Self::Stz2 {
@@ -533,9 +530,9 @@ impl<'a> ChunkIterator<'a> {
         mut chunk_offsets: Reader<'a>,
         chunk_offsets_are_longs: bool,
     ) -> Option<Self> {
-        chunk_offsets.position = FULL_HEADER_SIZE;
+        chunk_offsets.position = 4;
         let length = i32::try_from(chunk_offsets.read_u32_to_usize()?).ok()?;
-        stsc.position = FULL_HEADER_SIZE;
+        stsc.position = 4;
         let remaining_changes = i32::try_from(stsc.read_u32_to_usize()?).ok()?;
         if remaining_changes > 0 && stsc.read_i32()? != 1 {
             return None;
@@ -651,7 +648,7 @@ fn parse_stbl(
 
     let mut chunk_iter = ChunkIterator::new(stsc, Reader::new(bytes, chunk_box), chunk_offsets_are_longs)?;
 
-    stts.position = FULL_HEADER_SIZE;
+    stts.position = 4;
     let stts_entries = stts.read_u32_to_usize()?;
     if stts_entries == 0 {
         return None;
@@ -664,14 +661,14 @@ fn parse_stbl(
     let mut remaining_samples_at_offset = 0usize;
     let mut timestamp_offset_units = 0i64;
     if let Some(ref mut ctts_r) = ctts {
-        ctts_r.position = FULL_HEADER_SIZE;
+        ctts_r.position = 4;
         remaining_offset_changes = ctts_r.read_u32_to_usize()?;
     }
 
     let mut next_sync_idx = INDEX_UNSET;
     let mut remaining_sync_samples = 0usize;
     if let Some(ref mut stss_r) = stss {
-        stss_r.position = FULL_HEADER_SIZE;
+        stss_r.position = 4;
         remaining_sync_samples = stss_r.read_u32_to_usize()?;
         if remaining_sync_samples > 0 {
             next_sync_idx = i32::try_from(stss_r.read_u32_to_usize()?).ok()? - 1;
@@ -795,6 +792,23 @@ fn parse_stbl(
     let edit_count = edits.durations.len();
     let mut start_indices = vec![0isize; edit_count];
     let mut end_indices = vec![0isize; edit_count];
+    let kf_len = key_frames.len();
+    let mut prev_key = vec![-1isize; kf_len];
+    let mut last_kf = -1isize;
+    for (idx, &is_kf) in key_frames.iter().enumerate() {
+        if is_kf {
+            last_kf = idx as isize;
+        }
+        prev_key[idx] = last_kf;
+    }
+    let mut next_key = vec![kf_len as isize; kf_len];
+    let mut next_kf = kf_len as isize;
+    for idx in (0..kf_len).rev() {
+        if key_frames[idx] {
+            next_kf = idx as isize;
+        }
+        next_key[idx] = next_kf;
+    }
     for i in 0..edit_count {
         let edit_media_time = edits.media_times[i];
         if edit_media_time == -1 {
@@ -814,14 +828,17 @@ fn parse_stbl(
             )
         };
         let initial_start = s_idx;
-        while s_idx >= 0 && !key_frames[s_idx as usize] {
-            s_idx -= 1;
+        if s_idx >= 0 && (s_idx as usize) < kf_len {
+            s_idx = prev_key[s_idx as usize];
+        } else if s_idx >= kf_len as isize {
+            s_idx = if kf_len > 0 { prev_key[kf_len - 1] } else { -1 };
         }
         if s_idx < 0 {
-            s_idx = initial_start;
-            while s_idx < e_idx && (s_idx as usize) < key_frames.len() && !key_frames[s_idx as usize]
-            {
-                s_idx += 1;
+            if initial_start >= 0 && (initial_start as usize) < kf_len {
+                let nk = next_key[initial_start as usize];
+                s_idx = if nk < e_idx { nk } else { e_idx };
+            } else {
+                s_idx = initial_start;
             }
         }
         start_indices[i] = s_idx;

@@ -150,7 +150,7 @@ export function BpPlayerSubtitles(props: BpPlayerSubtitlesProps) {
   }, [lane]);
 
   const selected = tracks.find((track) => track.id === selectedId) ?? null;
-  const syncBusy = autoSync?.status === "analyzing";
+  const syncBusy = autoSync?.status === "analyzing" || autoSync?.status === "reverting";
   const canSync =
     isDesktopTauri() &&
     (selected?.external === true || syncBusy === true || autoSync?.status === "synced");

@@ -710,10 +710,8 @@ test("regression contracts: deferred replacement removal, popover held reset, re
   );
   assert.equal((autoSyncBindSlice.match(/isCurrentMediaRequest\(/g) ?? []).length, 5);
 
-  // AutosyncPopover dwell timer depends on primitives rather than handle object identity, and translates handle.errorMessage.
-  assert.ok(
-    popoverSrc.includes("}, [visible, held, handle.status, handle.trigger, handle.offsetMs]);"),
-  );
+  // AutosyncPopover dwell timer depends on noticeKey/status primitives rather than handle object identity, and translates handle.errorMessage.
+  assert.ok(popoverSrc.includes("}, [visible, held, noticeKey, handle.status]);"));
   assert.ok(
     popoverSrc
       .replace(/\s+/g, " ")
@@ -963,4 +961,186 @@ test("audit regression behaviors: restore guard, stale commit, lang/providerDeri
     "utf8",
   );
   assert.ok(podnapisiSrc.includes("resolveSubtitleDownloadUrl("));
+});
+
+test("inline-cue fallback, popover noticeSeq, reverting state, manual commit origin, and unmount-only store cleanup", async () => {
+  const { hookHarness, flushPromises } = await import("./helpers/hook-harness.ts");
+  const helpers = await import("../src/views/player/hooks/use-auto-sync.helpers.ts");
+  const subtitleFps = await import("../src/lib/player/subtitle-fps.ts");
+  const embeddedSync = await import("../src/lib/subtitles/autosync/embedded-sync.ts");
+  const serialize = await import("../src/lib/subtitles/serialize.ts");
+  const { emptySnapshot } = await import("../src/lib/player/bridge.ts");
+
+  // 1. HTML5 blob: track with inline cues resolves via getInlineCues before hasUsableSource.
+  const blobTrack = {
+    id: "b1",
+    kind: "subtitle" as const,
+    label: "Blob Sub",
+    lang: "en",
+    selected: true,
+    external: true,
+    url: "blob:https://app.invalid/1234",
+  };
+  const inlineTarget = helpers.resolveAutoSyncRunTarget({
+    currentSelected: blobTrack,
+    applied: helpers.EMPTY_APPLIED_STATE,
+    currentMediaKey: "m1",
+    getInlineCues: () => [{ start: 1, end: 3, text: "Hello inline" }],
+  });
+  assert.ok(inlineTarget);
+  assert.equal(inlineTarget.selectedInput.format, "srt");
+  assert.ok(inlineTarget.selectedInput.inlineText?.includes("Hello inline"));
+
+  // 2. mpv addSubtitle catch path invokes restorePreviousMetadata?.() instead of unconditional delete.
+  const mpvSrc = readFileSync(new URL("../src/lib/player/mpv.ts", import.meta.url), "utf8");
+  assert.ok(mpvSrc.includes("let restorePreviousMetadata: (() => void) | undefined;"));
+  assert.ok(mpvSrc.includes("restorePreviousMetadata?.();"));
+
+  // 3. usePlayerMedia separates publishAutoSync(null) into an unmount-only effect.
+  const playerMediaSrc = readFileSync(
+    new URL("../src/views/player/hooks/use-player-media.ts", import.meta.url),
+    "utf8",
+  );
+  assert.ok(playerMediaSrc.includes("useEffect(() => () => publishAutoSync(null), []);"));
+
+  // 4. useAutoSync: manual run forces commitOrigin='manual', failed Re-sync dismiss does not bump noticeSeq
+  // and preserves offsetMs, and revert() enters 'reverting' where stop() is ignored.
+  const origWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window: unknown }).window = {
+    __TAURI_INTERNALS__: {},
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+  };
+  try {
+    const addOrigins: string[] = [];
+    let alignResult: any = {
+      outcome: "synced",
+      chosenUrl: "https://subs.example/en.srt",
+      retimedPath: "C:/temp/autosync_1.srt",
+      retimedText: "1\n00:00:01,000 --> 00:00:02,000\nHi\n",
+      format: "srt",
+      medianOffsetMs: 420,
+      scale: 1,
+    };
+    let resolveRestore!: (ok: boolean) => void;
+    const extTrack = {
+      id: "ext-1",
+      kind: "subtitle" as const,
+      label: "English",
+      lang: "en",
+      selected: true,
+      external: true,
+      url: "https://subs.example/en.srt",
+    };
+    const snap = { ...emptySnapshot, durationSec: 1200, subtitleTracks: [extTrack] as any[] };
+    const bridge = {
+      getSubtitleSelectionOrigin: () => "automatic" as const,
+      getSelectedTrackCues: () => null,
+      addSubtitle: async (
+        url: string,
+        lang: unknown,
+        title: unknown,
+        select: unknown,
+        meta: any,
+        origin: string,
+      ) => {
+        addOrigins.push(origin);
+        if (select) {
+          snap.subtitleTracks = [
+            {
+              id: meta?.autoSynced ? "synced-1" : "ext-1",
+              kind: "subtitle",
+              label: String(title ?? "English"),
+              lang: typeof lang === "string" ? lang : "en",
+              selected: true,
+              external: true,
+              url: meta?.originalUrl ?? url,
+              originalUrl: meta?.originalUrl ?? url,
+              externalFilename: url,
+              autoSynced: meta?.autoSynced === true,
+              prepared: meta?.prepared === true,
+            },
+          ];
+        }
+        return true;
+      },
+      setSubDelay: () => {},
+      setSubtitleTrack: () => {},
+    };
+    const harness = hookHarness(
+      new URL("../src/views/player/hooks/use-auto-sync.ts", import.meta.url).pathname.replace(
+        /^\/([A-Za-z]:)/,
+        "$1",
+      ),
+      "useAutoSync",
+      {
+        "@/lib/player/local-url": { isLocalUrl: () => false },
+        "@/lib/player/mpv-properties": { resetMpvSubtitleFpsForTransition: async () => {} },
+        "@/lib/player/subtitle-fps": subtitleFps,
+        "@/lib/platform": { isDesktopTauri: () => true },
+        "@/lib/debug": { dwarn: () => {} },
+        "@/lib/subtitles/autosync/embedded-sync": {
+          ...embeddedSync,
+          alignSubtitlesAgainstEmbedded: async () => alignResult,
+          cancelSubtitleAutoSync: async () => {},
+          prefetchEmbeddedSubtitles: async () => {},
+        },
+        "@/lib/subtitles/serialize": serialize,
+        "./use-auto-sync.helpers": {
+          ...helpers,
+          restoreRevertedSubtitleTrack: () =>
+            new Promise<boolean>((resolve) => {
+              resolveRestore = resolve;
+            }),
+        },
+      },
+    );
+    const props = {
+      bridgeRef: { current: bridge },
+      src: { url: "https://cdn.example/movie.mkv", meta: { id: "tt1", name: "Movie" } },
+      snap,
+      engine: "mpv" as const,
+      settings: { subtitleAutoSync: false, autoSyncMode: "offset", autoSyncToleranceMs: 80 },
+      subtitlePreflightSettled: true,
+      availableSubtitles: [],
+    };
+    let handle = harness.render(props);
+    handle.run();
+    await flushPromises();
+    handle = harness.render(props);
+    assert.equal(handle.status, "synced");
+    assert.equal(handle.offsetMs, 420);
+    assert.deepEqual(addOrigins, ["manual"]);
+    const seqAfterSync = handle.noticeSeq;
+
+    // Failed Re-sync -> dismiss() returns to "synced" with offsetMs preserved and NO noticeSeq bump.
+    alignResult = { outcome: "no_fit" };
+    handle.run();
+    await flushPromises();
+    handle = harness.render(props);
+    assert.equal(handle.status, "no-fit");
+    const seqAfterNoFit = handle.noticeSeq;
+    assert.ok(seqAfterNoFit > seqAfterSync);
+
+    handle.dismiss();
+    handle = harness.render(props);
+    assert.equal(handle.status, "synced");
+    assert.equal(handle.offsetMs, 420);
+    assert.equal(handle.noticeSeq, seqAfterNoFit);
+
+    // revert() uses "reverting" status and stop() does not cancel an in-flight revert.
+    handle.revert();
+    handle = harness.render(props);
+    assert.equal(handle.status, "reverting");
+    handle.stop();
+    handle = harness.render(props);
+    assert.equal(handle.status, "reverting");
+    resolveRestore(true);
+    await flushPromises();
+    handle = harness.render(props);
+    assert.equal(handle.status, "idle");
+    harness.unmount();
+  } finally {
+    (globalThis as { window?: unknown }).window = origWindow;
+  }
 });

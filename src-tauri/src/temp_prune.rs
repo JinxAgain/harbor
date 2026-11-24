@@ -15,44 +15,87 @@ fn is_orphan_dir(name: &str) -> bool {
         || name == "harbor-castsubs"
 }
 
+fn is_uid_owned(meta: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let euid = unsafe { libc::geteuid() };
+        meta.uid() == euid
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        true
+    }
+}
+
+fn is_harbor_subs_dir_name(name: &str) -> bool {
+    #[cfg(unix)]
+    {
+        let uid = unsafe { libc::geteuid() };
+        name == format!("harbor-subs-{uid}") || name == "harbor-subs"
+    }
+    #[cfg(not(unix))]
+    {
+        name == "harbor-subs"
+    }
+}
+
+fn harbor_subs_candidate_names() -> Vec<String> {
+    #[cfg(unix)]
+    {
+        let uid = unsafe { libc::geteuid() };
+        vec![format!("harbor-subs-{uid}"), "harbor-subs".to_string()]
+    }
+    #[cfg(not(unix))]
+    {
+        vec!["harbor-subs".to_string()]
+    }
+}
+
 fn sweep_prepared_subtitles_at(temp_dir: &std::path::Path, now: SystemTime) {
-    let harbor_subs = temp_dir.join("harbor-subs");
-    if std::fs::symlink_metadata(&harbor_subs)
-        .map(|m| m.file_type().is_symlink() || !m.is_dir())
-        .unwrap_or(true)
-    {
-        return;
-    }
-    let prepared = harbor_subs.join("prepared");
-    if std::fs::symlink_metadata(&prepared)
-        .map(|m| m.file_type().is_symlink() || !m.is_dir())
-        .unwrap_or(true)
-    {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(&prepared) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+    for dir_name in harbor_subs_candidate_names() {
+        let harbor_subs = temp_dir.join(dir_name);
+        if std::fs::symlink_metadata(&harbor_subs)
+            .map(|m| m.file_type().is_symlink() || !m.is_dir() || !is_uid_owned(&m))
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        let prepared = harbor_subs.join("prepared");
+        if std::fs::symlink_metadata(&prepared)
+            .map(|m| m.file_type().is_symlink() || !m.is_dir() || !is_uid_owned(&m))
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&prepared) else {
             continue;
         };
-        let age = meta
-            .modified()
-            .ok()
-            .and_then(|modified| now.duration_since(modified).ok())
-            .unwrap_or_default();
-        if age <= ORPHAN_MAX_AGE {
-            continue;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !is_uid_owned(&meta) {
+                continue;
+            }
+            let age = meta
+                .modified()
+                .ok()
+                .and_then(|modified| now.duration_since(modified).ok())
+                .unwrap_or_default();
+            if age <= ORPHAN_MAX_AGE {
+                continue;
+            }
+            if meta.file_type().is_symlink() || !meta.is_dir() {
+                let _ = std::fs::remove_file(path);
+            } else {
+                let _ = std::fs::remove_dir_all(path);
+            }
         }
-        if meta.file_type().is_symlink() || !meta.is_dir() {
-            let _ = std::fs::remove_file(path);
-        } else {
-            let _ = std::fs::remove_dir_all(path);
-        }
+        let _ = std::fs::remove_dir(&prepared);
     }
-    let _ = std::fs::remove_dir(&prepared);
 }
 
 fn sweep_prepared_subtitles(temp_dir: &std::path::Path) {
@@ -74,11 +117,12 @@ pub fn sweep_temp() {
     for entry in entries.flatten() {
         let raw = entry.file_name();
         let name = raw.to_string_lossy();
-        let meta = match entry.metadata() {
+        let path = entry.path();
+        let meta = match std::fs::symlink_metadata(&path) {
             Ok(m) => m,
             Err(_) => continue,
         };
-        if !meta.is_dir() {
+        if meta.file_type().is_symlink() || !meta.is_dir() || !is_uid_owned(&meta) {
             continue;
         }
         let modified = meta.modified().unwrap_or(now);
@@ -86,12 +130,12 @@ pub fn sweep_temp() {
 
         if is_updater_dir(&name) {
             if age > RECENT_GRACE {
-                updaters.push((entry.path(), modified));
+                updaters.push((path, modified));
             }
             continue;
         }
         if is_orphan_dir(&name) && age > ORPHAN_MAX_AGE {
-            let _ = std::fs::remove_dir_all(entry.path());
+            let _ = std::fs::remove_dir_all(path);
         }
     }
 
@@ -132,19 +176,19 @@ fn harbor_temp_dirs_at(dir: &std::path::Path) -> Vec<PathBuf> {
     for entry in entries.flatten() {
         let raw = entry.file_name();
         let name = raw.to_string_lossy();
-        if !entry
-            .file_type()
-            .map(|ft| !ft.is_symlink() && ft.is_dir())
+        let path = entry.path();
+        if !std::fs::symlink_metadata(&path)
+            .map(|m| !m.file_type().is_symlink() && m.is_dir() && is_uid_owned(&m))
             .unwrap_or(false)
         {
             continue;
         }
         if is_updater_dir(&name) || is_orphan_dir(&name) || name == "harbor-trailers" {
-            out.push(entry.path());
-        } else if name == "harbor-subs" {
-            let prepared = entry.path().join("prepared");
+            out.push(path);
+        } else if is_harbor_subs_dir_name(&name) {
+            let prepared = path.join("prepared");
             if std::fs::symlink_metadata(&prepared)
-                .map(|m| !m.file_type().is_symlink() && m.is_dir())
+                .map(|m| !m.file_type().is_symlink() && m.is_dir() && is_uid_owned(&m))
                 .unwrap_or(false)
             {
                 out.push(prepared);
@@ -159,18 +203,25 @@ fn harbor_temp_dirs() -> Vec<PathBuf> {
 }
 
 #[tauri::command]
-pub fn temp_usage_bytes() -> u64 {
-    harbor_temp_dirs().iter().map(dir_size).sum()
+pub async fn temp_usage_bytes() -> u64 {
+    tokio::task::spawn_blocking(|| harbor_temp_dirs().iter().map(dir_size).sum())
+        .await
+        .unwrap_or(0)
 }
 
 #[tauri::command]
-pub fn temp_clear() -> u64 {
-    let dirs = harbor_temp_dirs();
-    let before: u64 = dirs.iter().map(dir_size).sum();
-    for path in dirs {
-        let _ = std::fs::remove_dir_all(path);
-    }
-    before
+pub async fn temp_clear() -> u64 {
+    tokio::task::spawn_blocking(|| {
+        let dirs = harbor_temp_dirs();
+        let before: u64 = dirs.iter().map(dir_size).sum();
+        for path in &dirs {
+            let _ = std::fs::remove_dir_all(path);
+        }
+        let after: u64 = dirs.iter().filter(|p| p.exists()).map(dir_size).sum();
+        before.saturating_sub(after)
+    })
+    .await
+    .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -263,9 +314,12 @@ pub fn sweep_mpv_cache(dir: PathBuf) -> u64 {
     let mut freed = 0_u64;
     for entry in entries.flatten() {
         let path = entry.path();
-        let Ok(meta) = entry.metadata() else {
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
             continue;
         };
+        if meta.file_type().is_symlink() || !is_uid_owned(&meta) {
+            continue;
+        }
         let age = meta
             .modified()
             .ok()

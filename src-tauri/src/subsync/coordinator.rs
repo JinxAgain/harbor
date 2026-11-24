@@ -113,17 +113,22 @@ async fn wait_cancelled(rx: &mut tokio::sync::watch::Receiver<bool>) {
     }
 }
 
-fn active_runs() -> &'static Mutex<HashMap<String, RunCancellation>> {
-    static RUNS: OnceLock<Mutex<HashMap<String, RunCancellation>>> = OnceLock::new();
-    RUNS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 const CANCEL_TOMBSTONE_TTL: Duration = Duration::from_secs(30);
 const MAX_CANCEL_TOMBSTONES: usize = 128;
 
-fn cancelled_run_tombstones() -> &'static Mutex<HashMap<String, std::time::Instant>> {
-    static TOMBSTONES: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
-    TOMBSTONES.get_or_init(|| Mutex::new(HashMap::new()))
+struct RunRegistry {
+    active: HashMap<String, RunCancellation>,
+    tombstones: HashMap<String, std::time::Instant>,
+}
+
+fn run_registry() -> &'static Mutex<RunRegistry> {
+    static REGISTRY: OnceLock<Mutex<RunRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        Mutex::new(RunRegistry {
+            active: HashMap::new(),
+            tombstones: HashMap::new(),
+        })
+    })
 }
 
 fn prune_tombstones(map: &mut HashMap<String, std::time::Instant>, now: std::time::Instant) {
@@ -150,16 +155,13 @@ impl RunGuard {
     fn register(run_id: String) -> Self {
         let cancel = RunCancellation::new();
         let now = std::time::Instant::now();
-        if let Ok(mut tombstones) = cancelled_run_tombstones().lock() {
-            prune_tombstones(&mut tombstones, now);
-            if tombstones.remove(&run_id).is_some() {
-                cancel.cancel();
-            }
+        let mut reg = run_registry().lock().unwrap_or_else(|p| p.into_inner());
+        prune_tombstones(&mut reg.tombstones, now);
+        if reg.tombstones.remove(&run_id).is_some() {
+            cancel.cancel();
         }
-        if let Ok(mut map) = active_runs().lock() {
-            if let Some(prev) = map.insert(run_id.clone(), cancel.clone()) {
-                prev.cancel();
-            }
+        if let Some(prev) = reg.active.insert(run_id.clone(), cancel.clone()) {
+            prev.cancel();
         }
         Self { run_id, cancel }
     }
@@ -167,11 +169,10 @@ impl RunGuard {
 
 impl Drop for RunGuard {
     fn drop(&mut self) {
-        if let Ok(mut map) = active_runs().lock() {
-            if let Some(existing) = map.get(&self.run_id) {
-                if Arc::ptr_eq(&existing.flag, &self.cancel.flag) {
-                    map.remove(&self.run_id);
-                }
+        let mut reg = run_registry().lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(existing) = reg.active.get(&self.run_id) {
+            if Arc::ptr_eq(&existing.flag, &self.cancel.flag) {
+                reg.active.remove(&self.run_id);
             }
         }
     }
@@ -334,27 +335,26 @@ pub async fn subsync_prefetch_embedded(
 
 #[tauri::command]
 pub fn subsync_cancel(run_id: String) -> Result<(), String> {
-    let mut found_active = false;
-    if let Ok(map) = active_runs().lock() {
-        if let Some(cancel) = map.get(&run_id) {
-            cancel.cancel();
-            found_active = true;
-        }
-    }
-    if !found_active {
-        if let Ok(mut tombstones) = cancelled_run_tombstones().lock() {
-            let now = std::time::Instant::now();
-            tombstones.insert(run_id, now);
-            prune_tombstones(&mut tombstones, now);
-        }
+    let mut reg = run_registry().lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(cancel) = reg.active.get(&run_id) {
+        cancel.cancel();
+    } else {
+        let now = std::time::Instant::now();
+        reg.tombstones.insert(run_id, now);
+        prune_tombstones(&mut reg.tombstones, now);
     }
     Ok(())
 }
 
+const MAX_ALIGN_CANDIDATES: usize = 32;
+
 #[tauri::command]
 pub async fn subsync_align_subtitles(
-    request: AlignSubtitlesRequest,
+    mut request: AlignSubtitlesRequest,
 ) -> Result<AlignSubtitlesResponse, String> {
+    if request.candidates.len() > MAX_ALIGN_CANDIDATES {
+        request.candidates.truncate(MAX_ALIGN_CANDIDATES);
+    }
     let guard = RunGuard::register(request.run_id.clone());
     let cancel = guard.cancel.clone();
     if cancel.is_cancelled() {
@@ -770,7 +770,7 @@ fn evaluate_pool(
             let ref_act = ref_activity_cache.get(&ref_track.key).and_then(|o| o.as_ref());
 
             let res = if ref_track.sampled {
-                find_sampled_delay_alignment(&ref_track.cues, &target_cues)
+                find_sampled_delay_alignment(&ref_track.cues, &target_cues, cancel)
                     .map(|al| build_delay_only_timeline(&target_cues, &al))
             } else {
                 retime_with_discovery(
@@ -1029,30 +1029,51 @@ async fn finalize_pool_response(
         });
     }
 
-    let (out_format, final_text) = match winner.loaded.format {
-        SubtitleFormat::Ttml => {
-            let Some(srt) = (if within_tolerance {
-                format_srt_from_cues(&winner.loaded.cues)
-            } else {
-                format_srt_from_retimed_cues(&winner.loaded.cues, tl)
-            }) else {
-                return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Inconclusive));
-            };
-            (SubtitleFormat::Srt, srt)
-        }
-        other => {
-            if within_tolerance {
-                (other, winner.loaded.raw_body.clone())
-            } else {
-                let Some(retimed) =
-                    retime_subtitle_text_for_format(&winner.loaded.raw_body, tl, other)
-                else {
-                    return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Inconclusive));
+    let alignment_scale = winner.timeline.alignment_scale;
+    let loaded_format = winner.loaded.format;
+    let loaded_cues = winner.loaded.cues;
+    let loaded_raw_body = winner.loaded.raw_body;
+    let tl_for_retime = winner.timeline;
+
+    let (out_format, final_text, selected_original_pair) = tokio::task::spawn_blocking(move || {
+        let out_pair = match loaded_format {
+            SubtitleFormat::Ttml => {
+                let srt = if within_tolerance {
+                    format_srt_from_cues(&loaded_cues)
+                } else {
+                    format_srt_from_retimed_cues(&loaded_cues, &tl_for_retime)
                 };
-                (other, retimed)
+                srt.map(|s| (SubtitleFormat::Srt, s))
             }
-        }
-    };
+            other => {
+                if within_tolerance {
+                    Some((other, loaded_raw_body.clone()))
+                } else {
+                    retime_subtitle_text_for_format(&loaded_raw_body, &tl_for_retime, other)
+                        .map(|retimed| (other, retimed))
+                }
+            }
+        };
+        let orig_pair = if chosen_is_selected {
+            match loaded_format {
+                SubtitleFormat::Ttml => {
+                    format_srt_from_cues(&loaded_cues).map(|s| (SubtitleFormat::Srt, s))
+                }
+                other => Some((other, loaded_raw_body)),
+            }
+        } else {
+            None
+        };
+        out_pair.map(|(fmt, txt)| (fmt, txt, orig_pair))
+    })
+    .await
+    .map_err(|e| format!("autosync retime task failed: {e}"))?
+    .ok_or_else(|| "inconclusive".to_string())
+    .or_else(|_| Ok::<_, String>((SubtitleFormat::Srt, String::new(), None)))?;
+
+    if final_text.is_empty() {
+        return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Inconclusive));
+    }
 
     if cancel.is_cancelled() {
         return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
@@ -1068,30 +1089,20 @@ async fn finalize_pool_response(
     .await?;
 
     let (selected_original_path, selected_original_text, selected_original_format) =
-        if chosen_is_selected {
-            let orig_pair = match winner.loaded.format {
-                SubtitleFormat::Ttml => {
-                    format_srt_from_cues(&winner.loaded.cues).map(|s| (SubtitleFormat::Srt, s))
-                }
-                other => Some((other, winner.loaded.raw_body.clone())),
-            };
-            if let Some((orig_fmt, orig_text)) = orig_pair {
-                if cancel.is_cancelled() {
-                    return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
-                }
-                let orig_path = write_autosync_temp_file(
-                    "autosync_orig_",
-                    &request.media_url,
-                    selected_url,
-                    orig_fmt.ext(),
-                    &orig_text,
-                )
-                .await
-                .ok();
-                (orig_path, Some(orig_text), Some(orig_fmt))
-            } else {
-                (None, None, None)
+        if let Some((orig_fmt, orig_text)) = selected_original_pair {
+            if cancel.is_cancelled() {
+                return Ok(AlignSubtitlesResponse::empty(AlignOutcome::Cancelled));
             }
+            let orig_path = write_autosync_temp_file(
+                "autosync_orig_",
+                &request.media_url,
+                selected_url,
+                orig_fmt.ext(),
+                &orig_text,
+            )
+            .await
+            .ok();
+            (orig_path, Some(orig_text), Some(orig_fmt))
         } else {
             (None, None, None)
         };
@@ -1112,7 +1123,7 @@ async fn finalize_pool_response(
         selected_original_format,
         median_offset_ms,
         max_shift_ms,
-        scale: tl.alignment_scale,
+        scale: alignment_scale,
         within_tolerance,
         matched_cue_count,
         total_cue_count,
@@ -1149,7 +1160,17 @@ fn sha256_hex16(input: &str) -> String {
 }
 
 fn autosync_temp_dir() -> PathBuf {
-    std::env::temp_dir().join("harbor-subs").join("prepared")
+    #[cfg(unix)]
+    {
+        let uid = unsafe { libc::geteuid() };
+        std::env::temp_dir()
+            .join(format!("harbor-subs-{uid}"))
+            .join("prepared")
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::temp_dir().join("harbor-subs").join("prepared")
+    }
 }
 
 async fn write_autosync_temp_file(
@@ -1196,39 +1217,59 @@ fn prune_older_autosync_files(dir: &std::path::Path, prefix: &str, current_name:
     }
 }
 
-fn verify_temp_dir_safe(dir: &std::path::Path) -> Result<(), String> {
+fn ensure_safe_dir(dir: &std::path::Path) -> Result<(), String> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
-        let euid = unsafe { libc::geteuid() };
-        if let Some(parent) = dir.parent() {
-            let parent_meta = std::fs::symlink_metadata(parent)
-                .map_err(|e| format!("stat parent temp dir: {e}"))?;
-            if parent_meta.file_type().is_symlink() || !parent_meta.is_dir() {
-                return Err("unsafe parent temp dir".into());
-            }
-            if parent_meta.uid() != euid {
-                return Err("unowned parent temp dir".into());
-            }
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(format!("create temp dir: {e}")),
         }
-        let dir_meta =
-            std::fs::symlink_metadata(dir).map_err(|e| format!("stat temp dir: {e}"))?;
-        if dir_meta.file_type().is_symlink() || !dir_meta.is_dir() {
+        let meta = std::fs::symlink_metadata(dir).map_err(|e| format!("stat temp dir: {e}"))?;
+        if meta.file_type().is_symlink() || !meta.is_dir() {
             return Err("unsafe temp dir".into());
         }
-        if dir_meta.uid() != euid {
+        let euid = unsafe { libc::geteuid() };
+        if meta.uid() != euid {
             return Err("unowned temp dir".into());
         }
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        Ok(())
     }
     #[cfg(not(unix))]
     {
-        let dir_meta =
-            std::fs::symlink_metadata(dir).map_err(|e| format!("stat temp dir: {e}"))?;
-        if dir_meta.file_type().is_symlink() || !dir_meta.is_dir() {
+        match std::fs::create_dir(dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(format!("create temp dir: {e}")),
+        }
+        let meta = std::fs::symlink_metadata(dir).map_err(|e| format!("stat temp dir: {e}"))?;
+        if meta.file_type().is_symlink() || !meta.is_dir() {
             return Err("unsafe temp dir".into());
         }
+        Ok(())
     }
-    Ok(())
+}
+
+fn is_safe_existing_file(path: &std::path::Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() || !meta.is_file() {
+                return false;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let euid = unsafe { libc::geteuid() };
+                if meta.uid() != euid {
+                    return false;
+                }
+            }
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 fn write_autosync_temp_file_sync(
@@ -1239,29 +1280,10 @@ fn write_autosync_temp_file_sync(
     contents: &str,
 ) -> Result<String, String> {
     let dir = autosync_temp_dir();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-        if let Some(parent) = dir.parent() {
-            std::fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(parent)
-                .map_err(|e| format!("create parent temp dir: {e}"))?;
-            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
-        }
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&dir)
-            .map_err(|e| format!("create temp dir: {e}"))?;
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    if let Some(parent) = dir.parent() {
+        ensure_safe_dir(parent)?;
     }
-    #[cfg(not(unix))]
-    {
-        std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
-    }
-    verify_temp_dir_safe(&dir)?;
+    ensure_safe_dir(&dir)?;
 
     let media_track_hash = sha256_hex16(&format!("{media_url}\0{track_key}"));
     let content_hash = sha256_hex16(contents);
@@ -1269,7 +1291,7 @@ fn write_autosync_temp_file_sync(
     let file_name = format!("{prefix}{content_hash}.{ext}");
     let target_path = dir.join(&file_name);
 
-    if target_path.is_file() {
+    if is_safe_existing_file(&target_path) {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1314,7 +1336,7 @@ fn write_autosync_temp_file_sync(
 
     if let Err(err) = std::fs::rename(&staging_path, &target_path) {
         let _ = std::fs::remove_file(&staging_path);
-        if !target_path.is_file() {
+        if !is_safe_existing_file(&target_path) {
             return Err(format!("rename retimed subtitle: {err}"));
         }
     }
@@ -1997,6 +2019,7 @@ async fn fetch_with_redirects(
             &addrs,
             Duration::from_secs(5),
             Some(SUBTITLE_DOWNLOAD_TIMEOUT),
+            None,
             false,
         )?;
 

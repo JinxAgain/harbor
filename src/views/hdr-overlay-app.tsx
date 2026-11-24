@@ -138,6 +138,7 @@ function HdrOverlayChrome() {
   const asCanRevert = autoSyncState?.canRevert ?? false;
   const asErrorMessage = autoSyncState?.errorMessage ?? null;
   const asErrorAction = autoSyncState?.errorAction;
+  const asNoticeSeq = autoSyncState?.noticeSeq ?? 0;
 
   const forwardedAutoSync = useMemo<AutoSyncHandle | null>(() => {
     if (!hasAutoSync) return null;
@@ -151,6 +152,7 @@ function HdrOverlayChrome() {
       canRevert: asCanRevert,
       errorMessage: asErrorMessage,
       errorAction: asErrorAction,
+      noticeSeq: asNoticeSeq,
       run: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_RUN, actionPayload()),
       stop: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_STOP, actionPayload()),
       revert: () => void hdrOverlayEmitAction(HDR_STAGE_AUTOSYNC_REVERT, actionPayload()),
@@ -168,6 +170,7 @@ function HdrOverlayChrome() {
     asCanRevert,
     asErrorMessage,
     asErrorAction,
+    asNoticeSeq,
     currentMediaKey,
   ]);
 
@@ -343,7 +346,7 @@ function HdrOverlayChrome() {
         <SubSyncBar
           delaySec={snap.subDelaySec}
           onDelay={handleSubDelay}
-          syncAvailable={snap.subtitleTracks.some((t) => t.selected)}
+          syncAvailable={(snap.subtitleTracks ?? []).some((t) => t.selected)}
         />
       )}
       <PlayerInteractionLockControls

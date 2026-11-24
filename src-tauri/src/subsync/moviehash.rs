@@ -107,6 +107,7 @@ async fn range_get_bounded(
             &addrs,
             CONNECT_TIMEOUT,
             Some(REQUEST_TIMEOUT),
+            None,
             true,
         )?;
 
@@ -210,11 +211,14 @@ async fn http_hash(
     let safe_hdrs = url_guard::safe_reqwest_headers(headers, true);
 
     let head = range_get_bounded(parsed_url, safe_hdrs, initial_allow_local, 0).await?;
-    let size = if size_hint >= CHUNK * 2 {
-        size_hint
-    } else {
-        head.total_size.ok_or_else(|| "unknown size".to_string())?
-    };
+    let size = head
+        .total_size
+        .or(if size_hint >= CHUNK * 2 {
+            Some(size_hint)
+        } else {
+            None
+        })
+        .ok_or_else(|| "unknown size".to_string())?;
     if size < CHUNK * 2 {
         return Err("file too small to hash".into());
     }

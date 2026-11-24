@@ -27,7 +27,8 @@ export function SyncControl({
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  const busy = autoSync?.status === "analyzing";
+  const reverting = autoSync?.status === "reverting";
+  const busy = autoSync?.status === "analyzing" || reverting;
   const applied = autoSync?.status === "synced";
   const autoSyncOn = busy || applied;
 
@@ -51,7 +52,7 @@ export function SyncControl({
   }, [open]);
 
   const runAutoSync = () => {
-    if (!canAutoSync) return;
+    if (!canAutoSync || reverting) return;
     if (autoSyncOn) {
       autoSync?.stop();
       return;
@@ -114,7 +115,7 @@ export function SyncControl({
           </button>
           <button
             type="button"
-            disabled={!canAutoSync}
+            disabled={!canAutoSync || reverting}
             onClick={() => {
               setOpen(false);
               runAutoSync();

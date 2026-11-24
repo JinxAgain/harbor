@@ -494,6 +494,7 @@ struct HttpRangeReader {
     deadline: Instant,
     bytes_read: u64,
     requests: usize,
+    expected_total_length: Option<u64>,
 }
 
 impl HttpRangeReader {
@@ -510,6 +511,7 @@ impl HttpRangeReader {
             deadline: Instant::now() + TOTAL_TIMEOUT,
             bytes_read: 0,
             requests: 0,
+            expected_total_length: None,
         })
     }
 
@@ -558,6 +560,7 @@ impl HttpRangeReader {
             &resolved_host,
             &addrs,
             Duration::from_secs(4),
+            None,
             None,
             true,
         )
@@ -747,6 +750,15 @@ impl RandomAccessReader for HttpRangeReader {
         let total_length = content_range
             .and_then(|cr| cr.total)
             .or(if status == 200 { content_length } else { None });
+        if let Some(total) = total_length {
+            if let Some(prev) = self.expected_total_length {
+                if prev != total {
+                    return Err(TimedOrPermanent::Permanent);
+                }
+            } else {
+                self.expected_total_length = Some(total);
+            }
+        }
         Ok(RangeResponse {
             bytes: out,
             total_length,
@@ -784,19 +796,26 @@ fn parse_content_range(value: &str) -> Option<ContentRange> {
     }
     let (range_part, total_part) = trimmed.get(6..)?.split_once('/')?;
     let (s_str, e_str) = range_part.split_once('-')?;
-    let start = s_str.trim().parse::<u64>().ok();
-    let end = e_str.trim().parse::<u64>().ok();
-    let total = if total_part.trim() == "*" {
+    let start = s_str.trim().parse::<u64>().ok()?;
+    let end = e_str.trim().parse::<u64>().ok()?;
+    if end < start {
+        return None;
+    }
+    let total_str = total_part.trim();
+    let total = if total_str == "*" {
         None
     } else {
-        total_part.trim().parse::<u64>().ok()
-    };
-    if let (Some(s), Some(e)) = (start, end) {
-        if e < s {
+        let t = total_str.parse::<u64>().ok()?;
+        if end >= t {
             return None;
         }
-    }
-    Some(ContentRange { start, end, total })
+        Some(t)
+    };
+    Some(ContentRange {
+        start: Some(start),
+        end: Some(end),
+        total,
+    })
 }
 
 async fn inspect_container(
@@ -899,8 +918,8 @@ async fn inspect_container(
         None
     };
     let parsed_cues = match parsed_cues {
-        Some(map) if map.values().any(|tl| !tl.is_empty()) => map,
-        _ => find_and_parse_cues_near_end(
+        Some(map) => map,
+        None => find_and_parse_cues_near_end(
             reader,
             initial.total_length,
             initial.bytes.len() as u64,
@@ -1391,19 +1410,16 @@ impl FfprobeCompactAccumulator {
     }
 }
 
-async fn ffprobe_mkv_text_subtitles(
+async fn ffprobe_single_mkv_text_track(
+    ffprobe: &Path,
     local_path: &Path,
-    tracks: &[MatroskaSubtitleTrack],
-) -> Option<Vec<ReferenceTrack>> {
+    sub_ordinal: usize,
+    track: MatroskaSubtitleTrack,
+) -> Option<ReferenceTrack> {
     use tokio::io::AsyncBufReadExt as _;
 
-    let ffprobe = cached_ffprobe_path().await?;
-    let text_indices = select_ffprobe_text_tracks(tracks);
-    if text_indices.is_empty() {
-        return None;
-    }
-
-    let mut cmd = tokio::process::Command::new(&ffprobe);
+    let select_spec = format!("s:{sub_ordinal}");
+    let mut cmd = tokio::process::Command::new(ffprobe);
     cmd.kill_on_drop(true);
     cmd.arg("-v")
         .arg("error")
@@ -1412,7 +1428,7 @@ async fn ffprobe_mkv_text_subtitles(
         .arg("-f")
         .arg("matroska")
         .arg("-select_streams")
-        .arg("s")
+        .arg(&select_spec)
         .arg("-show_entries")
         .arg("stream=index:packet=stream_index,pts_time,duration_time")
         .arg("-of")
@@ -1426,8 +1442,10 @@ async fn ffprobe_mkv_text_subtitles(
     {
         cmd.creation_flags(0x0800_0000);
     }
+    crate::proc_guard::configure_command(&mut cmd);
 
     let mut child = cmd.spawn().ok()?;
+    crate::proc_guard::adopt(&child);
     let stdout = child.stdout.take()?;
 
     let read_res = tokio::time::timeout(FFPROBE_FALLBACK_TIMEOUT, async {
@@ -1437,7 +1455,10 @@ async fn ffprobe_mkv_text_subtitles(
         while let Ok(Some(line)) = reader.next_line().await {
             total_bytes = total_bytes.saturating_add(line.len() + 1);
             if total_bytes > MAX_FFPROBE_STDOUT_BYTES {
-                break;
+                drop(reader);
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                return None;
             }
             acc.feed_line(&line);
         }
@@ -1458,7 +1479,32 @@ async fn ffprobe_mkv_text_subtitles(
         }
     };
 
-    acc.finish(text_indices)
+    acc.finish(vec![(0, track)]).and_then(|mut v| v.pop())
+}
+
+async fn ffprobe_mkv_text_subtitles(
+    local_path: &Path,
+    tracks: &[MatroskaSubtitleTrack],
+) -> Option<Vec<ReferenceTrack>> {
+    let ffprobe = cached_ffprobe_path().await?;
+    let text_indices = select_ffprobe_text_tracks(tracks);
+    if text_indices.is_empty() {
+        return None;
+    }
+
+    let mut out = Vec::new();
+    for (sub_ordinal, track) in text_indices {
+        if let Some(ref_track) =
+            ffprobe_single_mkv_text_track(&ffprobe, local_path, sub_ordinal, track).await
+        {
+            out.push(ref_track);
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 // ---------- MKV EBML Helpers ----------
@@ -1962,31 +2008,43 @@ async fn find_and_parse_cues_near_end(
     let tail = reader.read_range(start, tail_len, true, false).await?;
     let mut offsets = find_element_id_offsets(&tail.bytes, ID_CUES);
     offsets.reverse();
-    for rel_offset in offsets {
-        let cues_bytes = match extract_element_from_probe(
-            &tail.bytes,
-            rel_offset as u64,
-            ID_CUES,
-            MAX_CUES_BYTES,
-        ) {
-            Some(b) => Some(b),
-            None => {
-                if start.saturating_add(tail.bytes.len() as u64) >= file_len {
-                    continue;
+    const MAX_TAIL_CUES_ATTEMPTS: usize = 32;
+    for rel_offset in offsets.into_iter().take(MAX_TAIL_CUES_ATTEMPTS) {
+        let cues_slice: Option<&[u8]> = read_element(&tail.bytes, rel_offset, tail.bytes.len())
+            .filter(|el| el.id == ID_CUES)
+            .and_then(|el| {
+                let total_size = (el.header_size as u64).checked_add(el.size?)?;
+                if total_size == 0 || total_size > MAX_CUES_BYTES as u64 {
+                    return None;
                 }
-                let abs = start + rel_offset as u64;
-                match fetch_element_at(reader, abs, ID_CUES, MAX_CUES_BYTES).await {
-                    Ok(b) => b,
-                    Err(TimedOrPermanent::Permanent) => continue,
-                    Err(e @ (TimedOrPermanent::Transient | TimedOrPermanent::Blocked)) => {
-                        return Err(e);
-                    }
+                let end = rel_offset.checked_add(usize::try_from(total_size).ok()?)?;
+                if end > tail.bytes.len() {
+                    return None;
+                }
+                Some(&tail.bytes[rel_offset..end])
+            });
+        let owned_cues;
+        let cues_bytes: Option<&[u8]> = if let Some(slice) = cues_slice {
+            Some(slice)
+        } else {
+            if start.saturating_add(tail.bytes.len() as u64) >= file_len {
+                continue;
+            }
+            let abs = start + rel_offset as u64;
+            match fetch_element_at(reader, abs, ID_CUES, MAX_CUES_BYTES).await {
+                Ok(b) => {
+                    owned_cues = b;
+                    owned_cues.as_deref()
+                }
+                Err(TimedOrPermanent::Permanent) => continue,
+                Err(e @ (TimedOrPermanent::Transient | TimedOrPermanent::Blocked)) => {
+                    return Err(e);
                 }
             }
         };
         if let Some(cues_bytes) = cues_bytes {
             let parsed =
-                parse_subtitle_cue_timelines(&cues_bytes, subtitle_tracks, timestamp_scale_ns);
+                parse_subtitle_cue_timelines(cues_bytes, subtitle_tracks, timestamp_scale_ns);
             if parsed.values().any(|c| c.len() >= MIN_INDEXED_CUES) {
                 return Ok(Some(parsed));
             }
@@ -2636,6 +2694,13 @@ mod tests {
         assert!(!cues[0].estimated_end);
         assert_eq!(cues[1].start_ms, 20_000);
         assert!(cues[1].estimated_end);
+
+        // parse_content_range rejects malformed bounds and end >= total.
+        assert!(parse_content_range("bytes 0-99/100").is_some());
+        assert!(parse_content_range("bytes 0-99/*").is_some());
+        assert!(parse_content_range("bytes 0-garbage/bad").is_none());
+        assert!(parse_content_range("bytes 50-10/100").is_none());
+        assert!(parse_content_range("bytes 0-100/100").is_none());
     }
 }
 

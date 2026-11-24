@@ -158,7 +158,13 @@ impl TimelineRetimeResult {
             return self.alignment_intercept_ms.abs();
         };
         let last = self.cues.last().unwrap_or(first);
-        shift_at(first.original_start_ms).max(shift_at(last.original_start_ms))
+        let affine_max = shift_at(first.original_start_ms).max(shift_at(last.original_start_ms));
+        let cue_max = self
+            .cues
+            .iter()
+            .map(|c| (c.start_ms - c.original_start_ms).abs() as f64)
+            .fold(0.0f64, f64::max);
+        affine_max.max(cue_max)
     }
 
     pub fn is_no_fit(&self) -> bool {
@@ -943,6 +949,7 @@ pub fn is_same_source_activity(first: &PreparedActivity, second: &PreparedActivi
 pub fn find_sampled_delay_alignment(
     reference: &[SubtitleCue],
     target: &[SubtitleCue],
+    cancel: &AtomicBool,
 ) -> Option<DelayOnlyAlignment> {
     const MAX_OFFSET_MS: i64 = 180_000;
     const HIST_BIN_MS: i64 = 250;
@@ -954,7 +961,12 @@ pub fn find_sampled_delay_alignment(
     const REQUIRED_SEGMENTS: usize = 3;
     const MAX_HIST_CANDIDATES: usize = 12;
 
-    if reference.len() < MIN_MATCHED_CUES || target.len() < MIN_MATCHED_CUES {
+    if reference.len() < MIN_MATCHED_CUES
+        || target.len() < MIN_MATCHED_CUES
+        || reference.len() > MAX_ALIGNMENT_CUES
+        || target.len() > MAX_ALIGNMENT_CUES
+        || is_cancelled(cancel)
+    {
         return None;
     }
     let mut ref_starts: Vec<i64> = reference.iter().map(|c| c.start_ms).collect();
@@ -963,7 +975,10 @@ pub fn find_sampled_delay_alignment(
     tgt_starts.sort_unstable();
 
     let mut histogram: HashMap<i64, usize> = HashMap::new();
-    for &ref_ms in &ref_starts {
+    for (i, &ref_ms) in ref_starts.iter().enumerate() {
+        if i & 0xff == 0 && is_cancelled(cancel) {
+            return None;
+        }
         let min_t = ref_ms.saturating_sub(MAX_OFFSET_MS);
         let max_t = ref_ms.saturating_add(MAX_OFFSET_MS);
         let mut idx = tgt_starts.partition_point(|&v| v < min_t);
@@ -973,6 +988,9 @@ pub fn find_sampled_delay_alignment(
             *histogram.entry(bin).or_insert(0) += 1;
             idx += 1;
         }
+    }
+    if is_cancelled(cancel) {
+        return None;
     }
 
     let mut hist_entries: Vec<(i64, usize)> = histogram.into_iter().collect();
@@ -1099,6 +1117,11 @@ fn discover_activity_alignment(
         || target.len() < MIN_CUES
         || reference.len() > MAX_ALIGNMENT_CUES
         || target.len() > MAX_ALIGNMENT_CUES
+    {
+        return None;
+    }
+    if !reference.windows(2).all(|w| w[0].start_ms <= w[1].start_ms)
+        || !target.windows(2).all(|w| w[0].start_ms <= w[1].start_ms)
     {
         return None;
     }
@@ -1255,12 +1278,15 @@ fn discover_activity_alignment(
                     let second_unit_score = coarse_candidates
                         .iter()
                         .filter(|&&cand| {
-                            is_distinct_activity_transform(
-                                s.coarse,
-                                cand,
-                                target_start_ms,
-                                target_end_ms,
-                            )
+                            let near_unit_scale =
+                                (cand.scale - 1.0).abs() > 0.0 && (cand.scale - 1.0).abs() <= 0.002;
+                            !near_unit_scale
+                                && is_distinct_activity_transform(
+                                    s.coarse,
+                                    cand,
+                                    target_start_ms,
+                                    target_end_ms,
+                                )
                         })
                         .map(|cand| cand.score)
                         .max_by(|a, b| a.total_cmp(b))
@@ -1318,12 +1344,16 @@ fn fine_activity_best(
 ) -> Option<ActivityCandidate> {
     let mut candidates = Vec::new();
     let mut fine_best: Option<ActivityCandidate> = None;
-    let mut offset_ms = plateau_start_ms - ACTIVITY_FINE_RADIUS_MS;
-    while offset_ms <= plateau_end_ms + ACTIVITY_FINE_RADIUS_MS {
+    let start_bin = (plateau_start_ms - ACTIVITY_FINE_RADIUS_MS).div_euclid(ACTIVITY_FINE_BIN_MS);
+    let end_bin = (plateau_end_ms + ACTIVITY_FINE_RADIUS_MS + ACTIVITY_FINE_BIN_MS - 1)
+        .div_euclid(ACTIVITY_FINE_BIN_MS);
+    for offset_bins_i64 in start_bin..=end_bin {
         if is_cancelled(cancel) {
             return None;
         }
-        let offset_bins = ((offset_ms as f64) / (ACTIVITY_FINE_BIN_MS as f64)).round() as i32;
+        let Ok(offset_bins) = i32::try_from(offset_bins_i64) else {
+            continue;
+        };
         if let Some(score) = score_activity_offset(reference_fine, target_fine, offset_bins) {
             let cand = ActivityCandidate {
                 scale,
@@ -1335,7 +1365,6 @@ fn fine_activity_best(
                 fine_best = Some(cand);
             }
         }
-        offset_ms += ACTIVITY_FINE_BIN_MS;
     }
     let best = fine_best?;
     let mut chosen = best;
@@ -1751,8 +1780,10 @@ struct BandedDpRows {
     local_group_costs: Vec<f64>,
 }
 
+const MAX_BANDED_DP_CELLS: usize = 4_000_000;
+
 impl BandedDpRows {
-    fn new(target_size: usize, reference_size: usize, centers: &[usize]) -> Self {
+    fn try_new(target_size: usize, reference_size: usize, centers: &[usize]) -> Option<Self> {
         let row_count = target_size + 1;
         let mut row_starts = vec![0usize; row_count];
         let mut row_ends = vec![0usize; row_count];
@@ -1776,10 +1807,13 @@ impl BandedDpRows {
             row_starts[tgt_idx] = start;
             row_ends[tgt_idx] = end;
             row_offsets[tgt_idx] = total_cells;
-            total_cells += end.saturating_sub(start) + 1;
+            total_cells = total_cells.checked_add(end.saturating_sub(start) + 1)?;
+            if total_cells > MAX_BANDED_DP_CELLS {
+                return None;
+            }
         }
         row_offsets[row_count] = total_cells;
-        Self {
+        Some(Self {
             row_count,
             row_starts,
             row_ends,
@@ -1792,7 +1826,7 @@ impl BandedDpRows {
             tgt_counts: vec![0; total_cells],
             step_codes: vec![Step::Unreachable; total_cells],
             local_group_costs: vec![0.0; total_cells],
-        }
+        })
     }
 
     fn set_start(&mut self) {
@@ -1871,6 +1905,11 @@ fn retime_with_seed(
     {
         return None;
     }
+    if !reference.windows(2).all(|w| w[0].start_ms <= w[1].start_ms)
+        || !target.windows(2).all(|w| w[0].start_ms <= w[1].start_ms)
+    {
+        return None;
+    }
     if !coarse_scale.is_finite() || !(0.85..=1.15).contains(&coarse_scale) {
         return None;
     }
@@ -1912,7 +1951,7 @@ fn retime_with_seed(
     let pred_end = (tgt_tx_ends[tgt_len - 1].round() as i64).max(0);
     centers.push(lower_bound_reference(reference, pred_end));
 
-    let mut rows = BandedDpRows::new(tgt_len, ref_len, &centers);
+    let mut rows = BandedDpRows::try_new(tgt_len, ref_len, &centers)?;
     let mut final_row_costs: HashMap<usize, f64> = HashMap::new();
     rows.set_start();
 
@@ -2852,6 +2891,19 @@ mod tests {
         assert!(outliers.contains("bad"));
         assert!(!outliers.contains("a"));
         assert!(!outliers.contains("b"));
+    }
+
+    #[test]
+    fn retime_with_seed_rejects_unsorted_cues_and_sampled_respects_cancel() {
+        let cancel = AtomicBool::new(false);
+        let reference = make_dialogue_cues(20, 0, 1.0);
+        let mut unsorted_target = make_dialogue_cues(20, 0, 1.0);
+        unsorted_target.swap(2, 15);
+        assert!(retime_with_seed(&reference, &unsorted_target, 1.0, 0.0, &cancel).is_none());
+
+        let cancelled = AtomicBool::new(true);
+        let target = make_dialogue_cues(20, 0, 1.0);
+        assert!(find_sampled_delay_alignment(&reference, &target, &cancelled).is_none());
     }
 }
 

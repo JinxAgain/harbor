@@ -25,7 +25,15 @@ export type HdrStageSubDelayRequest = {
 };
 
 export type HdrStageAutoSyncState = {
-  status: "idle" | "analyzing" | "synced" | "within-tolerance" | "no-fit" | "no-embedded" | "error";
+  status:
+    | "idle"
+    | "analyzing"
+    | "reverting"
+    | "synced"
+    | "within-tolerance"
+    | "no-fit"
+    | "no-embedded"
+    | "error";
   trigger: "automatic" | "manual";
   offsetMs: number | null;
   scale: number | null;
@@ -33,6 +41,7 @@ export type HdrStageAutoSyncState = {
   canRevert: boolean;
   errorMessage: string | null;
   errorAction?: "run" | "revert";
+  noticeSeq?: number;
 };
 
 export type HdrStageAutoSyncActionRequest = {

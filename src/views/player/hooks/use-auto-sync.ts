@@ -19,7 +19,6 @@ import {
   trackAutoSyncKey,
   type AutoSyncTrigger,
 } from "@/lib/subtitles/autosync/embedded-sync";
-import { toSrt } from "@/lib/subtitles/serialize";
 import type { SubResult } from "@/lib/subtitles/types";
 import type { PlayerSrc } from "@/lib/view";
 import {
@@ -41,6 +40,7 @@ import {
 export type AutoSyncStatus =
   | "idle"
   | "analyzing"
+  | "reverting"
   | "synced"
   | "within-tolerance"
   | "no-fit"
@@ -56,6 +56,8 @@ export type AutoSyncHandle = {
   canRevert: boolean;
   errorMessage: string | null;
   errorAction?: "run" | "revert";
+  noticeSeq?: number;
+  transitioningTrack?: boolean;
   run: () => void;
   stop: () => void;
   revert: () => void;
@@ -105,6 +107,45 @@ export function useAutoSync(params: {
   const [canRevert, setCanRevert] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorAction, setErrorAction] = useState<"run" | "revert">("run");
+  const [noticeSeq, setNoticeSeq] = useState(0);
+  const [transitioningTrack, setTransitioningTrack] = useState(false);
+
+  const statusRef = useRef<AutoSyncStatus>("idle");
+  statusRef.current = status;
+  const transitionTimerRef = useRef<number | null>(null);
+
+  const setAutoSyncStatus = useCallback((next: AutoSyncStatus, bumpNotice = false) => {
+    statusRef.current = next;
+    setStatus(next);
+    if (bumpNotice) {
+      setNoticeSeq((seq) => seq + 1);
+    }
+  }, []);
+
+  const clearTransitionTimer = useCallback(() => {
+    if (transitionTimerRef.current != null) {
+      window.clearTimeout(transitionTimerRef.current);
+      transitionTimerRef.current = null;
+    }
+  }, []);
+
+  const beginTrackTransition = useCallback(() => {
+    clearTransitionTimer();
+    setTransitioningTrack(true);
+  }, [clearTransitionTimer]);
+
+  const endTrackTransition = useCallback(() => {
+    clearTransitionTimer();
+    setTransitioningTrack(false);
+  }, [clearTransitionTimer]);
+
+  const scheduleTrackTransitionTimeout = useCallback(() => {
+    clearTransitionTimer();
+    transitionTimerRef.current = window.setTimeout(() => {
+      transitionTimerRef.current = null;
+      setTransitioningTrack(false);
+    }, 2100);
+  }, [clearTransitionTimer]);
 
   const prefetchedUrlRef = useRef<string | null>(null);
   const attemptedRef = useRef<{ mediaKey: string; keys: Set<string> }>({
@@ -170,7 +211,9 @@ export function useAutoSync(params: {
           if (!cancelled?.current) {
             setErrorAction("run");
             setErrorMessage(error instanceof Error ? error.message : String(error));
+            statusRef.current = "error";
             setStatus("error");
+            setNoticeSeq((seq) => seq + 1);
           }
         },
         () => cancelled?.current !== true && isCurrent(),
@@ -205,8 +248,9 @@ export function useAutoSync(params: {
       activeDisposeRef.current = null;
       committingScopeRef.current = null;
       awaitingCommitRef.current = null;
+      clearTransitionTimer();
     },
-    [],
+    [clearTransitionTimer],
   );
 
   // Reset per-media caches & state whenever mediaKey changes.
@@ -216,10 +260,11 @@ export function useAutoSync(params: {
     activeDisposeRef.current = null;
     committingScopeRef.current = null;
     awaitingCommitRef.current = null;
+    endTrackTransition();
     triggerRef.current = "automatic";
     appliedRef.current = { ...EMPTY_APPLIED_STATE };
     statusScopeRef.current = null;
-    setStatus("idle");
+    setAutoSyncStatus("idle", false);
     setTrigger("automatic");
     setOffsetMs(null);
     setScale(null);
@@ -227,7 +272,7 @@ export function useAutoSync(params: {
     setCanRevert(false);
     setErrorMessage(null);
     setErrorAction("run");
-  }, [mediaKey]);
+  }, [endTrackTransition, mediaKey, setAutoSyncStatus]);
 
   // Cancel in-flight automatic analysis if the user turns off the setting before commit begins.
   useEffect(() => {
@@ -240,9 +285,9 @@ export function useAutoSync(params: {
       activeDisposeRef.current?.();
       activeDisposeRef.current = null;
       statusScopeRef.current = null;
-      setStatus("idle");
+      setAutoSyncStatus("idle", false);
     }
-  }, [settings.subtitleAutoSync]);
+  }, [setAutoSyncStatus, settings.subtitleAutoSync]);
 
   // Prefetch embedded MKV/MP4 subtitle timeline index once VOD media is ready with auto-sync on.
   // Wait for first frame or known duration on non-local URLs so eager range probes do not race
@@ -280,7 +325,7 @@ export function useAutoSync(params: {
           setTrigger("manual");
           setErrorAction("run");
           setErrorMessage("Embedded subtitle auto-sync requires desktop runtime.");
-          setStatus("error");
+          setAutoSyncStatus("error", true);
         }
         return null;
       }
@@ -292,14 +337,19 @@ export function useAutoSync(params: {
         currentMediaKey: curMediaKey,
         season: curSrc.episode?.season,
         episode: curSrc.episode?.episode,
+        getInlineCues: () => b.getSelectedTrackCues?.(),
       });
       if (!runTarget) {
         if (manual) {
           triggerRef.current = "manual";
           setTrigger("manual");
           setErrorAction("run");
-          setErrorMessage("Original subtitle source is unavailable for re-sync.");
-          setStatus("error");
+          setErrorMessage(
+            curSelected.autoSynced
+              ? "Original subtitle source is unavailable for re-sync."
+              : "Subtitle source is unavailable for auto-sync.",
+          );
+          setAutoSyncStatus("error", true);
         }
         return null;
       }
@@ -309,19 +359,6 @@ export function useAutoSync(params: {
         replaceTrackId: resyncReplaceTrackId,
         preservedApplied,
       } = runTarget;
-
-      if (
-        !selectedInput.localPath &&
-        !selectedInput.inlineText &&
-        !/^https?:/i.test(selectedInput.url) &&
-        !curSelected.autoSynced
-      ) {
-        const inlineCues = b.getSelectedTrackCues?.();
-        if (inlineCues && inlineCues.length > 0) {
-          selectedInput.inlineText = toSrt(inlineCues);
-          selectedInput.format = "srt";
-        }
-      }
 
       if (manual) {
         if (manualTimingMediaRef.current === curMediaKey) {
@@ -383,7 +420,7 @@ export function useAutoSync(params: {
       setErrorMessage(null);
       setErrorAction("run");
       setWithinTolerance(false);
-      setStatus("analyzing");
+      setAutoSyncStatus("analyzing", manual);
 
       const isCurrent = () =>
         !cancelled.current && isCurrentAutoSyncScope(scope) && statusScopeRef.current === scope;
@@ -409,42 +446,50 @@ export function useAutoSync(params: {
               return;
             case "no_subtitle_tracks":
             case "no_usable_reference":
-              setOffsetMs(null);
-              setScale(null);
+              if (!appliedRef.current.changed) {
+                setOffsetMs(null);
+                setScale(null);
+              }
               setWithinTolerance(false);
-              setStatus("no-embedded");
+              setAutoSyncStatus("no-embedded", true);
               return;
             case "container_unavailable":
-              setOffsetMs(null);
-              setScale(null);
+              if (!appliedRef.current.changed) {
+                setOffsetMs(null);
+                setScale(null);
+              }
               setWithinTolerance(false);
               setErrorAction("run");
               setErrorMessage("Could not reach video stream for subtitle alignment.");
-              setStatus(manual ? "error" : "idle");
+              setAutoSyncStatus(manual ? "error" : "idle", manual);
               return;
             case "within_tolerance":
               setOffsetMs(res.medianOffsetMs);
               setScale(res.scale);
               setWithinTolerance(true);
-              setStatus("within-tolerance");
+              setAutoSyncStatus("within-tolerance", true);
               return;
             case "no_fit":
-              setOffsetMs(null);
-              setScale(null);
+              if (!appliedRef.current.changed) {
+                setOffsetMs(null);
+                setScale(null);
+              }
               setWithinTolerance(false);
-              setStatus("no-fit");
+              setAutoSyncStatus("no-fit", true);
               return;
             case "inconclusive":
-              setOffsetMs(null);
-              setScale(null);
+              if (!appliedRef.current.changed) {
+                setOffsetMs(null);
+                setScale(null);
+              }
               setWithinTolerance(false);
-              setStatus(manual ? "no-fit" : "idle");
+              setAutoSyncStatus(manual ? "no-fit" : "idle", manual);
               return;
             case "synced": {
               const body = res.retimedText;
               const fmt = normalizeTextSubFormat(res.format);
               if (!body) {
-                setStatus("no-fit");
+                setAutoSyncStatus("no-fit", true);
                 return;
               }
 
@@ -503,12 +548,15 @@ export function useAutoSync(params: {
                       providerMatch: matchedResult.providerMatch,
                       subId: matchedResult.id,
                     }
-                  : buildRestoreMetadata(sourceTrack);
+                  : {
+                      originalUrl: chosenUrl,
+                      providerDerived: true,
+                      localTrusted: false,
+                    };
 
               const replaceExisting = preservedApplied != null || matchedExistingTrack != null;
               const replaceTrackId =
                 preservedApplied != null ? resyncReplaceTrackId : matchedExistingTrack?.id;
-              const commitOrigin = b.getSubtitleSelectionOrigin?.() ?? "automatic";
               const subDelayBefore = preservedApplied?.changed
                 ? preservedApplied.subDelayBefore
                 : liveSnapRef.current.subDelaySec;
@@ -516,6 +564,10 @@ export function useAutoSync(params: {
               void runWithSubtitleFpsReset(
                 async () => {
                   if (!isCurrent()) return;
+                  const commitOrigin = manual
+                    ? "manual"
+                    : (b.getSubtitleSelectionOrigin?.() ?? "automatic");
+                  beginTrackTransition();
                   committingScopeRef.current = scope;
                   let commitRes: {
                     ok: boolean;
@@ -547,10 +599,11 @@ export function useAutoSync(params: {
                       isStillCurrent: isCurrent,
                     });
                     if (!commitRes.ok) {
+                      endTrackTransition();
                       if (isCurrent()) {
                         setErrorAction("run");
                         setErrorMessage("Could not load synced subtitle track.");
-                        setStatus("error");
+                        setAutoSyncStatus("error", true);
                       }
                       return;
                     }
@@ -578,18 +631,20 @@ export function useAutoSync(params: {
                       preservedApplied?.originalBackupText ?? res.selectedOriginalText ?? null,
                     originalBackupFormat: preservedApplied?.originalBackupFormat ?? backupFmt,
                     subDelayBefore,
+                    offsetMs: res.medianOffsetMs,
+                    scale: res.scale,
                     scope,
                     changed: true,
                   };
 
                   if (commitRes.staleCommit) {
-                    const stillSameTrackOrSynced = !(
-                      curSelAfter &&
-                      !isSyncedTrack(curSelAfter) &&
-                      curSelAfter.id !== scope.trackId
-                    );
+                    endTrackTransition();
+                    const stillSameTrackOrSynced =
+                      curSelAfter != null &&
+                      (isSyncedTrack(curSelAfter) || curSelAfter.id === scope.trackId);
                     if (
                       stillSameTrackOrSynced &&
+                      activeRunIdRef.current == null &&
                       autoSyncMediaKey(srcRef.current) === scope.mediaKey &&
                       manualTimingMediaRef.current !== scope.mediaKey
                     ) {
@@ -604,6 +659,7 @@ export function useAutoSync(params: {
                     !isSyncedTrack(curSelAfter) &&
                     curSelAfter.id !== scope.trackId
                   ) {
+                    endTrackTransition();
                     return;
                   }
 
@@ -621,8 +677,10 @@ export function useAutoSync(params: {
                       deadlineMs: Date.now() + 2000,
                       replacedTrackId: replaceExisting ? replaceTrackId : undefined,
                     };
+                    scheduleTrackTransitionTimeout();
                   } else {
                     awaitingCommitRef.current = null;
+                    endTrackTransition();
                   }
 
                   appliedRef.current = nextApplied;
@@ -632,7 +690,7 @@ export function useAutoSync(params: {
                   setWithinTolerance(false);
                   setCanRevert(true);
                   setErrorAction("run");
-                  setStatus("synced");
+                  setAutoSyncStatus("synced", true);
                 },
                 cancelled,
                 isCurrent,
@@ -649,12 +707,20 @@ export function useAutoSync(params: {
           dwarn("[auto-sync] alignment failed", err);
           setErrorAction("run");
           setErrorMessage(err instanceof Error ? err.message : String(err));
-          setStatus("error");
+          setAutoSyncStatus("error", true);
         });
 
       return dispose;
     },
-    [bridgeRef, isCurrentAutoSyncScope, runWithSubtitleFpsReset],
+    [
+      beginTrackTransition,
+      bridgeRef,
+      endTrackTransition,
+      isCurrentAutoSyncScope,
+      runWithSubtitleFpsReset,
+      scheduleTrackTransitionTimeout,
+      setAutoSyncStatus,
+    ],
   );
 
   // Sync committed track identity once mpv/HTML5 emits the new synced track, and reset when switching tracks.
@@ -667,6 +733,7 @@ export function useAutoSync(params: {
       if (!waitingReplacedId || selected.id !== waitingReplacedId) {
         if (awaitingCommitRef.current?.mediaKey === mediaKey) {
           awaitingCommitRef.current = null;
+          endTrackTransition();
         }
         if (!appliedRef.current.committedTrackId) {
           appliedRef.current.committedTrackId = selected.id;
@@ -696,6 +763,7 @@ export function useAutoSync(params: {
         return;
       }
       awaitingCommitRef.current = null;
+      endTrackTransition();
     }
 
     if (
@@ -713,6 +781,7 @@ export function useAutoSync(params: {
       activeDisposeRef.current = null;
       committingScopeRef.current = null;
       awaitingCommitRef.current = null;
+      endTrackTransition();
       statusScopeRef.current = null;
       appliedRef.current = { ...EMPTY_APPLIED_STATE };
       setCanRevert(false);
@@ -721,9 +790,9 @@ export function useAutoSync(params: {
       setWithinTolerance(false);
       setErrorMessage(null);
       setErrorAction("run");
-      setStatus("idle");
+      setAutoSyncStatus("idle", false);
     }
-  }, [mediaKey, selected, selectedSynced]);
+  }, [endTrackTransition, mediaKey, selected, selectedSynced, setAutoSyncStatus]);
 
   // Automatic trigger when a non-synced external track becomes active & preflight settles.
   useEffect(() => {
@@ -761,6 +830,10 @@ export function useAutoSync(params: {
         matchesCommittedSyncedTrack(a, currentSelected));
 
     if (b && canRevertCurrent) {
+      setErrorMessage(null);
+      setErrorAction("run");
+      setAutoSyncStatus("reverting", false);
+      beginTrackTransition();
       const curMediaKey = autoSyncMediaKey(srcRef.current);
       const revertScope = a.scope;
       committingScopeRef.current = revertScope;
@@ -799,6 +872,7 @@ export function useAutoSync(params: {
           }
           if (isRevertCancelled()) return;
           activeDisposeRef.current = null;
+          endTrackTransition();
           if (!ok) {
             if (a.originalTrackKey && revertedRef.current.mediaKey === curMediaKey) {
               revertedRef.current.keys.delete(a.originalTrackKey);
@@ -808,7 +882,7 @@ export function useAutoSync(params: {
             setCanRevert(true);
             setErrorAction("revert");
             setErrorMessage("Could not restore original subtitle track.");
-            setStatus("error");
+            setAutoSyncStatus("error", true);
             return;
           }
           appliedRef.current = { ...EMPTY_APPLIED_STATE };
@@ -819,7 +893,7 @@ export function useAutoSync(params: {
           setCanRevert(false);
           setErrorMessage(null);
           setErrorAction("run");
-          setStatus("idle");
+          setAutoSyncStatus("idle", false);
         },
         () => {
           if (committingScopeRef.current === revertScope) {
@@ -827,6 +901,7 @@ export function useAutoSync(params: {
           }
           if (isRevertCancelled()) return;
           activeDisposeRef.current = null;
+          endTrackTransition();
           if (a.originalTrackKey && revertedRef.current.mediaKey === curMediaKey) {
             revertedRef.current.keys.delete(a.originalTrackKey);
           }
@@ -835,11 +910,12 @@ export function useAutoSync(params: {
           setCanRevert(true);
           setErrorAction("revert");
           setErrorMessage("Could not restore original subtitle track.");
-          setStatus("error");
+          setAutoSyncStatus("error", true);
         },
       );
       return;
     }
+    endTrackTransition();
     appliedRef.current = { ...EMPTY_APPLIED_STATE };
     statusScopeRef.current = null;
     setOffsetMs(null);
@@ -848,38 +924,67 @@ export function useAutoSync(params: {
     setCanRevert(false);
     setErrorMessage(null);
     setErrorAction("run");
-    setStatus("idle");
-  }, [bridgeRef, isCurrentAutoSyncScope]);
+    setAutoSyncStatus("idle", false);
+  }, [
+    beginTrackTransition,
+    bridgeRef,
+    endTrackTransition,
+    isCurrentAutoSyncScope,
+    setAutoSyncStatus,
+  ]);
 
   const run = useCallback(() => {
     beginRun(true);
   }, [beginRun]);
 
   const stop = useCallback(() => {
+    if (statusRef.current === "reverting") return;
     revertTokenRef.current += 1;
     activeDisposeRef.current?.();
     activeDisposeRef.current = null;
-    if (appliedRef.current.changed) {
+    if (statusRef.current === "analyzing" && appliedRef.current.changed) {
+      committingScopeRef.current = null;
+      awaitingCommitRef.current = null;
+      endTrackTransition();
+      setOffsetMs(appliedRef.current.offsetMs);
+      setScale(appliedRef.current.scale);
+      setWithinTolerance(false);
+      setErrorMessage(null);
+      setErrorAction("run");
+      setAutoSyncStatus("synced", false);
+    } else if (appliedRef.current.changed) {
       revert();
     } else {
       committingScopeRef.current = null;
       awaitingCommitRef.current = null;
+      endTrackTransition();
       statusScopeRef.current = null;
       setErrorMessage(null);
       setErrorAction("run");
-      setStatus("idle");
+      setAutoSyncStatus("idle", false);
     }
-  }, [revert]);
+  }, [endTrackTransition, revert, setAutoSyncStatus]);
 
   const dismiss = useCallback(() => {
     setErrorMessage(null);
     setErrorAction("run");
-    if (appliedRef.current.changed && status === "error") {
-      setStatus("synced");
-    } else if (!appliedRef.current.changed && status !== "analyzing") {
-      setStatus("idle");
+    const curStatus = statusRef.current;
+    if (curStatus === "analyzing" || curStatus === "reverting") return;
+    if (appliedRef.current.changed) {
+      setOffsetMs(appliedRef.current.offsetMs);
+      setScale(appliedRef.current.scale);
+      setWithinTolerance(false);
+      setAutoSyncStatus("synced", false);
+    } else {
+      setAutoSyncStatus("idle", false);
     }
-  }, [status]);
+  }, [setAutoSyncStatus]);
+
+  useEffect(() => {
+    if (status === "idle") {
+      endTrackTransition();
+    }
+  }, [endTrackTransition, status]);
 
   const suspendForManualTiming = useCallback(() => {
     // Unlike Stop/Revert, taking manual control must preserve the current offset.
@@ -906,6 +1011,8 @@ export function useAutoSync(params: {
     canRevert,
     errorMessage,
     errorAction,
+    noticeSeq,
+    transitioningTrack,
     run,
     stop,
     revert,

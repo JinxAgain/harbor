@@ -23,6 +23,7 @@ import { PreparedSubtitleCleanupRegistry } from "./prepared-subtitle-cleanups";
 import { SubtitleSelectionCoordinator } from "./subtitle-selection";
 import { PreparedSubtitleSeedBatch } from "@/lib/subtitles/seed-batch";
 import { isSafeProviderSubtitleUrl } from "@/lib/subtitles/provider-url";
+import { resetSubStyleCache } from "./sub-style";
 import {
   initialPlayerSnapshot,
   type PlayerBridge,
@@ -1113,6 +1114,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
         preparedSubtitleCleanups.clearBefore(activeLoadId);
         markPlaybackTrace(activeTraceId, "loadfile-accepted");
         mpvStarted = true;
+        resetSubStyleCache();
         lastAppliedAf = "";
         applyAudioFilters();
         currentIsLive = nextIsLive;
@@ -1303,7 +1305,8 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
     async addSubtitle(url, lang, title, select, metadata, origin = "manual"): Promise<boolean> {
       const requestMediaRevision = mediaRevision;
       const requestLoadId = mediaLoadId;
-      const wantsSelection = (select ?? true) && mainSubtitleSelection.claim(mediaRevision, origin);
+      const requestedSelect = select ?? true;
+      const wantsSelection = requestedSelect && mainSubtitleSelection.claim(mediaRevision, origin);
       const selectionRequest = wantsSelection
         ? mainSubtitleSelection.begin(
             mediaRevision,
@@ -1313,6 +1316,10 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
         : null;
       let mpvUrl = url;
       const transferredPrepared = takePreparedSubtitle(url);
+      if (metadata?.replaceExisting === true && requestedSelect && !selectionRequest) {
+        transferredPrepared?.cleanup();
+        return false;
+      }
       const providerDerived = metadata?.providerDerived ?? Boolean(metadata?.provider);
       if (!transferredPrepared && providerDerived && !isSafeProviderSubtitleUrl(url)) {
         return false;
@@ -1381,6 +1388,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
         return false;
       }
       mpvUrl = mpvUrl.replace(/\\/g, "/");
+      let restorePreviousMetadata: (() => void) | undefined;
       try {
         const externalMetadata: ExternalSubtitleMetadata = {
           url: metadata?.originalUrl ?? url,
@@ -1417,6 +1425,16 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
           matchReasons: metadata?.matchReasons,
           subId: metadata?.subId,
           autoSynced: metadata?.autoSynced,
+        };
+        const previousMetadata = urlByExternalFilename.get(mpvUrl);
+        restorePreviousMetadata = () => {
+          if (urlByExternalFilename.get(mpvUrl) === externalMetadata) {
+            if (previousMetadata !== undefined) {
+              urlByExternalFilename.set(mpvUrl, previousMetadata);
+            } else {
+              urlByExternalFilename.delete(mpvUrl);
+            }
+          }
         };
         urlByExternalFilename.set(mpvUrl, externalMetadata);
         registeredMetadata = externalMetadata;
@@ -1467,24 +1485,20 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
           ? await enqueueSubtitleTransition(addToMpv)
           : await addToMpv();
         if (!added) {
-          if (urlByExternalFilename.get(mpvUrl) === externalMetadata) {
-            urlByExternalFilename.delete(mpvUrl);
-          }
+          restorePreviousMetadata();
           preparedCleanup?.();
           return false;
         }
         if (requestMediaRevision !== mediaRevision) {
-          if (urlByExternalFilename.get(mpvUrl) === externalMetadata) {
-            urlByExternalFilename.delete(mpvUrl);
-          }
+          restorePreviousMetadata();
           preparedCleanup?.();
           return false;
         }
         if (preparedCleanup) preparedSubtitleCleanups.register(preparedCleanup, requestLoadId);
         return true;
       } catch (e) {
-        if (registeredMetadata && urlByExternalFilename.get(mpvUrl) === registeredMetadata) {
-          urlByExternalFilename.delete(mpvUrl);
+        if (registeredMetadata) {
+          restorePreviousMetadata?.();
         }
         preparedCleanup?.();
         console.warn("[mpv] sub-add failed", e);

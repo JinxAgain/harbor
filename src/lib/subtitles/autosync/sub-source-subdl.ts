@@ -369,6 +369,8 @@ export async function searchSubdl(
   let response: Response;
   try {
     response = await fetchImpl(managed?.url ?? url, {
+      redirect: "error",
+      referrerPolicy: "no-referrer",
       headers: {
         "User-Agent": ctx.userAgent,
         Accept: "application/json",

@@ -55,7 +55,7 @@ test("HDR shell mounts with the actual profile, auth and navigation contexts", (
   const forwarded = [];
   const payload = {
     stageId: "test-stage",
-    snap: {},
+    snap: { subtitleTracks: [] },
     src: { url: "test", meta: { id: "test", name: "Test" } },
   };
   const app = load("src/views/hdr-overlay-app.tsx", {
@@ -68,6 +68,9 @@ test("HDR shell mounts with the actual profile, auth and navigation contexts", (
     "@/lib/view": view,
     "@/lib/settings": { SettingsProvider: ({ children }) => children },
     "@/lib/player/mpv-forward": { createForwardingMpvBridge: () => ({}) },
+    "@/lib/player/subtitle-fps": { buildSubtitleTimingMediaKey: () => "test-media" },
+    "@/components/player/autosync/autosync-store": { publishAutoSync: () => {} },
+    "@/components/player/sub-sync-bar": { SubSyncBar: () => null },
     "./player/hooks/use-player-interaction-lock": { usePlayerInteractionBlocker: () => {} },
     "./player/drag-click-stage": { DragClickStage: () => null },
     "@/components/player/player-interaction-lock": { PlayerInteractionLockControls: () => null },
@@ -139,6 +142,9 @@ test("overlay subscribes before requesting props and cancels late listener regis
         "@/lib/settings": { SettingsProvider: passthrough },
         "@/lib/view": { PlayerNavigationProvider: passthrough },
         "@/lib/player/mpv-forward": { createForwardingMpvBridge: () => ({}) },
+        "@/lib/player/subtitle-fps": { buildSubtitleTimingMediaKey: () => "test-media" },
+        "@/components/player/autosync/autosync-store": { publishAutoSync: () => {} },
+        "@/components/player/sub-sync-bar": { SubSyncBar: () => null },
         "./player/hooks/use-player-interaction-lock": { usePlayerInteractionBlocker() {} },
         "@/lib/hdr-overlay": {
           onHdrStageProps: () =>

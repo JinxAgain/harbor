@@ -159,9 +159,21 @@ export function collectSameLanguageCandidates(
     if (!url || !/^https?:/i.test(url)) continue;
     const providerDerived =
       track.providerDerived ?? (Boolean(track.provider) && track.localTrusted !== true);
+    const isRetimedTempFile =
+      track.autoSynced === true ||
+      Boolean(
+        track.externalFilename && /(?:^|[\\/])autosync_(?!orig_)/i.test(track.externalFilename),
+      );
+    const safeLocalPath =
+      track.prepared &&
+      !isRetimedTempFile &&
+      track.externalFilename &&
+      !/^(?:blob|data|memory):/i.test(track.externalFilename)
+        ? track.externalFilename
+        : undefined;
     pushCandidate({
       url,
-      localPath: track.prepared && track.externalFilename ? track.externalFilename : undefined,
+      localPath: safeLocalPath,
       format: track.format,
       lang: track.lang,
       title: track.title,

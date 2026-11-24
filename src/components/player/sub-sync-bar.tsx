@@ -49,13 +49,13 @@ export function SubSyncBar({ delaySec, onDelay, onEnterSync, syncAvailable, tenF
 
   // Escape to close
   useEffect(() => {
-    if (!open) return;
+    if (!open || tenFoot) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeSyncBar();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, tenFoot]);
 
   // Apply delay to player live
   const applyDelay = (sec: number) => {
@@ -77,10 +77,10 @@ export function SubSyncBar({ delaySec, onDelay, onEnterSync, syncAvailable, tenF
   const isNonZero = delaySec !== 0;
 
   const popover = autoSyncHandle ? (
-    <AutosyncPopover handle={autoSyncHandle} tenFoot={tenFoot} />
+    <AutosyncPopover handle={autoSyncHandle} tenFoot={tenFoot} delaySec={delaySec} />
   ) : null;
 
-  if (!open) return popover;
+  if (!open || tenFoot) return popover;
 
   return (
     <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex justify-center px-6 pt-[68px] animate-in fade-in slide-in-from-top-2 duration-300">

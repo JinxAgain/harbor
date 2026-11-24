@@ -12,6 +12,7 @@ import {
 } from "../src/lib/player/ass-header.ts";
 import { isAssTrack } from "../src/lib/player/sub-format.ts";
 import type { TrackInfo } from "../src/lib/player/bridge.ts";
+import { flushPromises, hookHarness } from "./helpers/hook-harness.ts";
 
 function createMockSettings(overrides: Partial<Settings> = {}): Settings {
   return {
@@ -488,15 +489,83 @@ test("assNormalizeTrackOrigin groups in-place auto-sync replacements while isola
   assert.ok(hookSrc.includes("if (text != null) {"));
   assert.ok(!hookSrc.includes('safeFetch(readable, { method: "GET", headers })'));
 
-  const playerMediaSrc = readFileSync(
-    new URL("../src/views/player/hooks/use-player-media.ts", import.meta.url),
-    "utf8",
-  );
-  assert.ok(
-    playerMediaSrc
-      .replace(/\s+/g, " ")
-      .includes(
-        'enabled: engine === "mpv" && settings.subAssNormalizeSize && assNativeActive && !subAssOverridden,',
+  const origWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window: unknown }).window = { __TAURI_INTERNALS__: {} };
+  try {
+    const assHeader =
+      "[Script Info]\nPlayResX: 1920\nPlayResY: 1080\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,72,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,10,1\n";
+    const assHeaderModule = await import("../src/lib/player/ass-header.ts");
+    const harness = hookHarness(
+      new URL("../src/views/player/hooks/use-ass-normalize.ts", import.meta.url).pathname.replace(
+        /^\/([A-Za-z]:)/,
+        "$1",
       ),
-  );
+      "useAssNormalize",
+      {
+        "@tauri-apps/api/core": {
+          invoke: async () => assHeader,
+        },
+        "@/lib/safe-fetch": { safeFetchBytes: async () => new Response("") },
+        "@/lib/subtitles/encoding": { decodeSubtitleBytes: () => "" },
+        "@/lib/subtitles/extract": {
+          embeddedSubIndex: () => 0,
+          resolveReadableUrl: async () => null,
+        },
+        "@/lib/subtitles/provider-auth": { subtitleTrackDownloadHeaders: () => ({}) },
+        "@/lib/player/ass-header": assHeaderModule,
+      },
+    );
+    const assTrack: TrackInfo = {
+      id: "1",
+      kind: "subtitle",
+      label: "English ASS",
+      codec: "ass",
+      external: false,
+      selected: true,
+    };
+    // 1. Resolve normalized scale for active ASS track.
+    harness.render({
+      enabled: true,
+      holdOnNull: false,
+      sourceUrl: "file:///movie.mkv",
+      track: assTrack,
+      tracks: [assTrack],
+      targetFontSize: 32,
+    });
+    await flushPromises();
+    const activeScale = harness.render({
+      enabled: true,
+      holdOnNull: false,
+      sourceUrl: "file:///movie.mkv",
+      track: assTrack,
+      tracks: [assTrack],
+      targetFontSize: 32,
+    });
+    assert.equal(typeof activeScale, "number");
+
+    // 2. Transient null during auto-sync replacement holds the normalization scale.
+    const heldScale = harness.render({
+      enabled: true,
+      holdOnNull: true,
+      sourceUrl: "file:///movie.mkv",
+      track: null,
+      tracks: [],
+      targetFontSize: 32,
+    });
+    assert.equal(heldScale, activeScale);
+
+    // 3. Turning primary subtitles Off (holdOnNull: false) clears assScale immediately.
+    const clearedScale = harness.render({
+      enabled: false,
+      holdOnNull: false,
+      sourceUrl: "file:///movie.mkv",
+      track: null,
+      tracks: [],
+      targetFontSize: 32,
+    });
+    assert.equal(clearedScale, undefined);
+    harness.unmount();
+  } finally {
+    (globalThis as { window?: unknown }).window = origWindow;
+  }
 });

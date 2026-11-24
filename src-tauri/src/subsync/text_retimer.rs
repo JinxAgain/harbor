@@ -381,9 +381,12 @@ fn retime_ass(text: &str, mapper: &mut TimelineTimeMapper) -> Option<String> {
             let Some(end) = parse_timestamp(parts[end_idx].trim()) else {
                 continue;
             };
-            let (start_ms, raw_end_ms) =
+            let (raw_start_ms, raw_end_ms) =
                 mapper.map_cue_interval(start.ms, end.ms.max(start.ms.saturating_add(1)));
-            let end_ms = raw_end_ms.max(start_ms.saturating_add(ASS_MIN_DURATION_MS));
+            let start_ms = raw_start_ms.clamp(0, ASS_MAX_START_MS);
+            let end_ms = raw_end_ms
+                .max(start_ms.saturating_add(ASS_MIN_DURATION_MS))
+                .min(ASS_MAX_END_MS);
 
             let lead_start: String = parts[start_idx]
                 .chars()
@@ -512,9 +515,13 @@ fn format_like(ms: i64, original: ParsedTimestamp) -> String {
     }
 }
 
+const ASS_MAX_START_MS: i64 = 35_999_980;
+const ASS_MAX_END_MS: i64 = 35_999_990;
+const ASS_MAX_CENTIS: i64 = 3_599_999;
+
 fn format_ass(ms: i64) -> String {
     let ms = ms.max(0);
-    let centis = ms.saturating_add(5) / 10;
+    let centis = (ms.saturating_add(5) / 10).min(ASS_MAX_CENTIS);
     format!(
         "{}:{:02}:{:02}.{:02}",
         centis / 360_000,

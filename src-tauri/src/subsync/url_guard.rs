@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
@@ -18,33 +16,72 @@ const HOP_BY_HOP: &[&str] = &[
     "content-length",
 ];
 
-fn is_local_abs_path(value: &str) -> bool {
+#[cfg(windows)]
+fn is_drive_abs_path(value: &str) -> bool {
     let bytes = value.as_bytes();
-    (bytes.len() > 2 && bytes[1] == b':' && (bytes[2] == b'/' || bytes[2] == b'\\'))
-        || (value.starts_with('/') && !value.starts_with("//"))
+    bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'/' || bytes[2] == b'\\')
 }
 
-fn is_abs_path(value: &str) -> bool {
-    is_local_abs_path(value) || value.starts_with("\\\\")
+#[cfg(not(windows))]
+fn is_unix_abs_path(value: &str) -> bool {
+    value.starts_with('/') && !value.starts_with("//") && !value.starts_with("/\\")
+}
+
+#[cfg(windows)]
+fn is_unc_like_prefix(value: &str) -> bool {
+    value.starts_with("\\\\")
+        || value.starts_with("//")
+        || value.starts_with("/\\")
+        || value.starts_with("\\/")
+}
+
+#[cfg(windows)]
+fn validate_windows_extended_path(trimmed: &str, allow_unc: bool) -> Option<PathBuf> {
+    let rest = trimmed
+        .strip_prefix("\\\\?\\")
+        .or_else(|| trimmed.strip_prefix("//?/"))?;
+    if is_drive_abs_path(rest) {
+        return Some(PathBuf::from(trimmed));
+    }
+    if allow_unc {
+        if let Some(unc_rest) = rest
+            .strip_prefix("UNC\\")
+            .or_else(|| rest.strip_prefix("UNC/"))
+            .or_else(|| rest.strip_prefix("unc\\"))
+            .or_else(|| rest.strip_prefix("unc/"))
+        {
+            let host = unc_rest.split(['\\', '/']).next().unwrap_or("");
+            if is_allowed_unc_host(host) {
+                return Some(PathBuf::from(trimmed));
+            }
+        }
+    }
+    None
 }
 
 fn is_allowed_unc_host(host: &str) -> bool {
     let trimmed = host.trim_start_matches('[').trim_end_matches(']').trim_end_matches('.');
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || trimmed == "?" || trimmed == "." {
         return false;
     }
     let lower = trimmed.to_ascii_lowercase();
-    if lower == "metadata.google.internal" {
+    if lower == "metadata.google.internal"
+        || lower == "ipv6-literal.net"
+        || lower.ends_with(".ipv6-literal.net")
+    {
         return false;
     }
     if let Ok(ip) = trimmed.parse::<IpAddr>() {
-        return check_ip(ip, true).is_ok();
+        return check_ip(ip, false).is_err() && check_ip(ip, true).is_ok();
     }
-    true
+    !lower.contains('.') || is_local_domain_name(&lower)
 }
 
 /// Resolves a local filesystem path for media playback from either a `file://` URL or an absolute path.
-/// Allows NAS/SMB UNC paths except link-local, unspecified, or cloud metadata hosts.
+/// Allows private/LAN/loopback NAS/SMB UNC paths while blocking public, link-local, or cloud metadata hosts.
 pub(crate) fn local_file_path(source: &str) -> Option<PathBuf> {
     let trimmed = source.trim();
     if trimmed.to_ascii_lowercase().starts_with("file://") {
@@ -60,26 +97,40 @@ pub(crate) fn local_file_path(source: &str) -> Option<PathBuf> {
         }
         return None;
     }
-    if let Some(rest) = trimmed.strip_prefix("\\\\") {
-        let host = rest.split(['\\', '/']).next().unwrap_or("");
-        if !is_allowed_unc_host(host) {
+    #[cfg(windows)]
+    {
+        if trimmed.starts_with("\\\\.\\") || trimmed.starts_with("//./") {
             return None;
         }
-        return Some(PathBuf::from(trimmed));
+        if trimmed.starts_with("\\\\?\\") || trimmed.starts_with("//?/") {
+            return validate_windows_extended_path(trimmed, true);
+        }
+        if is_unc_like_prefix(trimmed) {
+            let rest = &trimmed[2..];
+            let host = rest.split(['\\', '/']).next().unwrap_or("");
+            if !is_allowed_unc_host(host) {
+                return None;
+            }
+            return Some(PathBuf::from(trimmed));
+        }
+        if is_drive_abs_path(trimmed) {
+            return Some(PathBuf::from(trimmed));
+        }
+        None
     }
-    if is_abs_path(trimmed) {
-        return Some(PathBuf::from(trimmed));
+    #[cfg(not(windows))]
+    {
+        if is_unix_abs_path(trimmed) {
+            return Some(PathBuf::from(trimmed));
+        }
+        None
     }
-    None
 }
 
-/// Resolves a strictly local subtitle file path, rejecting UNC shares, remote `file://` hosts,
-/// and relative paths.
+/// Resolves a strictly local subtitle file path, rejecting UNC shares, device paths,
+/// remote `file://` hosts, and relative paths.
 pub(crate) fn local_subtitle_path(source: &str) -> Option<PathBuf> {
     let trimmed = source.trim();
-    if trimmed.starts_with("\\\\") || trimmed.starts_with("//") {
-        return None;
-    }
     if trimmed.to_ascii_lowercase().starts_with("file://") {
         let parsed = url::Url::parse(trimmed).ok()?;
         if let Some(host) = parsed.host_str() {
@@ -89,17 +140,36 @@ pub(crate) fn local_subtitle_path(source: &str) -> Option<PathBuf> {
         }
         return parsed.to_file_path().ok();
     }
-    if is_local_abs_path(trimmed) {
-        return Some(PathBuf::from(trimmed));
+    #[cfg(windows)]
+    {
+        if trimmed.starts_with("\\\\.\\") || trimmed.starts_with("//./") {
+            return None;
+        }
+        if trimmed.starts_with("\\\\?\\") || trimmed.starts_with("//?/") {
+            return validate_windows_extended_path(trimmed, false);
+        }
+        if is_unc_like_prefix(trimmed) {
+            return None;
+        }
+        if is_drive_abs_path(trimmed) {
+            return Some(PathBuf::from(trimmed));
+        }
+        None
     }
-    None
+    #[cfg(not(windows))]
+    {
+        if is_unix_abs_path(trimmed) {
+            return Some(PathBuf::from(trimmed));
+        }
+        None
+    }
 }
 
 fn is_disallowed_ipv4(ip: Ipv4Addr, allow_lan_and_loopback: bool) -> Result<(), String> {
     let [a, b, c, _] = ip.octets();
     if a == 0
         || (a == 169 && b == 254)
-        || (a == 192 && b == 0)
+        || (a == 192 && b == 0 && (c == 0 || c == 2))
         || (a == 192 && b == 88 && c == 99)
         || (a == 198 && (b == 18 || b == 19))
         || (a == 198 && b == 51 && c == 100)
@@ -183,6 +253,7 @@ fn is_local_domain_name(lower: &str) -> bool {
         || lower.ends_with(".internal")
         || lower.ends_with(".home.arpa")
         || lower.ends_with(".lan")
+        || lower.ends_with(".ts.net")
 }
 
 fn check_host(parsed: &url::Url, allow_lan_and_loopback: bool) -> Result<(), String> {
@@ -272,6 +343,7 @@ pub(crate) fn build_pinned_http_client(
     addrs: &[SocketAddr],
     connect_timeout: Duration,
     total_timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
     disable_gzip: bool,
 ) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
@@ -283,6 +355,9 @@ pub(crate) fn build_pinned_http_client(
     }
     if let Some(t) = total_timeout {
         builder = builder.timeout(t);
+    }
+    if let Some(rt) = read_timeout {
+        builder = builder.read_timeout(rt);
     }
     if host.parse::<IpAddr>().is_err() {
         builder = builder.resolve_to_addrs(host, addrs);
@@ -328,21 +403,11 @@ fn has_ctl(s: &str) -> bool {
     s.chars().any(|c| c.is_control())
 }
 
-pub(crate) fn safe_header_blob(headers: &HashMap<String, String>) -> String {
-    let mut blob = String::new();
-    for (k, v) in headers {
-        let lk = k.to_ascii_lowercase();
-        if lk == "user-agent"
-            || lk.starts_with("x-harbor-")
-            || HOP_BY_HOP.contains(&lk.as_str())
-            || has_ctl(k)
-            || has_ctl(v)
-        {
-            continue;
-        }
-        blob.push_str(&format!("{}: {}\r\n", k, v));
-    }
-    blob
+fn is_valid_http_header(k: &str, v: &str) -> bool {
+    !has_ctl(k)
+        && !has_ctl(v)
+        && reqwest::header::HeaderName::from_bytes(k.as_bytes()).is_ok()
+        && reqwest::header::HeaderValue::from_str(v).is_ok()
 }
 
 pub(crate) fn safe_reqwest_headers(
@@ -351,8 +416,11 @@ pub(crate) fn safe_reqwest_headers(
 ) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for (k, v) in headers {
+        if !is_valid_http_header(k, v) {
+            continue;
+        }
         let lk = k.to_ascii_lowercase();
-        if HOP_BY_HOP.contains(&lk.as_str()) || has_ctl(k) || has_ctl(v) {
+        if HOP_BY_HOP.contains(&lk.as_str()) {
             continue;
         }
         if lk.starts_with("x-harbor-") {
@@ -366,13 +434,6 @@ pub(crate) fn safe_reqwest_headers(
     out
 }
 
-pub(crate) fn user_agent(headers: &HashMap<String, String>) -> Option<String> {
-    headers
-        .iter()
-        .find(|(k, v)| k.eq_ignore_ascii_case("user-agent") && !has_ctl(v))
-        .map(|(_, v)| v.clone())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,11 +441,19 @@ mod tests {
     #[test]
     fn playback_allows_local_torrent_lan_and_remote_while_blocking_link_local() {
         #[cfg(windows)]
-        assert!(validate_playback_media_url("file:///C:/movies/test.mkv").is_ok());
+        {
+            assert!(validate_playback_media_url("file:///C:/movies/test.mkv").is_ok());
+            assert!(validate_playback_media_url("C:\\movies\\test.mkv").is_ok());
+            assert!(local_file_path("/movies/test.mkv").is_none());
+        }
         #[cfg(not(windows))]
-        assert!(validate_playback_media_url("file:///movies/test.mkv").is_ok());
-        assert!(validate_playback_media_url("C:\\movies\\test.mkv").is_ok());
-        assert!(validate_playback_media_url("/movies/test.mkv").is_ok());
+        {
+            assert!(validate_playback_media_url("file:///movies/test.mkv").is_ok());
+            assert!(validate_playback_media_url("/movies/test.mkv").is_ok());
+            assert!(local_file_path("C:\\movies\\test.mkv").is_none());
+            assert!(local_file_path(r"\\nas\share\movie.mkv").is_none());
+            assert!(local_file_path(r"\\?\C:\movies\test.mkv").is_none());
+        }
         assert!(validate_playback_media_url("http://127.0.0.1:11470/stream/abc/0").is_ok());
         assert!(validate_playback_media_url("http://localhost:8096/Items/1/Download").is_ok());
         assert!(validate_playback_media_url("http://192.168.1.50:32400/library/parts/1/file.mkv").is_ok());
@@ -404,17 +473,17 @@ mod tests {
     }
 
     #[test]
-    fn header_blob_and_ua_strip_crlf_and_hop_by_hop() {
+    fn reqwest_headers_strip_crlf_and_hop_by_hop() {
         let mut h = HashMap::new();
         h.insert("Referer".into(), "https://ok".into());
         h.insert("X-Bad".into(), "a\r\nHost: evil".into());
         h.insert("Connection".into(), "keep-alive".into());
         h.insert("User-Agent".into(), "UA\r\nX-Injected: 1".into());
-        let blob = safe_header_blob(&h).to_lowercase();
-        assert!(blob.contains("referer: https://ok"));
-        assert!(!blob.contains("evil"));
-        assert!(!blob.contains("connection"));
-        assert!(user_agent(&h).is_none());
+        let req = safe_reqwest_headers(&h, true);
+        assert!(req.iter().any(|(k, v)| k == "Referer" && v == "https://ok"));
+        assert!(!req.iter().any(|(k, _)| k.eq_ignore_ascii_case("x-bad")));
+        assert!(!req.iter().any(|(k, _)| k.eq_ignore_ascii_case("connection")));
+        assert!(!req.iter().any(|(k, _)| k.eq_ignore_ascii_case("user-agent")));
     }
 
     #[test]
@@ -500,8 +569,6 @@ mod tests {
         h.insert("X-Harbor-Public-Network-Only".into(), "1".into());
         h.insert("X-Harbor-Subtitle-Credential".into(), "secret".into());
         h.insert("User-Agent".into(), "Harbor/1.0".into());
-        let blob = safe_header_blob(&h).to_ascii_lowercase();
-        assert!(!blob.contains("x-harbor-"));
         let req = safe_reqwest_headers(&h, true);
         assert!(!req
             .iter()
@@ -516,5 +583,34 @@ mod tests {
         assert!(local_subtitle_path(r"\\server\share\sub.srt").is_none());
         assert!(local_subtitle_path("file://server/share/sub.srt").is_none());
         assert!(local_subtitle_path("relative/sub.srt").is_none());
+        assert!(local_subtitle_path(r"C:relative\sub.srt").is_none());
+        #[cfg(not(windows))]
+        {
+            assert!(local_subtitle_path(r"C:\subs\sub.srt").is_none());
+            assert!(local_subtitle_path(r"\\?\C:\subs\sub.srt").is_none());
+        }
+        #[cfg(windows)]
+        {
+            assert!(local_subtitle_path("/subs/sub.srt").is_none());
+        }
+
+        // UNC host validation: block public IPs, public domains, and ipv6-literal.net; allow LAN/private hosts.
+        assert!(!is_allowed_unc_host("1.2.3.4"));
+        assert!(!is_allowed_unc_host("evil.example"));
+        assert!(!is_allowed_unc_host("fe80--1.ipv6-literal.net"));
+        assert!(!is_allowed_unc_host("169.254.169.254"));
+        assert!(is_allowed_unc_host("192.168.1.50"));
+        assert!(is_allowed_unc_host("nas"));
+        assert!(is_allowed_unc_host("nas.local"));
+        assert!(validate_playback_media_url(r"\\evil.example\share\movie.mkv").is_err());
+        assert!(validate_playback_media_url("file://1.2.3.4/share/movie.mkv").is_err());
+        assert!(validate_playback_media_url(r"\\fe80--1.ipv6-literal.net\share\movie.mkv").is_err());
+        #[cfg(windows)]
+        assert!(validate_playback_media_url(r"\\192.168.1.50\media\movie.mkv").is_ok());
+
+        // 192.0.1.1 is public (not in 192.0.0.0/24 or 192.0.2.0/24).
+        assert!(check_ip("192.0.1.1".parse().unwrap(), false).is_ok());
+        assert!(check_ip("192.0.0.1".parse().unwrap(), false).is_err());
+        assert!(check_ip("192.0.2.1".parse().unwrap(), false).is_err());
     }
 }

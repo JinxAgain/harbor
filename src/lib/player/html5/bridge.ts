@@ -844,6 +844,10 @@ export function createHtml5Bridge(): PlayerBridge {
           ? mainSubtitleSelection.begin(mediaRevision, id, activeSubId)
           : null;
       const prepared = takePreparedSubtitle(url);
+      if (metadata?.replaceExisting === true && select === true && !selectionRequest) {
+        prepared?.cleanup();
+        return false;
+      }
       const providerDerived = metadata?.providerDerived ?? Boolean(metadata?.provider);
       if (!prepared && providerDerived && !isSafeProviderSubtitleUrl(url)) return false;
       // Defer replacing a previous track for the same source until the replacement loads
@@ -926,6 +930,14 @@ export function createHtml5Bridge(): PlayerBridge {
           loaded,
           (candidateId) => subTracks.some((candidate) => candidate.id === candidateId),
         );
+        if (metadata?.replaceExisting === true && !settlement.current) {
+          const index = subTracks.indexOf(track);
+          if (index >= 0) subTracks.splice(index, 1);
+          track.cleanup?.();
+          track.cleanup = undefined;
+          refreshSnapshot();
+          return false;
+        }
         if (settlement.current) {
           activeSubId = settlement.selectedId;
           lastCueId = "";

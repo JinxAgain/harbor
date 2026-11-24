@@ -6,6 +6,7 @@ import { fetchSubtitlesIntoPlayer, streamHintsOf } from "@/lib/subtitles/fetch-i
 import { subtitleStreamDescriptor } from "@/lib/subtitles/provider-label";
 import { publishSubtitleSearch } from "@/components/player/subtitle-menu/subtitle-search-store";
 import { publishSubtitleContext } from "@/components/player/subtitle-menu/subtitle-context-store";
+import { getAutoSyncHandle } from "@/components/player/autosync/autosync-store";
 import { readPlayerPrefs, type PerShowPrefs } from "@/lib/player-prefs";
 import { tmdbImdbId } from "@/lib/providers/tmdb";
 import type { Addon } from "@/lib/addons";
@@ -322,8 +323,11 @@ export function useTrackAutoload(params: {
       };
       const shouldAutoSelectForStage = (lateHash: boolean) => {
         if (bridgeRef.current?.canAutoSelectSubtitle?.() === false) return false;
+        const autoSyncStatus = getAutoSyncHandle()?.status;
+        if (autoSyncStatus === "analyzing" || autoSyncStatus === "reverting") return false;
         const state = subtitleSelectionStateRef.current;
         const currentTrack = snapRef.current.subtitleTracks.find((track) => track.selected) ?? null;
+        if (currentTrack?.autoSynced === true) return false;
         const currentSelected = currentTrack?.id ?? null;
         const autoSource = autoSubSourceRef.current;
         const currentSelectionIsAutomatic =
@@ -865,7 +869,9 @@ export function useTrackAutoload(params: {
         current != null && autoSubIdRef.current != null && current.id !== autoSubIdRef.current;
       const lockedToAuto =
         current != null && autoSubIdRef.current != null && !settings.subtitleAutoUpgrade;
-      if (!userPicked && !lockedToAuto) {
+      const autoSyncStatus = getAutoSyncHandle()?.status;
+      const autoSyncBusy = autoSyncStatus === "analyzing" || autoSyncStatus === "reverting";
+      if (current?.autoSynced !== true && !autoSyncBusy && !userPicked && !lockedToAuto) {
         const nativeAudio =
           settings.forcedSubsWhenNativeAudio &&
           effAudio != null &&

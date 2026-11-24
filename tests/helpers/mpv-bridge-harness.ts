@@ -120,6 +120,7 @@ export function mpvBridgeHarness(prefs = { volume: 0.35, muted: false }, options
     "./subtitle-selection": selection,
     "@/lib/subtitles/seed-batch": seeds,
     "@/lib/subtitles/provider-url": { isSafeProviderSubtitleUrl: () => true },
+    "./sub-style": { resetSubStyleCache: () => {} },
     "./bridge": {
       ...snapshots,
       initialPlayerSnapshot: () => ({ ...snapshots.emptySnapshot, ...prefs }),
@@ -165,7 +166,9 @@ export function mpvBridgeHarness(prefs = { volume: 0.35, muted: false }, options
     bridge,
     commands,
     errors,
-    emitWindow(name: string) { windowEvents.dispatchEvent(new Event(name)); },
+    emitWindow(name: string) {
+      windowEvents.dispatchEvent(new Event(name));
+    },
     runFrame() {
       const callbacks = [...frames.values()];
       frames.clear();

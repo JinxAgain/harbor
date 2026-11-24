@@ -145,19 +145,23 @@ export function streamHintsOf(src: PlayerSrc): StreamHints {
   };
 }
 
-function extraCtx(settings: Settings, deep: boolean, hashOnly: boolean) {
+function extraCtx(settings: Settings, deep: boolean, hasHash: boolean) {
+  const hashOnly = hasHash && !deep;
   const enabled = settings.subProvidersEnabled ?? {};
-  const wantSubdl = enabled.subdl === true && !!settings.subdlApiKey;
-  const wantSubsource = enabled.subsource === true && !!settings.subsourceApiKey;
-  if (!hashOnly && !wantSubdl && !wantSubsource) return undefined;
+  const subdlKey = settings.subdlApiKey?.trim() || "";
+  const subsourceKey = settings.subsourceApiKey?.trim() || "";
+  const wantSubdl = enabled.subdl === true && !!subdlKey;
+  const wantSubsource = enabled.subsource === true && !!subsourceKey;
+  const wantPodnapisi = hasHash;
+  if (!wantPodnapisi && !wantSubdl && !wantSubsource) return undefined;
   return {
     userAgent: "Harbor",
     netAllowed: true,
-    subdlApiKey: settings.subdlApiKey || null,
-    subsourceApiKey: settings.subsourceApiKey || null,
+    subdlApiKey: subdlKey || null,
+    subsourceApiKey: subsourceKey || null,
     enabled: hashOnly
       ? { podnapisi: true, gestdown: false, subdl: false, subsource: false }
-      : { subdl: wantSubdl, subsource: wantSubsource },
+      : { podnapisi: wantPodnapisi, gestdown: false, subdl: wantSubdl, subsource: wantSubsource },
     bypassCache: deep,
     timeoutMs: deep ? DEEP_TIMEOUT_MS : BUILT_IN_TIMEOUT_MS,
   };
@@ -349,7 +353,8 @@ export async function fetchSubtitlesIntoPlayer(
 
   await progressiveQueue;
 
-  if (!p.isActive()) return { added: 0, found: results.length, results, hints, selected: null, generated };
+  if (!p.isActive())
+    return { added: 0, found: results.length, results, hints, selected: null, generated };
 
   if (!deep) {
     const rankedAuto = rankSubtitleCandidates(results, p.langs, hints).filter(
@@ -409,20 +414,20 @@ export async function fetchSubtitlesIntoPlayer(
               result.status === "prepared",
           )
           .map((result) => ({
-          candidate: result.candidate,
-          prepared: result.prepared,
-          rank: result.rank,
-          measurement: { status: "unknown" as const, reason: "not-supported" as const },
-          timingStatus: "not-tested" as const,
-          cueSpanSane: true,
-          outputFormatSafe: true,
-          explanation: {
-            compatibilityPercent: 0,
-            releaseConfidence: "unknown",
+            candidate: result.candidate,
+            prepared: result.prepared,
+            rank: result.rank,
+            measurement: { status: "unknown" as const, reason: "not-supported" as const },
             timingStatus: "not-tested" as const,
-            reasons: ["Preflight skipped (embedded track active or auto-selection disabled)"],
-          },
-        }));
+            cueSpanSane: true,
+            outputFormatSafe: true,
+            explanation: {
+              compatibilityPercent: 0,
+              releaseConfidence: "unknown",
+              timingStatus: "not-tested" as const,
+              reasons: ["Preflight skipped (embedded track active or auto-selection disabled)"],
+            },
+          }));
     const rerankEntries = preflights.map((item) => ({
       item,
       candidate: { ...item.candidate, timingStatus: item.timingStatus },

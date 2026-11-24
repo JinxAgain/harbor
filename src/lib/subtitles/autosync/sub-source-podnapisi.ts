@@ -6,6 +6,7 @@ import {
   isSeries,
   wantedLangs,
   markRateLimited,
+  rateLimitDelaySeconds,
   type ProviderCtx,
   type SourceSubCandidate,
   type SubSource,
@@ -14,7 +15,23 @@ import {
 const BASE = "https://www.podnapisi.net";
 
 function downloadFor(pid: string | null): string | null {
-  return pid ? `${BASE}/subtitles/${pid}/download` : null;
+  const trimmed = pid?.trim();
+  if (!trimmed) return null;
+  return resolveSubtitleDownloadUrl(`/subtitles/${encodeURIComponent(trimmed)}/download`, BASE);
+}
+
+function downloadFromPageUrl(rawPageUrl: string | undefined): string | null {
+  const resolved = resolveSubtitleDownloadUrl(rawPageUrl, BASE);
+  if (!resolved) return null;
+  try {
+    const parsed = new URL(resolved);
+    parsed.pathname = `${parsed.pathname.replace(/\/+$/, "")}/download`;
+    parsed.search = "";
+    parsed.hash = "";
+    return resolveSubtitleDownloadUrl(parsed.toString(), BASE);
+  } catch {
+    return null;
+  }
 }
 
 function parseXml(text: string): Document | null {
@@ -46,7 +63,7 @@ async function searchByHash(
     return null;
   }
   if (res.status === 429) {
-    markRateLimited("podnapisi", 30);
+    markRateLimited("podnapisi", rateLimitDelaySeconds(res, 30));
     return null;
   }
   if (!res.ok) return null;
@@ -56,13 +73,15 @@ async function searchByHash(
   const out: SourceSubCandidate[] = [];
   for (const el of Array.from(doc.getElementsByTagName("subtitle"))) {
     const pid = tag(el, "pid") ?? tag(el, "id");
+    const url = downloadFor(pid);
+    if (!url) continue;
     const lang = normalizeLang(tag(el, "language") ?? tag(el, "languageId") ?? "");
     const flags = (tag(el, "flags") ?? "").toLowerCase();
     out.push({
       provider: "podnapisi",
       id: pid ?? `${lang}:${tag(el, "release") ?? ""}`,
-      url: downloadFor(pid),
-      pageUrl: tag(el, "url"),
+      url,
+      pageUrl: resolveSubtitleDownloadUrl(tag(el, "url"), BASE),
       lang,
       release: tag(el, "release"),
       format: "zip",
@@ -118,20 +137,24 @@ async function searchByMeta(
     return null;
   }
   if (res.status === 429) {
-    markRateLimited("podnapisi", 30);
+    markRateLimited("podnapisi", rateLimitDelaySeconds(res, 30));
     return null;
   }
   if (!res.ok) return null;
   const data = (await res.json().catch(() => null)) as { data?: PnRow[] } | null;
   const rows = Array.isArray(data?.data) ? (data as { data: PnRow[] }).data : [];
   const want = new Set(langs);
-  return rows.map((r) => {
+  const out: SourceSubCandidate[] = [];
+  for (const r of rows) {
     const lang = normalizeLang(r.language ?? "");
-    const dl = r.download ?? (r.url ? `${r.url}/download` : null);
-    return {
+    const url = r.download
+      ? resolveSubtitleDownloadUrl(r.download, BASE)
+      : downloadFromPageUrl(r.url);
+    if (!url) continue;
+    out.push({
       provider: "podnapisi",
       id: r.id ?? `${lang}:${r.releases?.[0] ?? ""}`,
-      url: resolveSubtitleDownloadUrl(dl, BASE),
+      url,
       pageUrl: resolveSubtitleDownloadUrl(r.url, BASE),
       lang,
       release: r.releases?.[0] ?? null,
@@ -147,8 +170,9 @@ async function searchByMeta(
       episodeConfirmed: false,
       idConfirmed: false,
       matchScore: 0,
-    };
-  });
+    });
+  }
+  return out;
 }
 
 export const podnapisiSource: SubSource = {
@@ -159,7 +183,8 @@ export const podnapisiSource: SubSource = {
   async search(q: SubSearchQuery, ctx: ProviderCtx): Promise<SourceSubCandidate[] | null> {
     if (q.videoHash) {
       const byHash = await searchByHash(q, ctx);
-      if (byHash && byHash.length) return byHash;
+      if (byHash === null) return null;
+      if (byHash.length) return byHash;
     }
     return searchByMeta(q, ctx);
   },

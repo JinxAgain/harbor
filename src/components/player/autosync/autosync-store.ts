@@ -10,6 +10,10 @@ export function publishAutoSync(handle: AutoSyncHandle | null): void {
   listeners.forEach((l) => l());
 }
 
+export function getAutoSyncHandle(): AutoSyncHandle | null {
+  return current;
+}
+
 export function useAutoSyncHandle(): AutoSyncHandle | null {
   return useSyncExternalStore(
     (cb) => {

@@ -88,13 +88,14 @@ async function loadAssText(
 
 export function useAssNormalize(params: {
   enabled: boolean;
+  holdOnNull?: boolean;
   sourceUrl: string | null;
   headers?: Record<string, string>;
   track: TrackInfo | null;
   tracks: TrackInfo[];
   targetFontSize: number;
 }): number | undefined {
-  const { enabled, sourceUrl, headers, track, tracks, targetFontSize } = params;
+  const { enabled, holdOnNull = false, sourceUrl, headers, track, tracks, targetFontSize } = params;
   const cacheRef = useRef<Map<string, number | null>>(new Map());
   const cacheSourceRef = useRef<string | null>(null);
   if (cacheSourceRef.current !== sourceUrl) {
@@ -114,13 +115,17 @@ export function useAssNormalize(params: {
   });
   const key = assNormalizeCacheKey(enabled, sourceUrl, track);
   const trackOrigin = assNormalizeTrackOrigin(track);
+  const hasTrack = track != null;
 
   useEffect(() => {
     if (!enabled || !sourceUrl) {
       setResolved({ sourceUrl: "", trackOrigin: "", factor: null });
       return;
     }
-    if (!track) {
+    if (!hasTrack) {
+      if (!holdOnNull) {
+        setResolved({ sourceUrl: "", trackOrigin: "", factor: null });
+      }
       return;
     }
     if (!key) {
@@ -160,13 +165,14 @@ export function useAssNormalize(params: {
     return () => {
       cancelled = true;
     };
-  }, [enabled, key, sourceUrl, track, trackOrigin]);
+  }, [enabled, hasTrack, holdOnNull, key, sourceUrl, trackOrigin]);
 
   const activeFactor =
     enabled &&
     sourceUrl &&
     resolved.sourceUrl === sourceUrl &&
-    (!track || (key !== "" && resolved.trackOrigin === trackOrigin))
+    ((!track && holdOnNull) ||
+      (track != null && key !== "" && resolved.trackOrigin === trackOrigin))
       ? resolved.factor
       : null;
   return activeFactor == null ? undefined : assScaleFromFactor(activeFactor, targetFontSize);

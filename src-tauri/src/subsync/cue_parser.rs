@@ -390,11 +390,7 @@ fn resolve_charset_from_language_hint(
         {
             return Some(GB18030);
         }
-        return Some(if is_cjk_clean(bytes, BIG5) {
-            BIG5
-        } else {
-            GB18030
-        });
+        return Some(select_chinese_encoding(bytes));
     }
     if matches!(lang, "jpn" | "ja") || lang.starts_with("japanese") {
         return Some(SHIFT_JIS);
@@ -403,6 +399,43 @@ fn resolve_charset_from_language_hint(
         return Some(EUC_KR);
     }
     None
+}
+
+fn select_chinese_encoding(bytes: &[u8]) -> &'static Encoding {
+    let Some(mut sample_anchor) = bytes.iter().position(|&b| b >= 0x80) else {
+        return GB18030;
+    };
+    if let Some(events_pos) = bytes
+        .windows(8)
+        .position(|w| w.eq_ignore_ascii_case(b"[events]"))
+    {
+        if sample_anchor < events_pos {
+            if let Some(rel) = bytes[events_pos..].iter().position(|&b| b >= 0x80) {
+                sample_anchor = events_pos + rel;
+            }
+        }
+    }
+    let sample_end = (sample_anchor + CHARSET_SAMPLE_BYTES).min(bytes.len());
+    let sample = &bytes[sample_anchor..sample_end];
+    let mut big5_trail_count = 0usize;
+    let mut i = 0usize;
+    while i + 1 < sample.len() {
+        let b1 = sample[i];
+        let b2 = sample[i + 1];
+        if (0xA1..=0xF9).contains(&b1) && (0x40..=0x7E).contains(&b2) {
+            big5_trail_count += 1;
+            i += 2;
+        } else if (0x81..=0xFE).contains(&b1) && (0x40..=0xFE).contains(&b2) && b2 != 0x7F {
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    if is_cjk_clean(sample, BIG5) && (big5_trail_count >= 2 || !is_cjk_clean(sample, GB18030)) {
+        BIG5
+    } else {
+        GB18030
+    }
 }
 
 fn detect_universal_charset(bytes: &[u8]) -> &'static Encoding {
@@ -459,6 +492,8 @@ fn detect_universal_charset(bytes: &[u8]) -> &'static Encoding {
         if (0xA1..=0xF9).contains(&b1) && (0x40..=0x7E).contains(&b2) {
             big5_trail_count += 1;
             i += 2;
+        } else if (0x81..=0xFE).contains(&b1) && (0x40..=0xFE).contains(&b2) && b2 != 0x7F {
+            i += 2;
         } else {
             i += 1;
         }
@@ -477,7 +512,10 @@ fn detect_universal_charset(bytes: &[u8]) -> &'static Encoding {
             sjis_idx += 1;
         }
     }
-    if hiragana_count >= 2 {
+    if hiragana_count >= 2
+        && is_cjk_clean(sample, SHIFT_JIS)
+        && (max_consecutive_non_ascii >= 4 || non_ascii > ascii_letters)
+    {
         return SHIFT_JIS;
     }
 
@@ -1699,6 +1737,19 @@ mod tests {
         assert_eq!(
             decode_subtitle_bytes(&zh_gb, None),
             "你好世界，今天天气真好，我们去看电影吧"
+        );
+
+        // GB18030 with ASS tags/breaks where high tail bytes followed by ASCII ('\\N', '{\\i0}')
+        // previously triggered false-positive Big5 detection.
+        let zh_gb_ass = GB18030.encode("你好\\N世界{\\i0}").0;
+        assert_eq!(
+            decode_subtitle_bytes(&zh_gb_ass, Some("zh")),
+            "你好\\N世界{\\i0}"
+        );
+        let zh_gb_ass_long = GB18030.encode("你好世界\\N今天天气真好{\\i0}").0;
+        assert_eq!(
+            decode_subtitle_bytes(&zh_gb_ass_long, None),
+            "你好世界\\N今天天气真好{\\i0}"
         );
 
         // Windows-1250 Polish with distinctive letters ("Zażółć gęślą jaźń")

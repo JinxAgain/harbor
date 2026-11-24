@@ -1,3 +1,5 @@
+import { isSafeProviderSubtitleUrl } from "@/lib/subtitles/provider-url";
+
 export function resolveSubtitleDownloadUrl(
   raw: string | null | undefined,
   base: string,
@@ -6,7 +8,9 @@ export function resolveSubtitleDownloadUrl(
   if (!value) return null;
   try {
     const url = new URL(value, base);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    const resolved = url.toString();
+    return isSafeProviderSubtitleUrl(resolved) ? resolved : null;
   } catch {
     return null;
   }

@@ -6,8 +6,9 @@ import {
   trackAutoSyncKey,
   type SubtitleCandidateInput,
 } from "@/lib/subtitles/autosync/embedded-sync";
-import { parseSubtitle } from "@/lib/subtitles/parser";
+import { parseSubtitle, type SubCue } from "@/lib/subtitles/parser";
 import { registerPreparedSubtitle, takePreparedSubtitle } from "@/lib/subtitles/prepared-registry";
+import { toSrt } from "@/lib/subtitles/serialize";
 import type { SubtitleLoadMetadata } from "@/lib/subtitles/types";
 
 export type AutoSyncScope = { mediaKey: string; trackId: string };
@@ -24,6 +25,8 @@ export type AppliedAutoSyncState = {
   originalBackupText: string | null;
   originalBackupFormat: SupportedTextSubFormat | null;
   subDelayBefore: number;
+  offsetMs: number | null;
+  scale: number | null;
   scope: AutoSyncScope | null;
   changed: boolean;
 };
@@ -39,6 +42,8 @@ export const EMPTY_APPLIED_STATE: AppliedAutoSyncState = {
   originalBackupText: null,
   originalBackupFormat: null,
   subDelayBefore: 0,
+  offsetMs: null,
+  scale: null,
   scope: null,
   changed: false,
 };
@@ -84,6 +89,9 @@ export function shouldResetAutoSyncOnTrackChange(params: {
     return false;
   }
   if (!selected || !selected.external) {
+    return true;
+  }
+  if (applied.changed) {
     return true;
   }
   const currentKey = trackAutoSyncKey(selected);
@@ -367,8 +375,9 @@ export function resolveAutoSyncRunTarget(params: {
   currentMediaKey: string;
   season?: number;
   episode?: number;
+  getInlineCues?: () => readonly SubCue[] | null | undefined;
 }): AutoSyncRunTarget | null {
-  const { currentSelected, applied, currentMediaKey, season, episode } = params;
+  const { currentSelected, applied, currentMediaKey, season, episode, getInlineCues } = params;
   const hasUsableSource = (input: SubtitleCandidateInput): boolean =>
     Boolean(input.localPath) ||
     input.inlineText != null ||
@@ -376,6 +385,18 @@ export function resolveAutoSyncRunTarget(params: {
 
   if (!currentSelected.autoSynced) {
     const selectedInput = buildSelectedCandidateInput(currentSelected, { season, episode });
+    if (
+      selectedInput &&
+      !selectedInput.localPath &&
+      !selectedInput.inlineText &&
+      !/^https?:/i.test(selectedInput.url)
+    ) {
+      const inlineCues = getInlineCues?.();
+      if (inlineCues && inlineCues.length > 0) {
+        selectedInput.inlineText = toSrt([...inlineCues]);
+        selectedInput.format = "srt";
+      }
+    }
     if (!selectedInput || !hasUsableSource(selectedInput)) return null;
     return {
       sourceTrack: currentSelected,

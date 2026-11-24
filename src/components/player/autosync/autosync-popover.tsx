@@ -37,20 +37,24 @@ function shouldShowPopover(handle: AutoSyncHandle): boolean {
 export function AutosyncPopover({
   handle,
   tenFoot = false,
+  delaySec,
 }: {
   handle: AutoSyncHandle;
   tenFoot?: boolean;
+  delaySec?: number;
 }) {
   const tr = useT();
   const [dismissed, setDismissed] = useState(false);
   const [held, setHeld] = useState(false);
   const handleRef = useRef(handle);
   handleRef.current = handle;
+  const noticeKey =
+    handle.noticeSeq ?? `${handle.status}:${handle.trigger}:${handle.offsetMs ?? ""}`;
 
   useEffect(() => {
     setDismissed(false);
     setHeld(false);
-  }, [handle.status, handle.trigger, handle.offsetMs]);
+  }, [noticeKey]);
 
   const visible = !dismissed && shouldShowPopover(handle);
 
@@ -69,7 +73,7 @@ export function AutosyncPopover({
       handleRef.current.dismiss();
     }, ms);
     return () => window.clearTimeout(id);
-  }, [visible, held, handle.status, handle.trigger, handle.offsetMs]);
+  }, [visible, held, noticeKey, handle.status]);
 
   if (!visible) return null;
 
@@ -185,7 +189,7 @@ export function AutosyncPopover({
                 type="button"
                 onClick={() => {
                   dismissNow();
-                  openSyncBar();
+                  openSyncBar(delaySec);
                 }}
                 className="inline-flex items-center gap-1 rounded-full bg-raised px-2.5 py-0.5 text-[12px] font-semibold text-ink transition-colors hover:bg-surface-hover"
               >

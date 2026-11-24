@@ -24,7 +24,7 @@ export function BpSubtitleSync({
 }) {
   const t = useBpT();
   const autoSync = useAutoSyncHandle();
-  const busy = autoSync?.status === "analyzing";
+  const busy = autoSync?.status === "analyzing" || autoSync?.status === "reverting";
   const synced = autoSync?.status === "synced";
   const offset = offsetLabel(delaySec, t);
   const shiftLabel = autoSync?.offsetMs != null ? formatSyncShift(autoSync.offsetMs) : "";
@@ -32,6 +32,8 @@ export function BpSubtitleSync({
     switch (autoSync?.status) {
       case "analyzing":
         return t("Syncing subtitles…");
+      case "reverting":
+        return t("Reverting subtitles…");
       case "synced":
         return shiftLabel && shiftLabel !== "0s"
           ? t("Subtitles synced ({shift})", { shift: shiftLabel })
@@ -61,12 +63,12 @@ export function BpSubtitleSync({
             busy ? <Loader2 size={19} className={SPIN} /> : <Wand2 size={19} strokeWidth={2.2} />
           }
           onPress={() => {
-            if (!canSync || !autoSync) return;
-            if (busy) autoSync.stop();
+            if (!canSync || !autoSync || autoSync.status === "reverting") return;
+            if (autoSync.status === "analyzing") autoSync.stop();
             else autoSync.run();
           }}
         />
-        {autoSync && autoSync.canRevert && (
+        {autoSync && autoSync.canRevert && !busy && (
           <Chip label={t("Revert")} onPress={() => autoSync.revert()} />
         )}
       </Row>
