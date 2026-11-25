@@ -18,6 +18,7 @@ mod gamepad;
 mod http_fetch;
 mod http_redirect;
 mod playback_redirect;
+mod stream_probe;
 mod local_lib;
 mod media_server;
 mod power;
@@ -1353,6 +1354,7 @@ pub fn run() {
             download::download_cancel,
             stream_proxy::proxy_register,
             streams::resolve_playback_redirect,
+            stream_probe::probe_stream_status,
             stream_proxy::proxy_unregister,
             stream_proxy::proxy_gc_idle,
             cf_relay::cf_list_accounts,

@@ -7,6 +7,7 @@ import {
 } from "@/lib/player/playback-clock";
 import { isTruncatedEnd } from "@/lib/player/playback-end";
 import { isLocalUrl } from "@/lib/player/local-url";
+import { probeStreamStatus } from "@/lib/player/stream-probe";
 import { clearOnePickerCache } from "@/lib/picker-cache";
 import { resolveViaDebrids } from "@/lib/streams/resolve";
 import { registerStreamProxy } from "@/lib/stream-proxy";
@@ -25,7 +26,28 @@ import { GENUINE_FAILURE_WINDOW_MS, type EngineStats } from "@/lib/torrent/engin
 
 type OpenPicker = ReturnType<typeof useView>["openPicker"];
 
-export type SourceError = { status: number; host: string; exhausted?: boolean };
+export type SourceErrorReason = "archive_restoring" | "http_error" | "truncated" | "no_response";
+
+export type SourceError = {
+  status: number;
+  host: string;
+  viaHost?: string;
+  reason?: SourceErrorReason;
+  detail?: string;
+  exhausted?: boolean;
+  probing?: boolean;
+  autoRetryInSec?: number | null;
+  autoRetryAttempt?: number;
+};
+
+const ARCHIVE_POLL_INTERVAL_SEC = 15;
+const ARCHIVE_MAX_AUTO_RETRIES = 12;
+
+function clampRetryAfterSec(retryAfterSec: number | null | undefined): number {
+  return retryAfterSec != null
+    ? Math.min(30, Math.max(10, retryAfterSec))
+    : ARCHIVE_POLL_INTERVAL_SEC;
+}
 
 function hostOf(url: string): string {
   try {
@@ -115,7 +137,12 @@ export function useAutoRetry(params: {
   }
   const [transcodedUrl, setTranscodedUrl] = useState<string | null>(null);
   const [sourceError, setSourceError] = useState<SourceError | null>(null);
+  const sourceErrorRef = useRef<SourceError | null>(null);
+  sourceErrorRef.current = sourceError;
+  const probeSessionRef = useRef(0);
   useEffect(() => {
+    probeSessionRef.current += 1;
+    sourceErrorRef.current = null;
     setSourceError(null);
     autoRetriedRef.current = false;
     transcodedTriedRef.current = false;
@@ -133,6 +160,81 @@ export function useAutoRetry(params: {
     dlRef.current = { bytes: 0, at: Date.now() };
     setTranscodedUrl(null);
   }, [src.url]);
+
+  useEffect(() => {
+    return () => {
+      probeSessionRef.current += 1;
+    };
+  }, []);
+
+  const reportSourceError = useCallback(
+    (exhausted = false) => {
+      if (sourceErrorRef.current != null) return;
+      const probeUrl = src.url;
+      const canProbe =
+        typeof probeStreamStatus === "function" && !isLocal && /^https?:\/\//i.test(probeUrl);
+      const initialError: SourceError = {
+        status: 0,
+        host: hostOf(probeUrl),
+        exhausted: exhausted || undefined,
+        probing: canProbe,
+      };
+      sourceErrorRef.current = initialError;
+      setSourceError(initialError);
+
+      if (!canProbe) return;
+      const session = ++probeSessionRef.current;
+      void probeStreamStatus(probeUrl, src.headers)
+        .then((result) => {
+          if (probeSessionRef.current !== session || urlSeenRef.current !== probeUrl) {
+            return;
+          }
+          setSourceError((prev) => {
+            if (!prev) return null;
+            if (!result) return { ...prev, probing: false };
+            if (result.reason === "archive_restoring") {
+              return {
+                status: result.status,
+                host: result.host || prev.host,
+                viaHost: result.viaHost || undefined,
+                reason: "archive_restoring",
+                detail: result.detail || undefined,
+                exhausted: prev.exhausted,
+                probing: false,
+                autoRetryInSec: prev.exhausted ? null : clampRetryAfterSec(result.retryAfterSec),
+                autoRetryAttempt: 0,
+              };
+            }
+            if (result.reason === "ready") {
+              return {
+                status: result.status || 200,
+                host: result.host || prev.host,
+                viaHost: result.viaHost || undefined,
+                detail: result.detail || undefined,
+                exhausted: prev.exhausted,
+                probing: false,
+              };
+            }
+            return {
+              status: result.status,
+              host: result.host || prev.host,
+              viaHost: result.viaHost || undefined,
+              reason: result.reason,
+              detail: result.detail || undefined,
+              exhausted: prev.exhausted,
+              probing: false,
+            };
+          });
+        })
+        .catch(() => {
+          if (probeSessionRef.current !== session || urlSeenRef.current !== probeUrl) {
+            return;
+          }
+          setSourceError((prev) => (prev ? { ...prev, probing: false } : null));
+        });
+    },
+    [isLocal, src.url, src.headers],
+  );
 
   useEffect(() => {
     if (isLive && hasProgress) livePlayedRef.current = true;
@@ -187,14 +289,14 @@ export function useAutoRetry(params: {
       // visible failure state.
       if (!canAutoSwitch) {
         console.warn(`[player] manual source failed (${reason})`);
-        setSourceError((prev) => prev ?? { status: 0, host: hostOf(src.url) });
+        reportSourceError(false);
         return;
       }
       const currentAttempt = src.attempt ?? 0;
       if (currentAttempt >= MAX_AUTORETRY_ATTEMPTS) {
         console.warn(`[player] giving up after ${currentAttempt} attempts (${reason})`);
         if (!isP2pEngine && getPlaybackPosition() < 0.5) {
-          setSourceError((prev) => prev ?? { status: 0, host: hostOf(src.url), exhausted: true });
+          reportSourceError(true);
         }
         return;
       }
@@ -242,6 +344,7 @@ export function useAutoRetry(params: {
       bridgeRef,
       startedPlaying,
       selfFrameReadyRef,
+      reportSourceError,
     ],
   );
 
@@ -572,15 +675,19 @@ export function useAutoRetry(params: {
         if (s.status === "playing" || s.status === "ended") return;
         if (s.durationSec > 0 || getPlaybackPosition() > 0) return;
         console.warn(`[player] source never started within ${NEVER_STARTED_CEILING_MS}ms`);
-        setSourceError((prev) => prev ?? { status: 0, host: hostOf(src.url) });
+        reportSourceError(false);
       },
       Math.max(0, remaining),
     );
     return () => window.clearTimeout(t);
-  }, [src.url, isLive, isLocal, canAutoSwitch, isP2pEngine]);
+  }, [src.url, isLive, isLocal, canAutoSwitch, isP2pEngine, reportSourceError]);
 
   useEffect(() => {
-    if (startedPlaying) setSourceError(null);
+    if (startedPlaying) {
+      probeSessionRef.current += 1;
+      sourceErrorRef.current = null;
+      setSourceError(null);
+    }
   }, [startedPlaying]);
 
   useEffect(() => {
@@ -685,7 +792,15 @@ export function useAutoRetry(params: {
     src.headers,
   ]);
 
+  const clearSourceError = useCallback(() => {
+    probeSessionRef.current += 1;
+    sourceErrorRef.current = null;
+    setSourceError(null);
+  }, []);
+
   const retryCurrentSource = useCallback(() => {
+    probeSessionRef.current += 1;
+    sourceErrorRef.current = null;
     setSourceError(null);
     autoRetriedRef.current = false;
     sameUrlRetriedRef.current = false;
@@ -708,11 +823,108 @@ export function useAutoRetry(params: {
     });
   }, [bridgeRef, src.url, src.subtitles, src.notWebReady, isLive, src.headers]);
 
+  useEffect(() => {
+    if (
+      sourceError?.reason !== "archive_restoring" ||
+      sourceError.exhausted ||
+      startedPlaying ||
+      sourceError.autoRetryInSec == null ||
+      typeof probeStreamStatus !== "function"
+    ) {
+      return;
+    }
+
+    if (sourceError.autoRetryInSec > 0) {
+      const timer = window.setTimeout(() => {
+        setSourceError((prev) => {
+          if (!prev || prev.reason !== "archive_restoring" || prev.autoRetryInSec == null) {
+            return prev;
+          }
+          return { ...prev, autoRetryInSec: Math.max(0, prev.autoRetryInSec - 1) };
+        });
+      }, 1000);
+      return () => window.clearTimeout(timer);
+    }
+
+    let cancelled = false;
+    const session = ++probeSessionRef.current;
+    const probeUrl = src.url;
+    void probeStreamStatus(probeUrl, src.headers)
+      .then((result) => {
+        if (cancelled || probeSessionRef.current !== session || urlSeenRef.current !== probeUrl) {
+          return;
+        }
+        if (result?.reason === "ready") {
+          retryCurrentSource();
+          return;
+        }
+        if (result && (result.reason === "http_error" || result.reason === "truncated")) {
+          const terminalReason: SourceErrorReason = result.reason;
+          setSourceError((prev) => {
+            if (!prev) return null;
+            return {
+              status: result.status,
+              host: result.host || prev.host,
+              viaHost: result.viaHost || undefined,
+              reason: terminalReason,
+              detail: result.detail || undefined,
+              exhausted: prev.exhausted,
+              probing: false,
+              autoRetryInSec: null,
+            };
+          });
+          return;
+        }
+        setSourceError((prev) => {
+          if (!prev || prev.reason !== "archive_restoring") return prev;
+          const nextAttempt = (prev.autoRetryAttempt ?? 0) + 1;
+          const retrySec = clampRetryAfterSec(result?.retryAfterSec);
+          return {
+            ...prev,
+            status: result?.status ?? prev.status,
+            host: result?.host || prev.host,
+            viaHost: result?.viaHost || prev.viaHost,
+            detail: result?.detail || prev.detail,
+            autoRetryAttempt: nextAttempt,
+            autoRetryInSec: nextAttempt < ARCHIVE_MAX_AUTO_RETRIES ? retrySec : null,
+          };
+        });
+      })
+      .catch(() => {
+        if (cancelled || probeSessionRef.current !== session || urlSeenRef.current !== probeUrl) {
+          return;
+        }
+        setSourceError((prev) => {
+          if (!prev || prev.reason !== "archive_restoring") return prev;
+          const nextAttempt = (prev.autoRetryAttempt ?? 0) + 1;
+          return {
+            ...prev,
+            autoRetryAttempt: nextAttempt,
+            autoRetryInSec:
+              nextAttempt < ARCHIVE_MAX_AUTO_RETRIES ? ARCHIVE_POLL_INTERVAL_SEC : null,
+          };
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    sourceError?.reason,
+    sourceError?.exhausted,
+    sourceError?.autoRetryInSec,
+    sourceError?.autoRetryAttempt,
+    src.url,
+    src.headers,
+    startedPlaying,
+    retryCurrentSource,
+  ]);
+
   return {
     slowLoad,
     transcodedUrl,
     sourceError,
-    clearSourceError: () => setSourceError(null),
+    clearSourceError,
     retryCurrentSource,
   };
 }

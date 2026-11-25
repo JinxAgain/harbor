@@ -16,7 +16,7 @@
 
 use crate::{
     crash_report, diagnostics, download, ebook_tts, fonts, gamepad, http_fetch, local_lib,
-    media_server, power, proc_mem, settings_store, stream_proxy, streams, stremio_auth,
+    media_server, power, proc_mem, settings_store, stream_probe, stream_proxy, streams, stremio_auth,
     subtitle_credentials, temp_prune, torrent_engine, transcode, web_server,
 };
 
@@ -97,6 +97,7 @@ pub fn run() {
             subtitle_credentials::subtitle_credential_bind,
             subtitle_credentials::subtitle_credentials_clear,
             stream_proxy::proxy_register,
+            stream_probe::probe_stream_status,
             stream_proxy::proxy_unregister,
             stream_proxy::proxy_gc_idle,
             torrent_engine::torrent_engine_status,

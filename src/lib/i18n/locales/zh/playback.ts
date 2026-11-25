@@ -1143,6 +1143,22 @@ const playback: Record<string, string> = {
   "{label}, sync options": "{label}，同步选项",
   "Auto synced": "已自动同步",
   "Re-sync": "重新同步",
+  "Cloud file is waking up": "云端文件正在激活中",
+  "This file hasn't been accessed for a while and the cloud drive is restoring it from archive storage. This usually takes 1–3 minutes.":
+    "该视频长时间未访问，云盘正在从冷存储重新激活文件，通常需要 1–3 分钟。",
+  "Cloud status": "云端状态",
+  "Archive · Restoring": "冷存储 · 激活中",
+  "Auto-retrying in {seconds}s…": "将在 {seconds} 秒后自动重试…",
+  "Checking if file is ready…": "正在检测文件是否就绪…",
+  "Retry now": "立即重试",
+  "Checking source…": "正在检测来源…",
+  "Checking why this stream couldn't start.": "正在排查该视频流无法起播的原因。",
+  "Checking…": "检测中…",
+  "Stream ended unexpectedly": "视频流意外中断",
+  "The server accepted the request but closed the connection before sending video data. Retry or choose another source.":
+    "服务器接受了请求，但在发送视频数据前关闭了连接。请重试或更换其他来源。",
+  "Empty stream": "空数据流",
+  "via {host}": "经由 {host}",
 };
 
 export default playback;
